@@ -10,10 +10,8 @@ import StrategiesPage  from "@/pages/StrategiesPage";
 import SettingsPage    from "@/pages/SettingsPage";
 import CopyTradingPage from "@/pages/CopyTradingPage";
 import RiskPage        from "@/pages/RiskPage";
-import ChartsPage      from "@/pages/ChartsPage";
-import FormulaPage     from "@/pages/FormulaPage";
 import TerminalPage    from "@/pages/TerminalPage";
-import MarketPage      from "@/pages/MarketPage";
+import FormulaPage     from "@/pages/FormulaPage";
 import AdminPage       from "@/pages/AdminPage";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
@@ -32,23 +30,23 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <Toaster position="top-right" toastOptions={{
-          style: { background:"#0d1117", color:"#e8f5e9", border:"1px solid rgba(0,255,136,0.2)", fontFamily:"JetBrains Mono, monospace", fontSize:12 },
+          style: { background:"#0d1117", color:"#e8f5e9",
+            border:"1px solid rgba(0,255,136,0.2)",
+            fontFamily:"JetBrains Mono, monospace", fontSize:12 },
         }} />
         <Routes>
           <Route path="/login"        element={<LoginPage />} />
           <Route path="/register"     element={<RegisterPage />} />
           <Route path="/dashboard"    element={<Protected><DashboardPage /></Protected>} />
-          <Route path="/market"      element={<Protected><MarketPage /></Protected>} />
           <Route path="/terminal"     element={<Protected><TerminalPage /></Protected>} />
           <Route path="/trading"      element={<Protected><TradingPage /></Protected>} />
-          <Route path="/charts"       element={<Protected><ChartsPage /></Protected>} />
           <Route path="/strategies"   element={<Protected><StrategiesPage /></Protected>} />
           <Route path="/formula"      element={<Protected><FormulaPage /></Protected>} />
           <Route path="/copy-trading" element={<Protected><CopyTradingPage /></Protected>} />
           <Route path="/risk"         element={<Protected><RiskPage /></Protected>} />
           <Route path="/settings"     element={<Protected><SettingsPage /></Protected>} />
           <Route path="/admin"        element={<Protected><AdminOnly><AdminPage /></AdminOnly></Protected>} />
-          <Route path="*"             element={<Navigate to="/dashboard" replace />} />
+          <Route path="*"             element={<Navigate to="/terminal" replace />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

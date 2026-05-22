@@ -204,14 +204,15 @@ DHAN_SECURITY_IDS = {
 import requests as _http
 
 
-def _dhan_ohlc(securities: dict, client_id: str, access_token: str) -> dict:
+def _dhan_quote(securities: dict, client_id: str, access_token: str) -> dict:
     """
-    Call Dhan /marketfeed/ohlc — returns OHLC + LTP for multiple instruments.
+    Call Dhan /marketfeed/quote — returns full market data per instrument.
+    Includes: LTP, OHLC, Volume, OI, average_price (VWAP), market depth (buy/sell).
     securities: {"NSE_EQ": ["2885", "1333"], "IDX_I": ["13"]}
-    Returns nested dict: {"NSE_EQ": {"2885": {last_price, ohlc:{open,high,low,close}}}}
+    Returns nested dict keyed by segment → security_id.
     """
     resp = _http.post(
-        "https://api.dhan.co/v2/marketfeed/ohlc",
+        "https://api.dhan.co/v2/marketfeed/quote",
         headers={
             "access-token": access_token,
             "client-id":    client_id,
@@ -224,11 +225,16 @@ def _dhan_ohlc(securities: dict, client_id: str, access_token: str) -> dict:
     data = resp.json()
     if data.get("status") == "success":
         return data.get("data", {})
-    logger.warning(f"Dhan OHLC API error: {data}")
+    logger.warning(f"Dhan Quote API error: {data}")
     return {}
 
 
+# Keep alias for backward compat
+_dhan_ohlc = _dhan_quote
+
+
 def _parse_ohlc(raw: dict, symbol: str) -> dict:
+    """Parse a /marketfeed/quote response row into a unified tick dict."""
     ltp   = float(raw.get("last_price", 0))
     ohlc  = raw.get("ohlc", {})
     open_ = float(ohlc.get("open",  ltp))
@@ -237,12 +243,28 @@ def _parse_ohlc(raw: dict, symbol: str) -> dict:
     close = float(ohlc.get("close", ltp))
     chg   = round(ltp - close, 2)
     chgp  = round(chg / max(close, 1) * 100, 2)
+    depth  = raw.get("depth", {})
+    buy0   = depth.get("buy",  [{}])[0] if depth else {}
+    sell0  = depth.get("sell", [{}])[0] if depth else {}
     return {
-        "symbol": symbol, "ltp": ltp,
-        "open": open_, "high": high, "low": low, "close": close,
-        "volume": int(raw.get("volume", 0)),
-        "change": chg, "change_pct": chgp,
-        "source": "dhan_live",
+        "symbol":     symbol,
+        "ltp":        ltp,
+        "open":       open_,
+        "high":       high,
+        "low":        low,
+        "close":      close,
+        "volume":     int(raw.get("volume", 0)),
+        "oi":         int(raw.get("oi", 0)),
+        "atp":        float(raw.get("average_price", 0)),   # VWAP
+        "vwap":       float(raw.get("average_price", 0)),
+        "buy_qty":    int(raw.get("buy_quantity",  0)),
+        "sell_qty":   int(raw.get("sell_quantity", 0)),
+        "bp1":        float(buy0.get("price",  0)),
+        "sp1":        float(sell0.get("price", 0)),
+        "net_change": float(raw.get("net_change", 0)),
+        "change":     chg,
+        "change_pct": chgp,
+        "source":     "dhan_live",
     }
 
 
@@ -676,3 +698,63 @@ async def remove_from_watchlist(
     )
     rows = result.scalars().all()
     return {"status": "removed", "symbol": symbol, "symbols": [r.symbol for r in rows]}
+
+
+@router.get("/funds")
+async def get_funds(current_user: User = Depends(get_current_user)):
+    """Fetch Dhan fund limits for account summary bar."""
+    from app.core.config import settings
+    if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
+        try:
+            from dhanhq import DhanContext, dhanhq
+            ctx  = DhanContext(settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
+            dhan = dhanhq(ctx)
+            resp = dhan.get_fund_limits()
+            if resp and resp.get("status") == "success":
+                return resp.get("data", {})
+        except Exception as e:
+            logger.warning(f"Dhan funds error: {e}")
+    return {"availabelBalance": 0, "utilizedAmount": 0, "sodLimit": 0}
+
+
+@router.get("/vwap/{symbol}")
+async def get_vwap(
+    symbol: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Calculate real VWAP for a symbol using intraday candle data.
+    VWAP = Cumulative(Typical_Price * Volume) / Cumulative(Volume)
+    where Typical_Price = (High + Low + Close) / 3
+    """
+    from app.market.candle_builder import build_ohlcv
+    import pandas as pd
+
+    symbol = symbol.upper()
+    inst   = DHAN_SECURITY_IDS.get(symbol)
+    if not inst:
+        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not in instrument list")
+
+    df = build_ohlcv(
+        exchange          = inst["exchange_segment"].split("_")[0],
+        token             = inst["security_id"],
+        timeframe_minutes = 1,   # 1-min candles for accurate VWAP
+    )
+
+    if df.empty or len(df) < 2:
+        return {"symbol": symbol, "vwap": None, "candles": 0}
+
+    # Calculate VWAP per the provided formula
+    df = df.copy()
+    df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
+    df["tp_vol"]        = df["typical_price"] * df["volume"]
+    df["cum_tp_vol"]    = df["tp_vol"].cumsum()
+    df["cum_volume"]    = df["volume"].cumsum()
+    df["vwap"]          = df["cum_tp_vol"] / df["cum_volume"]
+
+    vwap = float(df["vwap"].iloc[-1])
+    return {
+        "symbol":  symbol,
+        "vwap":    round(vwap, 2),
+        "candles": len(df),
+    }

@@ -8,10 +8,9 @@ import enum
 
 
 class BrokerName(str, enum.Enum):
-    shoonya = "shoonya"
-    angel_one = "angel_one"
-    upstox = "upstox"
-    dhan = "dhan"
+    dhan      = "dhan"
+    shoonya   = "shoonya"    # legacy — kept for existing DB rows
+    paper     = "paper"
 
 
 class BrokerAccount(Base):
@@ -19,12 +18,11 @@ class BrokerAccount(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    broker = Column(Enum(BrokerName), nullable=False)
+    broker  = Column(Enum(BrokerName), nullable=False)
     client_id = Column(String, nullable=False)
-    # Access tokens are AES-encrypted at rest
     encrypted_access_token = Column(String, nullable=True)
-    is_active = Column(Boolean, default=False)
+    is_active    = Column(Boolean, default=False)
     paper_trading = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at   = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="broker_accounts")

@@ -327,3 +327,523 @@ async def _get_row(row_id: UUID, user_id, db: AsyncSession) -> TerminalRow:
     if not row:
         raise HTTPException(status_code=404, detail="Terminal row not found")
     return row
+
+
+# ── Formula Management (Admin only) ──────────────────────────────────────────
+
+class FormulaConfig(BaseModel):
+    entry_formula:  Optional[str] = None   # @ORFib / @MACross(9,21) / custom expr
+    exit_formula:   Optional[str] = None
+    target_formula: Optional[str] = None   # e.g. "entry * 1.02"
+    sl_formula:     Optional[str] = None   # e.g. "entry * 0.99"
+    trail_pct:      Optional[float] = None
+    strategy_label: Optional[str] = None   # shown to user instead of formula
+
+
+@router.put("/rows/{row_id}/formula")
+async def set_row_formula(
+    row_id:       UUID,
+    payload:      FormulaConfig,
+    current_user: User = Depends(get_current_user),
+    db:           AsyncSession = Depends(get_db),
+):
+    """
+    Set or update the hidden formula for a terminal row.
+    Admin only — formulas are never returned to regular users.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    row = await _get_row(row_id, current_user.id, db)
+
+    if payload.entry_formula  is not None: row.entry_formula  = payload.entry_formula
+    if payload.exit_formula   is not None: row.exit_formula   = payload.exit_formula
+    if payload.target_pct     is not None: row.target_pct     = payload.target_pct
+    if payload.sl_pct         is not None: row.sl_pct         = payload.sl_pct
+    if payload.trailing_sl    is not None: row.trailing_sl    = payload.trailing_sl
+    if payload.trail_pct      is not None: row.trail_pct      = payload.trail_pct
+    if payload.strategy_label is not None: row.strategy_label = payload.strategy_label
+
+    await db.commit()
+    return {"status": "formula updated", "row_id": str(row_id)}
+
+
+@router.get("/rows/{row_id}/formula")
+async def get_row_formula(
+    row_id:       UUID,
+    current_user: User = Depends(get_current_user),
+    db:           AsyncSession = Depends(get_db),
+):
+    """Get formula config for a row — admin only."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    row = await _get_row(row_id, current_user.id, db)
+    return {
+        "row_id":        str(row.id),
+        "symbol":        row.symbol,
+        "entry_formula": row.entry_formula,
+        "exit_formula":  row.exit_formula,
+        "target_pct":    row.target_pct,
+        "sl_pct":        row.sl_pct,
+        "trailing_sl":   row.trailing_sl,
+        "trail_pct":     row.trail_pct,
+        "strategy_label":row.strategy_label,
+    }
+
+
+@router.get("/formula-presets")
+async def list_formula_presets(current_user: User = Depends(get_current_user)):
+    """
+    List available built-in formula shortcuts.
+    Visible to admin only to set on rows.
+    Users never see these — they only see strategy_label.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return [
+        {
+            "shortcut": "@ORFib",
+            "name": "Opening Range Fibonacci",
+            "description": "Proprietary square-root entry formula. Fires once at 9:15 AM open.",
+            "params": "Optional: @ORFib(trail=0.3)",
+            "example_entry_label": "ORFib",
+        },
+        {
+            "shortcut": "@ORFib(trail=0.3)",
+            "name": "Opening Range Fibonacci + Trailing SL",
+            "description": "Same as ORFib but with 0.3% trailing stop loss.",
+            "params": "trail = trailing SL %",
+            "example_entry_label": "ORFib Trail",
+        },
+        {
+            "shortcut": "@MACross(9,21)",
+            "name": "Moving Average Crossover",
+            "description": "Golden cross = BUY, Death cross = SELL.",
+            "params": "@MACross(fast, slow)",
+            "example_entry_label": "MA 9/21",
+        },
+        {
+            "shortcut": "@RSI(14,30,70)",
+            "name": "RSI Oversold/Overbought",
+            "description": "BUY when RSI < 30, SELL when RSI > 70.",
+            "params": "@RSI(period, oversold, overbought)",
+            "example_entry_label": "RSI 14",
+        },
+        {
+            "shortcut": "@VWAP",
+            "name": "VWAP Breakout",
+            "description": "BUY when LTP > VWAP, SELL when LTP < VWAP.",
+            "params": "None",
+            "example_entry_label": "VWAP",
+        },
+        {
+            "shortcut": "custom",
+            "name": "Custom Formula",
+            "description": "Write your own entry/exit conditions using indicators.",
+            "params": "entry_formula, exit_formula, target_formula, sl_formula",
+            "example_entry_label": "Custom",
+        },
+    ]
+
+
+# ── Terminal Columns (default + custom, all manageable) ─────────────────────
+
+class ColumnCreate(BaseModel):
+    name:        str
+    formula:     Optional[str] = None   # None for default cols
+    col_key:     Optional[str] = None   # for default cols: "ltp","high" etc
+    col_type:    str   = "custom"       # "default" or "custom"
+    col_order:   int   = 0
+    width:       int   = 80
+    is_visible:  bool  = True
+    color_rules: Optional[str] = None
+
+
+@router.get("/columns")
+async def list_columns(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all terminal columns for user.
+    Seeds default columns on first visit.
+    Formula hidden from non-admin users.
+    """
+    from sqlalchemy import select
+    from app.models.terminal_column import TerminalColumn, DEFAULT_COLUMNS
+
+    result = await db.execute(
+        select(TerminalColumn)
+        .where(TerminalColumn.user_id == current_user.id)
+        .order_by(TerminalColumn.col_order)
+    )
+    cols = result.scalars().all()
+
+    # Seed defaults on first visit
+    if not cols:
+        for d in DEFAULT_COLUMNS:
+            db.add(TerminalColumn(
+                user_id     = current_user.id,
+                name        = d["name"],
+                col_key     = d["col_key"],
+                col_type    = d["col_type"],
+                col_order   = d["col_order"],
+                width       = d["width"],
+                is_visible  = True,
+                color_rules = d["color_rules"],
+            ))
+        await db.commit()
+        result = await db.execute(
+            select(TerminalColumn)
+            .where(TerminalColumn.user_id == current_user.id)
+            .order_by(TerminalColumn.col_order)
+        )
+        cols = result.scalars().all()
+
+    is_admin = current_user.role == "admin"
+    return [
+        {
+            "id":          str(c.id),
+            "name":        c.name,
+            "col_key":     c.col_key,
+            "col_type":    c.col_type,
+            "formula":     c.formula if is_admin else None,
+            "col_order":   c.col_order,
+            "width":       c.width,
+            "is_visible":  c.is_visible,
+            "color_rules": c.color_rules,
+        }
+        for c in cols
+    ]
+
+
+@router.post("/columns", status_code=201)
+async def create_column(
+    payload: ColumnCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new custom formula column. Admin only."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    if payload.formula:
+        from app.strategy.excel_formula_engine import validate_formula_excel
+        ok, msg = validate_formula_excel(payload.formula)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Invalid formula: {msg}")
+    else:
+        msg = "OK"
+
+    from app.models.terminal_column import TerminalColumn
+    from sqlalchemy import select, func
+
+    # Auto-assign col_order to end of list (ignore payload col_order for custom cols)
+    max_result = await db.execute(
+        select(func.max(TerminalColumn.col_order))
+        .where(TerminalColumn.user_id == current_user.id)
+    )
+    max_order = max_result.scalar() or 0
+    auto_order = max_order + 1
+
+    col = TerminalColumn(
+        user_id     = current_user.id,
+        name        = payload.name.upper(),
+        col_key     = payload.col_key,
+        col_type    = payload.col_type,
+        formula     = payload.formula,
+        col_order   = auto_order,
+        width       = payload.width,
+        is_visible  = payload.is_visible,
+        color_rules = payload.color_rules,
+    )
+    db.add(col)
+    await db.commit()
+    await db.refresh(col)
+    return {"id": str(col.id), "name": col.name, "validated": msg}
+
+
+@router.patch("/columns/{col_id}/visibility")
+async def toggle_column_visibility(
+    col_id: UUID,
+    body: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Show/hide any column — available to all users."""
+    from sqlalchemy import select
+    from app.models.terminal_column import TerminalColumn
+
+    result = await db.execute(
+        select(TerminalColumn).where(
+            TerminalColumn.id      == col_id,
+            TerminalColumn.user_id == current_user.id,
+        )
+    )
+    col = result.scalar_one_or_none()
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+
+    col.is_visible = bool(body.get("is_visible", not col.is_visible))
+    await db.commit()
+    return {"id": str(col.id), "name": col.name, "is_visible": col.is_visible}
+
+
+@router.put("/columns/{col_id}")
+async def update_column(
+    col_id: UUID,
+    payload: ColumnCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a column. Admin only for formula changes."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from sqlalchemy import select
+    from app.models.terminal_column import TerminalColumn
+
+    result = await db.execute(
+        select(TerminalColumn).where(
+            TerminalColumn.id      == col_id,
+            TerminalColumn.user_id == current_user.id,
+        )
+    )
+    col = result.scalar_one_or_none()
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+
+    if payload.formula:
+        from app.strategy.excel_formula_engine import validate_formula_excel
+        ok, msg = validate_formula_excel(payload.formula)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Invalid formula: {msg}")
+
+    col.name        = payload.name.upper()
+    col.formula     = payload.formula
+    col.col_order   = payload.col_order
+    col.width       = payload.width
+    col.is_visible  = payload.is_visible
+    col.color_rules = payload.color_rules
+    await db.commit()
+    return {"status": "updated", "name": col.name}
+
+
+@router.delete("/columns/{col_id}", status_code=204)
+async def delete_column(
+    col_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete any column — default or custom. All users can remove columns."""
+    from sqlalchemy import select
+    from app.models.terminal_column import TerminalColumn
+
+    result = await db.execute(
+        select(TerminalColumn).where(
+            TerminalColumn.id      == col_id,
+            TerminalColumn.user_id == current_user.id,
+        )
+    )
+    col = result.scalar_one_or_none()
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+
+    await db.delete(col)
+    await db.commit()
+
+
+@router.post("/columns/reset")
+async def reset_columns(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset columns to defaults — deletes all and reseeds."""
+    from sqlalchemy import delete as sa_delete
+    from app.models.terminal_column import TerminalColumn, DEFAULT_COLUMNS
+
+    await db.execute(
+        sa_delete(TerminalColumn).where(TerminalColumn.user_id == current_user.id)
+    )
+    for d in DEFAULT_COLUMNS:
+        db.add(TerminalColumn(
+            user_id     = current_user.id,
+            name        = d["name"],
+            col_key     = d["col_key"],
+            col_type    = d["col_type"],
+            col_order   = d["col_order"],
+            width       = d["width"],
+            is_visible  = True,
+            color_rules = d["color_rules"],
+        ))
+    await db.commit()
+    return {"status": "reset", "columns": len(DEFAULT_COLUMNS)}
+
+
+@router.post("/columns/validate")
+async def validate_column_formula(
+    body: dict,
+    current_user: User = Depends(get_current_user),
+):
+    """Validate a formula before saving."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from app.strategy.excel_formula_engine import validate_formula_excel
+    ok, msg = validate_formula_excel(body.get("formula", ""))
+    return {"valid": ok, "message": msg}
+
+
+
+class ColumnCreate(BaseModel):
+    name:        str
+    formula:     str
+    col_order:   int   = 0
+    width:       int   = 80
+    is_visible:  bool  = True
+    color_rules: Optional[str] = None  # JSON: {"UP":"green","DOWN":"red"}
+
+
+@router.get("/columns")
+async def list_columns(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all formula columns. Formula hidden from non-admin users."""
+    from sqlalchemy import select
+    from app.models.terminal_column import TerminalColumn
+
+    result = await db.execute(
+        select(TerminalColumn)
+        .where(TerminalColumn.user_id == current_user.id)
+        .order_by(TerminalColumn.col_order)
+    )
+    cols = result.scalars().all()
+    is_admin = current_user.role == "admin"
+
+    return [
+        {
+            "id":          str(c.id),
+            "name":        c.name,
+            "formula":     c.formula if is_admin else None,  # hidden from users
+            "col_order":   c.col_order,
+            "width":       c.width,
+            "is_visible":  c.is_visible,
+            "color_rules": c.color_rules,
+        }
+        for c in cols
+    ]
+
+
+@router.post("/columns", status_code=201)
+async def create_column(
+    payload: ColumnCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new formula column. Admin only."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    # Validate formula first
+    from app.strategy.excel_formula_engine import validate_formula_excel
+    ok, msg = validate_formula_excel(payload.formula)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Invalid formula: {msg}")
+
+    from app.models.terminal_column import TerminalColumn
+    col = TerminalColumn(
+        user_id     = current_user.id,
+        name        = payload.name.upper(),
+        formula     = payload.formula,
+        col_order   = payload.col_order,
+        width       = payload.width,
+        is_visible  = payload.is_visible,
+        color_rules = payload.color_rules,
+    )
+    db.add(col)
+    await db.commit()
+    await db.refresh(col)
+    return {"id": str(col.id), "name": col.name, "validated": msg}
+
+
+@router.put("/columns/{col_id}")
+async def update_column(
+    col_id: UUID,
+    payload: ColumnCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a formula column. Admin only."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from sqlalchemy import select
+    from app.models.terminal_column import TerminalColumn
+
+    result = await db.execute(
+        select(TerminalColumn).where(
+            TerminalColumn.id      == col_id,
+            TerminalColumn.user_id == current_user.id,
+        )
+    )
+    col = result.scalar_one_or_none()
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+
+    from app.strategy.excel_formula_engine import validate_formula_excel
+    ok, msg = validate_formula_excel(payload.formula)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Invalid formula: {msg}")
+
+    col.name        = payload.name.upper()
+    col.formula     = payload.formula
+    col.col_order   = payload.col_order
+    col.width       = payload.width
+    col.is_visible  = payload.is_visible
+    col.color_rules = payload.color_rules
+    await db.commit()
+    return {"status": "updated", "name": col.name}
+
+
+@router.delete("/columns/{col_id}", status_code=204)
+async def delete_column(
+    col_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a formula column. Admin only."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from sqlalchemy import select
+    from app.models.terminal_column import TerminalColumn
+
+    result = await db.execute(
+        select(TerminalColumn).where(
+            TerminalColumn.id      == col_id,
+            TerminalColumn.user_id == current_user.id,
+        )
+    )
+    col = result.scalar_one_or_none()
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+
+    await db.delete(col)
+    await db.commit()
+
+
+@router.post("/columns/validate")
+async def validate_column_formula(
+    body: dict,
+    current_user: User = Depends(get_current_user),
+):
+    """Validate a formula before saving."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from app.strategy.excel_formula_engine import validate_formula_excel
+    ok, msg = validate_formula_excel(body.get("formula", ""))
+    return {"valid": ok, "message": msg}

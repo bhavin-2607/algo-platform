@@ -4,10 +4,8 @@ import toast from "react-hot-toast";
 
 const NAV = [
   { path:"/dashboard",    label:"DASHBOARD",    icon:"▦" },
-  { path:"/market",      label:"LIVE MARKET",  icon:"◉" },
   { path:"/terminal",     label:"TERMINAL",     icon:"⌨" },
   { path:"/trading",      label:"POSITIONS",    icon:"◈" },
-  { path:"/charts",       label:"CHARTS",       icon:"📈" },
   { path:"/strategies",   label:"STRATEGIES",   icon:"⟳" },
   { path:"/formula",      label:"FORMULA",      icon:"ƒ" },
   { path:"/copy-trading", label:"COPY TRADING", icon:"⇉" },

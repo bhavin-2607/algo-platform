@@ -1,4 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+/**
+ * Trade Terminal
+ * ==============
+ * Unified terminal merging Live Market data + Trade execution
+ * Modelled exactly after the Excel Trade Terminal layout:
+ *   Row 1: Account summary (Cash, Margin, Overall PnL, Order Type, Trade Mode)
+ *   Row 3+: Per-symbol rows with OHLC, VWAP, Best Buy/Sell, LTP, signals, entry/exit, T/SL, PnL
+ */
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
@@ -20,526 +28,1123 @@ interface TerminalRow {
   auto_execute: boolean;
   is_active: boolean;
   status: string;
-  // Live data
+  // Live market data (from Dhan)
   ltp: number | null;
   open: number | null;
   high: number | null;
   low: number | null;
+  close: number | null;
+  vwap: number | null;
   volume: number | null;
   oi: number | null;
-  bp1: number | null;
-  sp1: number | null;
+  bp1: number | null;  // best buy price
+  sp1: number | null;  // best sell price
+  change_pct: number | null;
+  // Trade data
   signal: string;
   entry_price: number | null;
+  entry_order_id: string | null;
+  entry_remarks: string | null;
   current_sl: number | null;
   current_target: number | null;
+  trailing_sl_enabled: boolean;
+  latest_sl: number | null;
   pnl: number | null;
   // Admin only
   entry_formula?: string;
   exit_formula?: string;
 }
 
+
+// ── Excel Formula Evaluator (frontend) ───────────────────────────────────────
+// Supports two syntaxes:
+// 1. Named fields:  =IF((high+low+close)/3>ltp,"DOWN","UP")
+// 2. Excel cell refs: =IF((C4+D4+E4)/3>K4,"DOWN","UP")  (row number ignored)
+// Cell ref map: B=open C=high D=low E=close F=vwap G=bp1 H=sp1 I=volume J=oi K=ltp L=change_pct
+function evalExcelFormula(formula: string, tick: Record<string,any>): string | number | null {
+  if (!formula) return null;
+  let expr = formula.startsWith("=") ? formula.slice(1) : formula;
+
+  // Map cell references (e.g. C4, D4) → numeric values
+  const cellMap: Record<string, string> = {
+    B: "open",  C: "high",  D: "low",       E: "close",
+    F: "vwap",  G: "bp1",   H: "sp1",         I: "volume",
+    J: "oi",    K: "ltp",   L: "change_pct", M: "atp",
+  };
+  expr = expr.replace(/\b([A-Z]{1,2})\d+\b/g, (_: string, col: string) => {
+    const field = cellMap[col.toUpperCase()];
+    const val   = field ? (tick[field] ?? 0) : 0;
+    return String(parseFloat(val) || 0);
+  });
+
+  // Replace named field references (case-insensitive)
+  const namedFields: Record<string, string> = {
+    open: "open", high: "high", low: "low", close: "close",
+    vwap: "vwap", atp: "atp", ltp: "ltp", volume: "volume", oi: "oi",
+    change_pct: "change_pct", bp1: "bp1", sp1: "sp1",
+  };
+  // Replace whole-word named field refs with their values
+  Object.entries(namedFields).forEach(([name, field]) => {
+    const re = new RegExp(`\\b${name}\\b`, "gi");
+    expr = expr.replace(re, String(parseFloat(tick[field] ?? 0) || 0));
+  });
+
+  // Excel → JS
+  expr = expr.replace(/<>/g, "!==");
+  expr = expr.replace(/\bIF\s*\(/gi,      "_IF(");
+  expr = expr.replace(/\bAND\s*\(/gi,     "_AND(");
+  expr = expr.replace(/\bOR\s*\(/gi,      "_OR(");
+  expr = expr.replace(/\bAVERAGE\s*\(/gi, "_AVG(");
+  expr = expr.replace(/\bROUND\s*\(/gi,   "Math.round(");
+  expr = expr.replace(/\bABS\s*\(/gi,     "Math.abs(");
+  expr = expr.replace(/\bSQRT\s*\(/gi,    "Math.sqrt(");
+  expr = expr.replace(/\bMAX\s*\(/gi,     "Math.max(");
+  expr = expr.replace(/\bMIN\s*\(/gi,     "Math.min(");
+  expr = expr.replace(/"/g, "'");
+
+  try {
+    const _IF  = (c: any, t: any, f: any) => c ? t : f;
+    const _AND = (...a: any[]) => a.every(Boolean);
+    const _OR  = (...a: any[]) => a.some(Boolean);
+    const _AVG = (...a: number[]) => a.reduce((s,v)=>s+v,0)/a.length;
+    // eslint-disable-next-line no-new-func
+    const result = new Function(
+      "_IF","_AND","_OR","_AVG","Math",
+      `"use strict"; return (${expr});`
+    )(_IF, _AND, _OR, _AVG, Math);
+    if (typeof result === "number") return isFinite(result) ? Math.round(result * 100) / 100 : null;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+// Get color for a formula column value based on color_rules
+function getColColor(value: any, colorRules: string | null): string {
+  if (!colorRules || value == null) return "var(--text)";
+  try {
+    const rules = JSON.parse(colorRules);
+    const key   = String(value);
+    const color = rules[key] ?? rules[key.toLowerCase()];
+    if (color === "green")  return "var(--green)";
+    if (color === "red")    return "var(--red)";
+    if (color === "yellow") return "var(--yellow)";
+    if (color === "muted")  return "var(--muted)";
+    // positive/negative rules
+    if (typeof value === "number") {
+      if (value > 0 && rules["positive"]) {
+        const c = rules["positive"];
+        if (c === "green") return "var(--green)";
+        if (c === "red")   return "var(--red)";
+      }
+      if (value < 0 && rules["negative"]) {
+        const c = rules["negative"];
+        if (c === "green") return "var(--green)";
+        if (c === "red")   return "var(--red)";
+      }
+    }
+  } catch {}
+  return "var(--text)";
+}
+
 export default function TerminalPage() {
   const qc = useQueryClient();
   const { accessToken, user } = useAuthStore();
   const isAdmin = user?.role === "admin";
+  const [liveData,   setLiveData]   = useState<Record<string, any>>({});
+  const [wsStatus,   setWsStatus]   = useState<"connecting"|"live"|"polling">("connecting");
+  const [lastUpdate, setLastUpdate] = useState<Date|null>(null);
+  const [showAdd,    setShowAdd]    = useState(false);
+  const [formulaRow, setFormulaRow] = useState<{id:string,symbol:string}|null>(null);
+  const [showColumns, setShowColumns] = useState(false);
+  const wsRef = useRef<WebSocket|null>(null);
 
-  // Live data from WebSocket — overrides REST poll
-  const [liveData, setLiveData] = useState<Record<string, Partial<TerminalRow>>>({});
-  const wsRef = useRef<WebSocket | null>(null);
+  // ── Watchlist (persisted to DB) ─────────────────────────────────────────────
+  const { data: wlData } = useQuery({
+    queryKey: ["watchlist"],
+    queryFn: () => api.get("/market/watchlist").then(r => r.data.symbols as string[]),
+  });
+  const watchlist: string[] = wlData ?? [];
 
-  const { data: rows, isLoading } = useQuery({
+  // ── Terminal rows (strategies/formulas with T/SL config) ───────────────────
+  const { data: termRows } = useQuery({
     queryKey: ["terminal-rows"],
-    queryFn: () => api.get("/terminal/rows").then(r => r.data as TerminalRow[]),
-    refetchInterval: 5_000,
+    queryFn: () => api.get("/terminal/rows").then(r => r.data),
+    refetchInterval: 10_000,
   });
 
-  const { data: termStatus } = useQuery({
-    queryKey: ["terminal-status"],
-    queryFn: () => api.get("/terminal/status").then(r => r.data),
-    refetchInterval: 3_000,
+  // ── Account summary ────────────────────────────────────────────────────────
+  const { data: funds } = useQuery({
+    queryKey: ["dhan-funds"],
+    queryFn: () => api.get("/market/funds").then(r => r.data),
+    refetchInterval: 30_000,
   });
 
-  const { data: brokers } = useQuery({
-    queryKey: ["brokers"],
-    queryFn: () => api.get("/brokers").then(r => r.data),
-  });
-
-  // WebSocket for live tick data
+  // ── WebSocket live feed ────────────────────────────────────────────────────
   useEffect(() => {
     if (!accessToken) return;
-    const wsBase = (import.meta.env.VITE_WS_URL ?? "ws://localhost:8000").replace("http", "ws");
-    const ws = new WebSocket(`${wsBase}/api/ws/feed?token=${accessToken}`);
-    wsRef.current = ws;
-    ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.row_id) {
-          setLiveData(prev => ({ ...prev, [data.row_id]: data }));
-        }
-      } catch {}
-    };
-    return () => ws.close();
+    const wsBase = (import.meta.env.VITE_WS_URL ?? "ws://localhost:8000").replace(/^http/, "ws");
+    const url    = `${wsBase}/api/ws/market?token=${accessToken}&symbols=ALL`;
+
+    function connect() {
+      setWsStatus("connecting");
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+      ws.onopen    = () => setWsStatus("live");
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "ticks") {
+            setLiveData(prev => {
+              const next = {...prev};
+              msg.data.forEach((q: any) => { next[q.symbol] = q; });
+              return next;
+            });
+            setLastUpdate(new Date());
+          }
+        } catch {}
+      };
+      ws.onerror = () => setWsStatus("polling");
+      ws.onclose = () => { setWsStatus("polling"); setTimeout(connect, 8000); };
+    }
+    connect();
+    return () => wsRef.current?.close();
   }, [accessToken]);
 
-  const startMutation = useMutation({
-    mutationFn: () => api.post("/terminal/start"),
-    onSuccess: () => { toast.success("Terminal started"); qc.invalidateQueries({ queryKey: ["terminal-status"] }); },
-    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to start"),
+  // ── REST fallback ──────────────────────────────────────────────────────────
+  useQuery({
+    queryKey: ["live-quotes-fallback"],
+    queryFn: async () => {
+      if (watchlist.length === 0) return [];
+      const data = await api.get(`/market/live-quotes?symbols=${watchlist.join(",")}`).then(r => r.data);
+      if (wsStatus !== "live") {
+        const map: Record<string,any> = {};
+        data.forEach((q: any) => { map[q.symbol] = q; });
+        setLiveData(map);
+        setLastUpdate(new Date());
+      }
+      return data;
+    },
+    refetchInterval: 4_000,
+    enabled: wsStatus !== "live" && watchlist.length > 0,
   });
 
-  const stopMutation = useMutation({
-    mutationFn: () => api.post("/terminal/stop"),
-    onSuccess: () => { toast.success("Terminal stopped"); qc.invalidateQueries({ queryKey: ["terminal-status"] }); },
+  // All columns (default + custom) from DB
+  const { data: allCols, refetch: refetchCols } = useQuery({
+    queryKey: ["terminal-columns"],
+    queryFn: () => api.get("/terminal/columns").then(r => r.data),
+  });
+  const visibleCols = (allCols ?? [])
+    .filter((c:any) => c.is_visible)
+    .sort((a:any, b:any) => a.col_order - b.col_order);
+  const customCols  = (allCols ?? []).filter((c:any) => c.col_type === "custom" && c.is_visible);
+
+  const hideColMutation = useMutation({
+    mutationFn: ({id, visible}: any) =>
+      api.patch(`/terminal/columns/${id}/visibility`, {is_visible: visible}),
+    onSuccess: () => refetchCols(),
   });
 
-  const exitMutation = useMutation({
+  const deleteColMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/terminal/columns/${id}`),
+    onSuccess: () => { toast.success("Column removed"); refetchCols(); },
+  });
+
+  const resetColsMutation = useMutation({
+    mutationFn: () => api.post("/terminal/columns/reset"),
+    onSuccess: () => { toast.success("Columns reset to defaults"); refetchCols(); },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (sym: string) => api.delete(`/market/watchlist/${sym}`),
+    onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({queryKey:["watchlist"]}); },
+  });
+
+  const toggleRowMutation = useMutation({
+    mutationFn: ({id, is_active}: any) => api.patch(`/terminal/rows/${id}/activate`, {is_active}),
+    onSuccess: () => qc.invalidateQueries({queryKey:["terminal-rows"]}),
+  });
+
+  const exitRowMutation = useMutation({
     mutationFn: (id: string) => api.post(`/terminal/rows/${id}/exit`),
-    onSuccess: () => { toast.success("Exit order sent"); qc.invalidateQueries({ queryKey: ["terminal-rows"] }); },
-    onError: () => toast.error("No active position on this row"),
+    onSuccess: () => { toast.success("Exit order sent"); qc.invalidateQueries({queryKey:["terminal-rows"]}); },
+    onError: () => toast.error("No active position"),
   });
 
-  const toggleMutation = useMutation({
-    mutationFn: ({ id, is_active }: any) => api.patch(`/terminal/rows/${id}/activate`, { is_active }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["terminal-rows"] }),
-  });
+  const isLive = wsStatus === "live";
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/terminal/rows/${id}`),
-    onSuccess: () => { toast.success("Row removed"); qc.invalidateQueries({ queryKey: ["terminal-rows"] }); },
-  });
+  // Build unified row list — watchlist symbols merged with terminal rows
+  const termRowMap: Record<string, any> = {};
+  (termRows ?? []).forEach((r: any) => { termRowMap[r.symbol] = r; });
 
-  const isRunning = termStatus?.running;
-
-  // Merge REST data with live WebSocket updates
-  const mergedRows: TerminalRow[] = (rows ?? []).map(r => ({
-    ...r,
-    ...(liveData[r.id] ?? {}),
-  }));
-
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [editingRow,  setEditingRow]  = useState<TerminalRow | null>(null);
+  const overallPnl = (termRows ?? []).reduce((s: number, r: any) => s + (r.pnl ?? 0), 0);
 
   return (
     <Layout>
-      {/* Header */}
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">TRADE TERMINAL</h1>
-          <p className="page-sub">Live multi-symbol trading — replaces Excel terminal</p>
-        </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <div className={`market-status${isRunning ? "" : " stopped"}`}
-            style={!isRunning ? { color: "var(--muted)" } : {}}>
-            <div className="market-dot" style={!isRunning ? { background: "var(--muted)", boxShadow: "none" } : {}} />
-            <span>{isRunning ? "TERMINAL LIVE" : "TERMINAL STOPPED"}</span>
+      {/* ── Account Summary Bar (Row 1 of Excel) ──────────────────────────── */}
+      <div style={{
+        display: "flex", gap: 0, marginBottom: 16,
+        border: "1px solid var(--border)", background: "var(--surface)",
+      }}>
+        {[
+          { label: "AVAIL BALANCE", value: funds?.availabelBalance != null ? `₹${Number(funds.availabelBalance).toLocaleString()}` : "—" },
+          { label: "USED MARGIN",   value: funds?.utilizedAmount   != null ? `₹${Number(funds.utilizedAmount).toLocaleString()}`   : "—" },
+          { label: "OVERALL P&L",   value: `${overallPnl >= 0 ? "+" : ""}₹${overallPnl.toLocaleString()}`,
+            color: overallPnl >= 0 ? "var(--green)" : "var(--red)" },
+        ].map(({label, value, color}) => (
+          <div key={label} style={{
+            flex: 1, padding: "12px 20px",
+            borderRight: "1px solid var(--border)",
+          }}>
+            <div style={{fontSize: 9, letterSpacing: 2, color: "var(--muted)", marginBottom: 4}}>{label}</div>
+            <div style={{fontSize: 18, fontWeight: 700, color: color ?? "var(--text)"}}>{value}</div>
           </div>
-          {isRunning
-            ? <button onClick={() => stopMutation.mutate()} disabled={stopMutation.isPending}
-                style={{ padding: "8px 16px", background: "rgba(255,68,102,0.1)", border: "1px solid rgba(255,68,102,0.4)",
-                  color: "var(--red)", fontFamily: "var(--font)", fontSize: 11, cursor: "pointer", letterSpacing: 1 }}>
-                ⏹ STOP
-              </button>
-            : <button onClick={() => startMutation.mutate()} disabled={startMutation.isPending}
-                style={{ padding: "8px 16px", background: "var(--green-dim)", border: "1px solid rgba(0,255,136,0.4)",
-                  color: "var(--green)", fontFamily: "var(--font)", fontSize: 11, cursor: "pointer", letterSpacing: 1 }}>
-                {startMutation.isPending ? "STARTING..." : "▶ START"}
-              </button>
-          }
-          <button className="connect-btn" onClick={() => { setEditingRow(null); setShowAddForm(v => !v); }}>
-            {showAddForm ? "✕ CANCEL" : "+ ADD SYMBOL"}
+        ))}
+
+        {/* Status + controls */}
+        <div style={{display:"flex", alignItems:"center", gap:12, padding:"0 20px", marginLeft:"auto"}}>
+          <div style={{display:"flex", alignItems:"center", gap:6,
+            color: isLive ? "var(--green)" : "var(--muted)", fontSize: 11}}>
+            <span style={{width:7, height:7, borderRadius:"50%", display:"inline-block",
+              background: isLive ? "var(--green)" : "var(--muted)",
+              boxShadow: isLive ? "0 0 6px var(--green)" : "none"}} />
+            {isLive ? "LIVE" : "POLLING"}
+          </div>
+          {lastUpdate && <span style={{fontSize:10, color:"var(--muted)"}}>
+            {lastUpdate.toLocaleTimeString()}
+          </span>}
+          {isAdmin && (
+            <button className="exit-btn" style={{fontSize:11, padding:"6px 14px",
+              color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
+              onClick={() => setShowColumns(true)}>
+              🔧 COLUMNS
+            </button>
+          )}
+          <button className="connect-btn" style={{fontSize:11, padding:"6px 14px"}}
+            onClick={() => { setShowAdd(v => !v); }}>
+            {showAdd ? "✕ CANCEL" : "+ ADD SYMBOL"}
           </button>
         </div>
       </div>
 
-      {/* Add/Edit form */}
-      {(showAddForm || editingRow) && (
-        <AddRowForm
-          brokers={brokers ?? []}
-          isAdmin={isAdmin}
-          initial={editingRow}
-          onSaved={() => { setShowAddForm(false); setEditingRow(null); qc.invalidateQueries({ queryKey: ["terminal-rows"] }); }}
-          onCancel={() => { setShowAddForm(false); setEditingRow(null); }}
+      {/* ── Admin Formula Modal ─────────────────────────────────────────────── */}
+      {isAdmin && formulaRow && (
+        <AdminFormulaPanel
+          rowId={formulaRow.id}
+          symbol={formulaRow.symbol}
+          onClose={() => setFormulaRow(null)}
         />
       )}
 
-      {/* Terminal table */}
-      <div className="card" style={{ overflowX: "auto" }}>
-        <div className="card-header">
-          <span className="card-title">SYMBOL WATCHLIST</span>
-          <span className="card-badge">{mergedRows.length} symbols</span>
-        </div>
+      {/* ── Column Manager Modal ──────────────────────────────────────────── */}
+      {isAdmin && showColumns && (
+        <AdminColumnManager onClose={() => setShowColumns(false)} />
+      )}
 
-        {isLoading && <div style={{ padding: "24px 20px", color: "var(--muted)", fontSize: 12 }}>Loading...</div>}
+      {/* ── Add Symbol Panel ────────────────────────────────────────────────── */}
+      {showAdd && (
+        <AddSymbolPanel onAdded={() => {
+          qc.invalidateQueries({queryKey:["watchlist"]});
+          setShowAdd(false);
+        }} />
+      )}
+      {/* ── Main Terminal Table ──────────────────────────────────────────────── */}
+      <div style={{overflowX:"auto"}}>
+        <table style={{
+          width:"100%", borderCollapse:"collapse",
+          fontSize:13, fontFamily:"var(--font)",
+        }}>
+          <thead>
+            <tr style={{background:"var(--surface)", borderBottom:"2px solid var(--border)"}}>
+              {/* Fixed columns */}
+              <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
+                borderRight:"1px solid var(--border)",minWidth:30}}>#</th>
+              <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
+                borderRight:"1px solid var(--border)",minWidth:140}}>SYMBOL</th>
 
-        {!isLoading && mergedRows.length === 0 && (
-          <div className="empty-state">
-            No symbols added. Click <strong>+ ADD SYMBOL</strong> to start.
-          </div>
-        )}
-
-        {mergedRows.length > 0 && (
-          <table className="data-table" style={{ minWidth: 1100 }}>
-            <thead>
-              <tr>
-                <th style={{ width: 32 }}>ON</th>
-                <th>SYMBOL</th>
-                <th>STRATEGY</th>
-                <th>LTP</th>
-                <th>OPEN</th>
-                <th>HIGH</th>
-                <th>LOW</th>
-                <th>VOLUME</th>
-                <th>SIGNAL</th>
-                <th>ENTRY ₹</th>
-                <th>TARGET</th>
-                <th>SL</th>
-                <th>P&L</th>
-                <th>STATUS</th>
-                <th>MODE</th>
-                <th style={{ width: 120 }}>ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mergedRows.map(row => (
-                <TerminalTableRow
-                  key={row.id}
-                  row={row}
-                  isAdmin={isAdmin}
-                  onToggle={() => toggleMutation.mutate({ id: row.id, is_active: !row.is_active })}
-                  onExit={() => exitMutation.mutate(row.id)}
-                  onEdit={() => { setEditingRow(row); setShowAddForm(false); }}
-                  onDelete={() => deleteMutation.mutate(row.id)}
-                />
+              {/* Dynamic columns from DB */}
+              {visibleCols.map((col:any) => (
+                <th key={col.id} style={{
+                  padding:"8px 8px", fontSize:10, letterSpacing:1.5,
+                  color: col.col_type==="custom" ? "var(--yellow)" : "var(--muted)",
+                  whiteSpace:"nowrap", borderRight:"1px solid var(--border)",
+                  minWidth: col.width || 80,
+                }}>
+                  <div style={{display:"flex",alignItems:"center",gap:3}}>
+                    <span>{col.name}</span>
+                    <button
+                      onClick={() => deleteColMutation.mutate(col.id)}
+                      title="Hide/Remove column"
+                      style={{
+                        background:"transparent",border:"none",
+                        color:"rgba(255,68,102,0.4)",cursor:"pointer",
+                        fontSize:9,padding:0,lineHeight:1,
+                        opacity:0.6,
+                      }}>✕</button>
+                  </div>
+                </th>
               ))}
-            </tbody>
-          </table>
-        )}
+
+              {/* Actions column */}
+              <th style={{padding:"8px 6px",fontSize:9,color:"var(--muted)"}}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {watchlist.length === 0 && (
+              <tr><td colSpan={20} style={{padding:"40px 20px", textAlign:"center",
+                color:"var(--muted)", fontSize:12}}>
+                No symbols — click <strong>+ ADD SYMBOL</strong> to start
+              </td></tr>
+            )}
+            {watchlist.map(sym => {
+              const live = liveData[sym] ?? {};
+              const trow = termRowMap[sym];
+              const ltp  = live.ltp ?? trow?.ltp ?? null;
+              const chg  = live.change_pct ?? null;
+              const pos  = (chg ?? 0) >= 0;
+              const inPos = trow?.status === "active";
+              const pnl  = trow?.pnl ?? null;
+              const tick  = { ...live, ltp: ltp ?? 0 };
+
+              // Build cell value for each column
+              function getCellValue(col: any): {value: any, color: string, formatted: string} {
+                let value: any = null;
+                let color = "var(--text)";
+
+                if ((col.col_type === "custom" || col.col_type === "formula") && col.formula) {
+                  value = evalExcelFormula(col.formula, tick);
+                  color = getColColor(value, col.color_rules);
+                } else {
+                  // Default column — get from tick/trow
+                  switch(col.col_key) {
+                    case "open":        value = live.open;  break;
+                    case "high":        value = live.high; color = "var(--green)"; break;
+                    case "low":         value = live.low;  color = "var(--red)";   break;
+                    case "close":       value = live.close; break;
+                    case "vwap":        value = live.vwap || live.atp || null; break;
+                    case "bp1":         value = live.bp1; color = "var(--green)"; break;
+                    case "sp1":         value = live.sp1; color = "var(--red)";   break;
+                    case "volume":      value = live.volume; break;
+                    case "oi":          value = live.oi; break;
+                    case "ltp":         value = ltp; color = "var(--text)"; break;
+                    case "change_pct":  value = chg; color = pos?"var(--green)":"var(--red)"; break;
+                    case "quantity":    value = trow?.quantity; break;
+                    case "side":        return {value:"side", color, formatted:"side"};
+                    case "signal":      return {value:"signal", color, formatted:"signal"};
+                    case "entry_price": value = trow?.entry_price; break;
+                    case "target":      value = trow?.current_target; color = "var(--green)"; break;
+                    case "sl":          value = trow?.current_sl; color = "var(--red)"; break;
+                    case "trail":       return {value:"trail",color,formatted:"trail"};
+                    case "status":      return {value:"status",color,formatted:"status"};
+                    case "pnl":         value = pnl; color = pnl==null?"var(--muted)":pnl>=0?"var(--green)":"var(--red)"; break;
+                  }
+                  // Apply color rules if defined
+                  if (col.color_rules) color = getColColor(value, col.color_rules);
+                }
+
+                // Format value
+                let formatted = "—";
+                if (value != null && value !== "" && value !== 0 || value === 0 && col.col_key === "oi") {
+                  if (col.col_key === "volume" || col.col_key === "oi") {
+                    formatted = value != null && value > 0 ? (Number(value)/100000).toFixed(1)+"L" : "—";
+                  } else if (col.col_key === "change_pct") {
+                    formatted = value != null ? `${pos?"+":""}${Number(value).toFixed(2)}%` : "—";
+                  } else if (typeof value === "number" && col.col_key !== "quantity") {
+                    formatted = `₹${Number(value).toLocaleString()}`;
+                  } else {
+                    formatted = String(value);
+                  }
+                }
+                return {value, color, formatted};
+              }
+
+              return (
+                <tr key={sym} style={{
+                  borderBottom:"1px solid var(--border)",
+                  background: inPos ? "rgba(0,255,136,0.03)" : "transparent",
+                }}
+                  onMouseEnter={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.06)":"rgba(255,255,255,0.02)")}
+                  onMouseLeave={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.03)":"transparent")}
+                >
+
+
+                  {/* Serial number */}
+                  <td style={{padding:"6px 10px",fontSize:12,color:"var(--muted)",
+                    borderRight:"1px solid var(--border)",textAlign:"center",
+                    fontWeight:600}}>
+                    {watchlist.indexOf(sym) + 1}
+                  </td>
+
+                  {/* Symbol */}
+                  <td style={{padding:"6px 10px",fontWeight:700,color:"var(--green)",
+                    whiteSpace:"nowrap",borderRight:"1px solid var(--border)"}}>
+                    {sym}
+                    <div style={{fontSize:11,color:"var(--muted)",fontWeight:400}}>
+                      {trow?.strategy_label ?? "WATCHLIST"}
+                    </div>
+                  </td>
+
+                  {/* Dynamic columns */}
+                  {visibleCols.map((col:any) => {
+                    const {value, color, formatted} = getCellValue(col);
+
+                    // Special render for non-value columns
+                    if (col.col_key === "side") return (
+                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
+                        {inPos?<span className="badge badge-green">BUY</span>:<span style={{color:"var(--muted)"}}>—</span>}
+                      </td>
+                    );
+                    if (col.col_key === "signal") return (
+                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
+                        <span className={`badge ${
+                          trow?.signal==="BUY"?"badge-green":trow?.signal==="SELL"?"badge-red":
+                          trow?.signal==="EXIT"?"badge-yellow":"badge-gray"
+                        }`} style={{minWidth:40,textAlign:"center"}}>
+                          {trow?.signal??"—"}
+                        </span>
+                      </td>
+                    );
+                    if (col.col_key === "trail") return (
+                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
+                        {trow?.trailing_sl
+                          ?<span className="badge badge-yellow">ON {trow?.trail_pct}%</span>
+                          :<span style={{color:"var(--muted)"}}>OFF</span>}
+                      </td>
+                    );
+                    if (col.col_key === "status") return (
+                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
+                        <span className={`badge ${
+                          trow?.status==="active"?"badge-green":
+                          trow?.status==="watching"?"badge-gray":"badge-gray"
+                        }`}>{trow?.status?.toUpperCase()??"—"}</span>
+                      </td>
+                    );
+                    if (col.col_key === "ltp") return (
+                      <td key={col.id} style={{padding:"6px 10px",fontWeight:700,fontSize:13,
+                        borderRight:"1px solid var(--border)"}}>
+                        {ltp?`₹${Number(ltp).toLocaleString()}`:<span style={{color:"var(--muted)"}}>—</span>}
+                      </td>
+                    );
+                    if (col.col_key === "pnl") return (
+                      <td key={col.id} style={{padding:"6px 10px",fontWeight:700,color,
+                        borderRight:"1px solid var(--border)"}}>
+                        {pnl!=null?`${pnl>=0?"+":""}₹${pnl.toLocaleString()}`:"—"}
+                      </td>
+                    );
+
+                    return (
+                      <td key={col.id} style={{
+                        padding:"7px 10px", color,
+                        borderRight:"1px solid var(--border)",
+                        fontWeight: col.col_key==="ltp"?700:400,
+                      }}>
+                        {formatted}
+                      </td>
+                    );
+                  })}
+
+                  {/* Actions */}
+                  <td style={{padding:"6px 8px"}}>
+                    <div style={{display:"flex",gap:4}}>
+                      {inPos&&(
+                        <button className="exit-btn"
+                          style={{padding:"2px 8px",fontSize:10,color:"var(--red)",
+                            borderColor:"rgba(255,68,102,0.4)"}}
+                          onClick={()=>exitRowMutation.mutate(trow.id)}>EXIT</button>
+                      )}
+                      {isAdmin&&trow&&(
+                        <button onClick={e=>{e.stopPropagation();setFormulaRow({id:trow.id,symbol:sym});}}
+                          style={{padding:"2px 6px",fontSize:10,cursor:"pointer",
+                            background:"rgba(255,208,96,0.1)",border:"1px solid rgba(255,208,96,0.3)",
+                            color:"var(--yellow)",fontFamily:"var(--font)"}}
+                          title="Set strategy formula">🔒</button>
+                      )}
+                      <button onClick={()=>removeMutation.mutate(sym)}
+                        style={{padding:"2px 6px",fontSize:11,background:"transparent",
+                          border:"none",color:"var(--muted)",cursor:"pointer",opacity:0.5}}>✕</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
-      {/* Summary footer */}
-      {mergedRows.length > 0 && (
-        <div className="stats-grid" style={{ marginTop: 16 }}>
-          <SumCard label="ACTIVE ROWS"
-            value={mergedRows.filter(r => r.is_active).length}
-            color={mergedRows.some(r => r.is_active) ? "green" : undefined} />
-          <SumCard label="IN POSITION"
-            value={mergedRows.filter(r => r.status === "active").length} />
-          <SumCard label="TOTAL P&L TODAY"
-            value={`₹${mergedRows.reduce((s, r) => s + (r.pnl ?? 0), 0).toLocaleString()}`}
-            color={mergedRows.reduce((s, r) => s + (r.pnl ?? 0), 0) >= 0 ? "green" : "red"} />
-          <SumCard label="BUY SIGNALS"
-            value={mergedRows.filter(r => r.signal === "BUY").length}
-            color={mergedRows.some(r => r.signal === "BUY") ? "green" : undefined} />
+            {/* ── Bottom Summary ───────────────────────────────────────────────────── */}
+      {watchlist.length > 0 && (
+        <div style={{display:"flex", gap:0, marginTop:16,
+          border:"1px solid var(--border)", background:"var(--surface)"}}>
+          {[
+            {label:"SYMBOLS",     value:watchlist.length},
+            {label:"ACTIVE",      value:(termRows??[]).filter((r:any)=>r.is_active).length,
+              color:"var(--green)"},
+            {label:"IN POSITION", value:(termRows??[]).filter((r:any)=>r.status==="active").length,
+              color:"var(--green)"},
+            {label:"LIVE DATA",   value: isLive ? "● WEBSOCKET" : "○ POLLING",
+              color: isLive ? "var(--green)" : "var(--muted)"},
+          ].map(({label, value, color}) => (
+            <div key={label} style={{flex:1, padding:"10px 20px",
+              borderRight:"1px solid var(--border)"}}>
+              <div style={{fontSize:9,letterSpacing:2,color:"var(--muted)",marginBottom:2}}>{label}</div>
+              <div style={{fontSize:14,fontWeight:700,color:color??"var(--text)"}}>{value}</div>
+            </div>
+          ))}
         </div>
       )}
     </Layout>
   );
 }
 
-/* ── Terminal Table Row ────────────────────────────────────────────────────── */
-function TerminalTableRow({ row, isAdmin, onToggle, onExit, onEdit, onDelete }: {
-  row: TerminalRow;
-  isAdmin: boolean;
-  onToggle: () => void;
-  onExit: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const pnl     = row.pnl ?? 0;
-  const inPos   = row.status === "active";
-  const signal  = row.signal ?? "—";
+// ── Add Symbol Panel ──────────────────────────────────────────────────────────
+function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
+  const [query,   setQuery]   = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const addMutation = useMutation({
+    mutationFn: (inst: any) => api.post("/market/watchlist", {
+      symbol:           inst.symbol,
+      security_id:      inst.security_id,
+      exchange_segment: inst.segment,
+    }),
+    onSuccess: (_, inst) => { toast.success(`${inst.symbol} added`); onAdded(); },
+  });
+
+  useEffect(() => {
+    if (query.length < 2) { setResults([]); return; }
+    const t = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const data = await api.get(`/market/instruments/search?q=${query}`).then(r => r.data);
+        setResults(data);
+      } catch {}
+      setLoading(false);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
 
   return (
-    <tr style={{ background: inPos ? "rgba(0,255,136,0.02)" : undefined }}>
-      {/* Toggle */}
-      <td>
-        <div onClick={onToggle} style={{
-          width: 24, height: 24, borderRadius: "50%", cursor: "pointer",
-          border: `2px solid ${row.is_active ? "var(--green)" : "var(--border)"}`,
-          background: row.is_active ? "var(--green)" : "transparent",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          transition: "all 0.2s",
-        }}>
-          {row.is_active && <span style={{ color: "var(--bg)", fontSize: 10, fontWeight: 700 }}>✓</span>}
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{padding:"14px 16px"}}>
+        <div style={{position:"relative", maxWidth:500, display:"flex", gap:8}}>
+          <input className="field-input" value={query}
+            onChange={e => setQuery(e.target.value)} autoFocus
+            placeholder="Search symbol or company... e.g. HDFC, Zomato, TCS"
+            style={{flex:1}} />
+          {loading && <span style={{position:"absolute", right:12, top:"50%",
+            transform:"translateY(-50%)", color:"var(--muted)", fontSize:11}}>...</span>}
         </div>
-      </td>
-
-      <td className="symbol">{row.symbol}<br /><span style={{ fontSize: 9, color: "var(--muted)" }}>{row.exchange}</span></td>
-      <td style={{ fontSize: 11, color: "var(--muted)" }}>{row.strategy_label}</td>
-
-      {/* Live prices */}
-      <td style={{ fontWeight: 700, fontSize: 13 }}>{row.ltp ? `₹${row.ltp.toLocaleString()}` : "—"}</td>
-      <td style={{ fontSize: 11, color: "var(--muted)" }}>{row.open ? `₹${row.open.toLocaleString()}` : "—"}</td>
-      <td style={{ fontSize: 11, color: "var(--green)" }}>{row.high ? `₹${row.high.toLocaleString()}` : "—"}</td>
-      <td style={{ fontSize: 11, color: "var(--red)" }}>{row.low ? `₹${row.low.toLocaleString()}` : "—"}</td>
-      <td style={{ fontSize: 11, color: "var(--muted)" }}>{row.volume ? `${(row.volume / 100000).toFixed(1)}L` : "—"}</td>
-
-      {/* Signal */}
-      <td>
-        <span className={`badge ${
-          signal === "BUY"  ? "badge-green" :
-          signal === "SELL" ? "badge-red"   :
-          signal === "EXIT" ? "badge-yellow" : "badge-gray"
-        }`} style={{ minWidth: 50, textAlign: "center" }}>
-          {signal}
-        </span>
-      </td>
-
-      {/* Position */}
-      <td style={{ color: inPos ? "var(--text)" : "var(--muted)", fontSize: 11 }}>
-        {row.entry_price ? `₹${row.entry_price.toLocaleString()}` : "—"}
-      </td>
-      <td style={{ color: "var(--green)", fontSize: 11 }}>
-        {row.current_target ? `₹${row.current_target.toLocaleString()}` : "—"}
-      </td>
-      <td style={{ color: "var(--red)", fontSize: 11 }}>
-        {row.current_sl ? `₹${row.current_sl.toLocaleString()}` : "—"}
-      </td>
-
-      {/* P&L */}
-      <td className={pnl >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontWeight: 700 }}>
-        {pnl !== 0 ? `${pnl >= 0 ? "+" : ""}₹${pnl.toLocaleString()}` : "—"}
-      </td>
-
-      {/* Status */}
-      <td>
-        <span className={`badge ${
-          row.status === "active"        ? "badge-green" :
-          row.status === "entry_pending" ? "badge-yellow" :
-          row.status === "exit_pending"  ? "badge-yellow" :
-          row.status === "watching"      ? "badge-gray" : "badge-gray"
-        }`}>
-          {row.status.toUpperCase().replace("_", " ")}
-        </span>
-      </td>
-
-      {/* Mode */}
-      <td>
-        <span className={`badge ${row.trade_mode === "REAL" ? "badge-red" : "badge-yellow"}`}>
-          {row.trade_mode}
-        </span>
-      </td>
-
-      {/* Actions */}
-      <td>
-        <div style={{ display: "flex", gap: 4 }}>
-          {inPos && (
-            <button className="exit-btn" style={{ color: "var(--red)", borderColor: "rgba(255,68,102,0.4)", padding: "3px 8px", fontSize: 10 }}
-              onClick={onExit}>EXIT</button>
-          )}
-          <button className="exit-btn" style={{ padding: "3px 8px", fontSize: 10 }} onClick={onEdit}>EDIT</button>
-          {!inPos && (
-            <button className="exit-btn" style={{ padding: "3px 8px", fontSize: 10, color: "var(--muted)" }} onClick={onDelete}>✕</button>
-          )}
-        </div>
-      </td>
-    </tr>
+        {results.length > 0 && (
+          <div style={{marginTop:6, border:"1px solid var(--border)",
+            background:"var(--surface)", maxHeight:240, overflowY:"auto", maxWidth:500}}>
+            {results.map(inst => (
+              <div key={inst.security_id}
+                style={{padding:"8px 12px", display:"flex", justifyContent:"space-between",
+                  alignItems:"center", borderBottom:"1px solid var(--border)", cursor:"pointer"}}
+                onMouseEnter={e => (e.currentTarget.style.background = "var(--green-dim)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "")}>
+                <div>
+                  <span style={{fontWeight:700, color:"var(--green)", fontSize:12}}>{inst.symbol}</span>
+                  <span style={{fontSize:10, color:"var(--muted)", marginLeft:8}}>{inst.name}</span>
+                </div>
+                <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                  <span style={{fontSize:9, color:"var(--muted)"}}>{inst.exchange} · {inst.series}</span>
+                  <button className="connect-btn" style={{padding:"2px 10px", fontSize:10}}
+                    onClick={() => addMutation.mutate(inst)}
+                    disabled={addMutation.isPending}>+ ADD</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
-/* ── Add/Edit Row Form ────────────────────────────────────────────────────── */
-function AddRowForm({ brokers, isAdmin, initial, onSaved, onCancel }: any) {
+
+// ── Admin Formula Panel ───────────────────────────────────────────────────────
+export function AdminFormulaPanel({ rowId, symbol, onClose }: {
+  rowId: string; symbol: string; onClose: () => void;
+}) {
+  const qc = useQueryClient();
   const [form, setForm] = useState({
-    symbol:         initial?.symbol         ?? "",
-    exchange:       initial?.exchange       ?? "NSE",
-    token:          initial?.token          ?? "",
-    strategy_label: initial?.strategy_label ?? "",
-    entry_formula:  initial?.entry_formula  ?? "",
-    exit_formula:   initial?.exit_formula   ?? "",
-    quantity:       initial?.quantity       ?? 1,
-    product_type:   initial?.product_type   ?? "MIS",
-    order_type:     initial?.order_type     ?? "MARKET",
-    trade_mode:     initial?.trade_mode     ?? "PAPER",
-    target_pct:     initial?.target_pct     ?? "",
-    sl_pct:         initial?.sl_pct         ?? "",
-    trailing_sl:    initial?.trailing_sl    ?? false,
-    trail_pct:      initial?.trail_pct      ?? "",
-    auto_execute:   initial?.auto_execute   ?? true,
-    broker_account_id: initial?.broker_account_id ?? "",
+    entry_formula:  "",
+    exit_formula:   "",
+    target_formula: "",
+    sl_formula:     "",
+    trail_pct:      "",
+    strategy_label: "",
+  });
+  const set = (k: string) => (e: any) => setForm(f => ({...f, [k]: e.target.value}));
+
+  const { data: current } = useQuery({
+    queryKey: ["row-formula", rowId],
+    queryFn: () => api.get(`/terminal/rows/${rowId}/formula`).then(r => r.data),
+    onSuccess: (d: any) => setForm({
+      entry_formula:  d.entry_formula  ?? "",
+      exit_formula:   d.exit_formula   ?? "",
+      target_formula: "",
+      sl_formula:     "",
+      trail_pct:      d.trail_pct      ?? "",
+      strategy_label: d.strategy_label ?? "",
+    }),
+  } as any);
+
+  const { data: presets } = useQuery({
+    queryKey: ["formula-presets"],
+    queryFn: () => api.get("/terminal/formula-presets").then(r => r.data),
   });
 
-  const { data: instruments } = useQuery({
-    queryKey: ["terminal-instruments", form.symbol],
-    queryFn: () => api.get(`/terminal/instruments?q=${form.symbol}`).then(r => r.data),
-    enabled: form.symbol.length >= 2,
+  const saveMutation = useMutation({
+    mutationFn: () => api.put(`/terminal/rows/${rowId}/formula`, {
+      entry_formula:  form.entry_formula  || null,
+      exit_formula:   form.exit_formula   || null,
+      trail_pct:      form.trail_pct      ? parseFloat(form.trail_pct) : null,
+      strategy_label: form.strategy_label || null,
+    }),
+    onSuccess: () => {
+      toast.success(`Formula saved for ${symbol}`);
+      qc.invalidateQueries({queryKey: ["terminal-rows"]});
+      onClose();
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Save failed"),
   });
 
-  const set = (k: string) => (e: any) => setForm(f => ({ ...f, [k]: e.target?.value ?? e }));
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      background: "rgba(0,0,0,0.8)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <div style={{
+        background: "var(--surface)", border: "1px solid var(--border)",
+        padding: 24, width: 560, maxHeight: "90vh", overflowY: "auto",
+      }}>
+        {/* Header */}
+        <div style={{display:"flex", justifyContent:"space-between", marginBottom:20}}>
+          <div>
+            <div style={{fontSize:14, fontWeight:700, color:"var(--green)"}}>
+              🔒 FORMULA CONFIG
+            </div>
+            <div style={{fontSize:11, color:"var(--muted)"}}>
+              {symbol} — Admin only · Hidden from users
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{background:"transparent",border:"none",color:"var(--muted)",
+              cursor:"pointer",fontSize:18}}>✕</button>
+        </div>
+
+        {/* Preset shortcuts */}
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10, letterSpacing:2, color:"var(--muted)", marginBottom:8}}>
+            BUILT-IN STRATEGIES
+          </div>
+          <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
+            {(presets ?? []).filter((p: any) => p.shortcut !== "custom").map((p: any) => (
+              <button key={p.shortcut}
+                onClick={() => setForm(f => ({
+                  ...f,
+                  entry_formula:  p.shortcut,
+                  strategy_label: f.strategy_label || p.name,
+                }))}
+                style={{
+                  padding: "5px 10px", fontSize: 10, cursor: "pointer",
+                  fontFamily: "var(--font)",
+                  background: form.entry_formula === p.shortcut
+                    ? "var(--green-dim)" : "transparent",
+                  border: `1px solid ${form.entry_formula === p.shortcut
+                    ? "rgba(0,255,136,0.4)" : "var(--border)"}`,
+                  color: form.entry_formula === p.shortcut
+                    ? "var(--green)" : "var(--muted)",
+                }}
+                title={p.description}>
+                {p.name.split(" ").slice(0,3).join(" ")}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Formula fields */}
+        <div style={{display:"flex", flexDirection:"column", gap:12}}>
+          <div className="field">
+            <label className="field-label" style={{color:"var(--yellow)"}}>
+              ENTRY FORMULA (hidden from users)
+            </label>
+            <input className="field-input" value={form.entry_formula}
+              onChange={set("entry_formula")}
+              placeholder="@ORFib  or  @MACross(9,21)  or  ltp > ma(20) AND rsi(14) < 70" />
+            <div style={{fontSize:10, color:"var(--muted)", marginTop:4}}>
+              Built-ins: @ORFib · @ORFib(trail=0.3) · @MACross(9,21) · @RSI(14,30,70) · @VWAP
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="field-label" style={{color:"var(--yellow)"}}>
+              EXIT FORMULA (optional)
+            </label>
+            <input className="field-input" value={form.exit_formula}
+              onChange={set("exit_formula")}
+              placeholder="e.g. ma(9) < ma(21)  (leave blank for T/SL only)" />
+          </div>
+
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+            <div className="field">
+              <label className="field-label">TRAIL SL %</label>
+              <input className="field-input" type="number" value={form.trail_pct}
+                onChange={set("trail_pct")} placeholder="e.g. 0.3" />
+            </div>
+            <div className="field">
+              <label className="field-label">LABEL (shown to users)</label>
+              <input className="field-input" value={form.strategy_label}
+                onChange={set("strategy_label")}
+                placeholder="e.g. ORFib Strategy" />
+              <div style={{fontSize:10, color:"var(--muted)", marginTop:4}}>
+                Users see this label — not the formula
+              </div>
+            </div>
+          </div>
+
+          {/* Preview what user sees */}
+          <div style={{
+            padding:"12px 14px", background:"rgba(0,255,136,0.05)",
+            border:"1px solid rgba(0,255,136,0.2)",
+          }}>
+            <div style={{fontSize:10, letterSpacing:1.5, color:"var(--green)", marginBottom:6}}>
+              WHAT USERS WILL SEE
+            </div>
+            <div style={{fontSize:12}}>
+              <span style={{color:"var(--text)"}}>Symbol: </span>
+              <span style={{color:"var(--green)", fontWeight:700}}>{symbol}</span>
+              <span style={{color:"var(--muted)", marginLeft:12}}>
+                Strategy: {form.strategy_label || "—"}
+              </span>
+            </div>
+            <div style={{fontSize:11, color:"var(--muted)", marginTop:4}}>
+              Signal, entry price, target and SL will be auto-calculated and shown
+              in the terminal table. The formula itself is never visible to users.
+            </div>
+          </div>
+        </div>
+
+        <div style={{display:"flex", gap:12, marginTop:20}}>
+          <button className={`auth-btn${saveMutation.isPending?" loading":""}`}
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending}
+            style={{maxWidth:180}}>
+            {saveMutation.isPending ? "SAVING..." : "SAVE FORMULA →"}
+          </button>
+          <button className="exit-btn" onClick={onClose} style={{padding:"12px 20px"}}>
+            CANCEL
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Admin Column Manager ──────────────────────────────────────────────────────
+export function AdminColumnManager({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    name: "", formula: "", col_order: 0,
+    width: 80, color_rules: "",
+  });
+  const [editId,    setEditId]    = useState<string|null>(null);
+  const [validMsg,  setValidMsg]  = useState("");
+  const [validOk,   setValidOk]   = useState<boolean|null>(null);
+  const set = (k: string) => (e: any) => setForm(f => ({...f, [k]: e.target.value}));
+
+  const { data: columns } = useQuery({
+    queryKey: ["terminal-columns"],
+    queryFn: () => api.get("/terminal/columns").then(r => r.data),
+  });
+
+  const validateMutation = useMutation({
+    mutationFn: (formula: string) =>
+      api.post("/terminal/columns/validate", { formula }).then(r => r.data),
+    onSuccess: (d: any) => { setValidMsg(d.message); setValidOk(d.valid); },
+  });
 
   const saveMutation = useMutation({
     mutationFn: () => {
       const payload = {
-        ...form,
-        quantity:  parseInt(String(form.quantity)),
-        target_pct: form.target_pct ? parseFloat(String(form.target_pct)) : null,
-        sl_pct:     form.sl_pct     ? parseFloat(String(form.sl_pct))     : null,
-        trail_pct:  form.trail_pct  ? parseFloat(String(form.trail_pct))  : null,
-        broker_account_id: form.broker_account_id || null,
-        token: form.token || null,
+        name:        form.name,
+        formula:     form.formula,
+        col_order:   parseInt(String(form.col_order)),
+        width:       parseInt(String(form.width)),
+        is_visible:  true,
+        color_rules: form.color_rules || null,
       };
-      return initial
-        ? api.put(`/terminal/rows/${initial.id}`, payload)
-        : api.post("/terminal/rows", payload);
+      return editId
+        ? api.put(`/terminal/columns/${editId}`, payload)
+        : api.post("/terminal/columns", payload);
     },
-    onSuccess: () => { toast.success(initial ? "Row updated" : "Symbol added"); onSaved(); },
-    onError: (e: any) => toast.error(e.response?.data?.detail || "Save failed"),
+    onSuccess: () => {
+      toast.success(editId ? "Column updated" : "Column added");
+      qc.invalidateQueries({queryKey:["terminal-columns"]});
+      setForm({name:"",formula:"",col_order:0,width:80,color_rules:""});
+      setEditId(null); setValidMsg(""); setValidOk(null);
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
   });
 
-  function pickInstrument(inst: any) {
-    setForm(f => ({ ...f, symbol: inst.symbol, exchange: inst.exchange, token: inst.token }));
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/terminal/columns/${id}`),
+    onSuccess: () => {
+      toast.success("Column deleted");
+      qc.invalidateQueries({queryKey:["terminal-columns"]});
+    },
+  });
+
+  function startEdit(col: any) {
+    setEditId(col.id);
+    setForm({
+      name: col.name, formula: col.formula ?? "",
+      col_order: col.col_order, width: col.width,
+      color_rules: col.color_rules ?? "",
+    });
+    setValidMsg(""); setValidOk(null);
   }
 
+  const EXAMPLES = [
+    { name:"TREND",  formula:'=IF((C4+D4+E4)/3>K4,"DOWN","UP")',          colors:'{"UP":"green","DOWN":"red"}' },
+    { name:"HCG",    formula:"=ROUND(C4-E4,2)",                            colors:'{"positive":"green","negative":"red"}' },
+    { name:"OCG",    formula:"=ROUND(B4-E4,2)",                            colors:'{"positive":"green","negative":"red"}' },
+    { name:"LCG",    formula:"=ROUND(E4-D4,2)",                            colors:'{"positive":"green","negative":"red"}' },
+    { name:"KD",     formula:"=ROUND((close-low)/(high-low)*100,2)",             colors:'{}' },
+  ];
+
   return (
-    <div className="card" style={{ marginBottom: 20 }}>
-      <div className="card-header">
-        <span className="card-title">{initial ? "EDIT ROW" : "ADD SYMBOL TO TERMINAL"}</span>
-      </div>
-      <div style={{ padding: "20px 20px 8px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
-          {/* Symbol with autocomplete */}
-          <div className="field">
-            <label className="field-label">SYMBOL</label>
-            <input className="field-input" value={form.symbol}
-              onChange={set("symbol")} placeholder="e.g. RELIANCE" />
-            {instruments?.length > 0 && form.symbol && (
-              <div style={{ border: "1px solid var(--border)", background: "var(--surface)", marginTop: 2 }}>
-                {instruments.slice(0, 6).map((inst: any) => (
-                  <div key={inst.symbol} onClick={() => pickInstrument(inst)}
-                    style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--border)" }}
-                    onMouseEnter={e => (e.currentTarget.style.background = "var(--green-dim)")}
-                    onMouseLeave={e => (e.currentTarget.style.background = "")}>
-                    <span style={{ color: "var(--green)" }}>{inst.symbol}</span>
-                    <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 11 }}>{inst.exchange}</span>
+    <div style={{
+      position:"fixed", top:0, left:0, right:0, bottom:0,
+      background:"rgba(0,0,0,0.85)", zIndex:1000,
+      display:"flex", alignItems:"center", justifyContent:"center",
+    }}>
+      <div style={{
+        background:"var(--surface)", border:"1px solid var(--border)",
+        width:680, maxHeight:"92vh", overflowY:"auto",
+      }}>
+        {/* Header */}
+        <div style={{
+          padding:"16px 20px", borderBottom:"1px solid var(--border)",
+          display:"flex", justifyContent:"space-between", alignItems:"center",
+        }}>
+          <div>
+            <div style={{fontSize:14, fontWeight:700, color:"var(--green)"}}>
+              🔒 FORMULA COLUMNS
+            </div>
+            <div style={{fontSize:11, color:"var(--muted)"}}>
+              Admin only — users see calculated values, never the formula
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{background:"transparent",border:"none",
+              color:"var(--muted)",cursor:"pointer",fontSize:18}}>✕</button>
+        </div>
+
+        <div style={{padding:"20px"}}>
+          {/* Example templates */}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)",marginBottom:8}}>
+              QUICK TEMPLATES (click to load)
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {EXAMPLES.map(ex => (
+                <button key={ex.name}
+                  onClick={() => setForm(f => ({...f, name:ex.name,
+                    formula:ex.formula, color_rules:ex.colors}))}
+                  style={{
+                    padding:"5px 12px", fontSize:11, cursor:"pointer",
+                    fontFamily:"var(--font)", background:"transparent",
+                    border:"1px solid var(--border)", color:"var(--muted)",
+                    transition:"all 0.15s",
+                  }}
+                  onMouseEnter={e=>{
+                    (e.target as any).style.color="var(--green)";
+                    (e.target as any).style.borderColor="rgba(0,255,136,0.4)";
+                  }}
+                  onMouseLeave={e=>{
+                    (e.target as any).style.color="var(--muted)";
+                    (e.target as any).style.borderColor="var(--border)";
+                  }}>
+                  {ex.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Formula form */}
+          <div style={{
+            padding:"16px", border:"1px solid var(--border)",
+            background:"rgba(0,0,0,0.2)", marginBottom:16,
+          }}>
+            <div style={{fontSize:11,fontWeight:700,color:"var(--green)",marginBottom:12}}>
+              {editId ? "EDIT COLUMN" : "ADD NEW COLUMN"}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div className="field">
+                <label className="field-label">COLUMN NAME</label>
+                <input className="field-input" value={form.name}
+                  onChange={set("name")} placeholder="e.g. TREND" />
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div className="field">
+                  <label className="field-label">ORDER</label>
+                  <input className="field-input" type="number"
+                    value={form.col_order} onChange={set("col_order")} />
+                </div>
+                <div className="field">
+                  <label className="field-label">WIDTH (px)</label>
+                  <input className="field-input" type="number"
+                    value={form.width} onChange={set("width")} />
+                </div>
+              </div>
+            </div>
+
+            <div className="field" style={{marginBottom:8}}>
+              <label className="field-label" style={{color:"var(--yellow)"}}>
+                FORMULA (Excel syntax — hidden from users)
+              </label>
+              <input className="field-input" value={form.formula}
+                onChange={set("formula")}
+                placeholder='Named: =IF((high+low+close)/3>ltp,"DOWN","UP")  or Excel: =IF((C4+D4+E4)/3>K4,"DOWN","UP")' />
+              <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
+                <strong style={{color:"var(--green)"}}>Named (recommended):</strong> open, high, low, close, vwap, ltp, volume, oi, bp1, sp1
+                &nbsp;·&nbsp;
+                <strong style={{color:"var(--muted)"}}>Excel refs:</strong> B=Open C=High D=Low E=Close F=VWAP K=LTP I=Volume J=OI
+              </div>
+            </div>
+
+            {/* Validate button */}
+            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:12}}>
+              <button
+                onClick={() => validateMutation.mutate(form.formula)}
+                disabled={!form.formula || validateMutation.isPending}
+                style={{
+                  padding:"6px 14px", fontSize:11, cursor:"pointer",
+                  fontFamily:"var(--font)",
+                  background:"transparent",
+                  border:"1px solid var(--border)",
+                  color:"var(--muted)",
+                }}>
+                {validateMutation.isPending ? "..." : "✓ VALIDATE"}
+              </button>
+              {validMsg && (
+                <span style={{
+                  fontSize:11,
+                  color: validOk ? "var(--green)" : "var(--red)",
+                }}>
+                  {validOk ? "✓ " : "✗ "}{validMsg}
+                </span>
+              )}
+            </div>
+
+            <div className="field" style={{marginBottom:12}}>
+              <label className="field-label">COLOR RULES (JSON — optional)</label>
+              <input className="field-input" value={form.color_rules}
+                onChange={set("color_rules")}
+                placeholder='{"UP":"green","DOWN":"red"} or {"positive":"green","negative":"red"}' />
+              <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
+                Maps output values to colors: green, red, yellow, muted
+              </div>
+            </div>
+
+            <div style={{display:"flex",gap:8}}>
+              <button
+                className={`auth-btn${saveMutation.isPending?" loading":""}`}
+                onClick={() => saveMutation.mutate()}
+                disabled={!form.name || !form.formula || saveMutation.isPending}
+                style={{maxWidth:180}}>
+                {saveMutation.isPending ? "SAVING..." : editId ? "UPDATE →" : "ADD COLUMN →"}
+              </button>
+              {editId && (
+                <button className="exit-btn"
+                  onClick={() => {
+                    setEditId(null);
+                    setForm({name:"",formula:"",col_order:0,width:80,color_rules:""});
+                    setValidMsg(""); setValidOk(null);
+                  }}
+                  style={{padding:"10px 16px"}}>CANCEL</button>
+              )}
+            </div>
+          </div>
+
+          {/* All columns list with show/hide/delete */}
+          {columns && columns.length > 0 && (
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)"}}>
+                  ALL COLUMNS ({columns.length}) — click ✕ to remove, eye to show/hide
+                </div>
+                <button
+                  onClick={() => { if(confirm("Reset all columns to defaults?")) api.post("/terminal/columns/reset").then(()=>{toast.success("Reset");qc.invalidateQueries({queryKey:["terminal-columns"]});}).catch(()=>toast.error("Failed")); }}
+                  style={{padding:"4px 12px",fontSize:10,cursor:"pointer",
+                    background:"transparent",border:"1px solid var(--border)",
+                    color:"var(--muted)",fontFamily:"var(--font)"}}>
+                  ↺ RESET DEFAULTS
+                </button>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {columns.map((col: any) => (
+                  <div key={col.id} style={{
+                    display:"flex",alignItems:"center",gap:4,
+                    padding:"5px 10px",
+                    background: col.is_visible
+                      ? col.col_type==="custom"?"rgba(255,208,96,0.08)":"rgba(0,255,136,0.05)"
+                      : "rgba(74,85,104,0.1)",
+                    border:`1px solid ${col.is_visible
+                      ? col.col_type==="custom"?"rgba(255,208,96,0.3)":"rgba(0,255,136,0.2)"
+                      : "var(--border)"}`,
+                    opacity: col.is_visible ? 1 : 0.5,
+                  }}>
+                    <span style={{
+                      fontSize:11,fontWeight:700,
+                      color: col.col_type==="custom"?"var(--yellow)":"var(--text)",
+                    }}>{col.name}</span>
+                    {col.col_type==="custom"&&<span style={{fontSize:9,color:"var(--muted)"}}>ƒ</span>}
+                    {col.col_type==="custom"&&col.formula&&(
+                      <button className="exit-btn"
+                        style={{padding:"1px 6px",fontSize:9,marginLeft:2}}
+                        onClick={() => startEdit(col)}>EDIT</button>
+                    )}
+                    <button
+                      onClick={() => api.patch(`/terminal/columns/${col.id}/visibility`,
+                        {is_visible: !col.is_visible})
+                        .then(()=>qc.invalidateQueries({queryKey:["terminal-columns"]}))}
+                      title={col.is_visible ? "Hide" : "Show"}
+                      style={{background:"transparent",border:"none",
+                        color:col.is_visible?"var(--green)":"var(--muted)",
+                        cursor:"pointer",fontSize:11,padding:0}}>
+                      {col.is_visible ? "👁" : "🚫"}
+                    </button>
+                    <button
+                      onClick={() => { if(confirm(`Remove "${col.name}" column?`)) deleteMutation.mutate(col.id); }}
+                      title="Remove column"
+                      style={{background:"transparent",border:"none",
+                        color:"rgba(255,68,102,0.5)",cursor:"pointer",
+                        fontSize:10,padding:0}}>✕</button>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-          <TInput label="STRATEGY LABEL" value={form.strategy_label} onChange={set("strategy_label")} placeholder="My Strategy" />
-          <TInput label="QTY" value={form.quantity} onChange={set("quantity")} type="number" />
-          <div className="field">
-            <label className="field-label">PRODUCT</label>
-            <select className="field-input" value={form.product_type} onChange={set("product_type")}
-              style={{ background: "rgba(0,255,136,0.04)", color: "var(--text)", fontFamily: "var(--font)" }}>
-              <option>MIS</option><option>CNC</option><option>NRML</option>
-            </select>
-          </div>
-        </div>
+            </div>
+          )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
-          <TInput label="TARGET %" value={form.target_pct} onChange={set("target_pct")} type="number" placeholder="2.0" />
-          <TInput label="STOP LOSS %" value={form.sl_pct} onChange={set("sl_pct")} type="number" placeholder="1.0" />
-          <div className="field">
-            <label className="field-label">TRAILING SL</label>
-            <div style={{ display: "flex" }}>
-              {["ON","OFF"].map((v,i) => (
-                <button key={v} type="button"
-                  onClick={() => setForm(f => ({ ...f, trailing_sl: v === "ON" }))}
-                  style={{
-                    flex: 1, padding: 10, fontFamily: "var(--font)", fontSize: 11, cursor: "pointer",
-                    borderRight: i === 0 ? "none" : undefined, border: "1px solid",
-                    background: (form.trailing_sl && v==="ON") || (!form.trailing_sl && v==="OFF") ? "var(--green-dim)" : "transparent",
-                    borderColor: (form.trailing_sl && v==="ON") || (!form.trailing_sl && v==="OFF") ? "rgba(0,255,136,0.4)" : "var(--border)",
-                    color: (form.trailing_sl && v==="ON") || (!form.trailing_sl && v==="OFF") ? "var(--green)" : "var(--muted)",
-                  }}>{v}</button>
-              ))}
+          {(!columns || columns.length === 0) && (
+            <div style={{color:"var(--muted)",fontSize:12,textAlign:"center",padding:20}}>
+              No columns yet. Click ↺ RESET DEFAULTS to restore default columns.
+              <br/>
+              <button className="connect-btn" style={{marginTop:10}}
+                onClick={()=>api.post("/terminal/columns/reset").then(()=>{toast.success("Seeded");qc.invalidateQueries({queryKey:["terminal-columns"]});})}>
+                ↺ SEED DEFAULTS
+              </button>
             </div>
-          </div>
-          {form.trailing_sl && <TInput label="TRAIL %" value={form.trail_pct} onChange={set("trail_pct")} type="number" placeholder="0.5" />}
-        </div>
-
-        {/* Hidden formulas — admin only */}
-        {isAdmin && (
-          <>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: "var(--yellow)", margin: "4px 0 8px" }}>
-              🔒 STRATEGY FORMULAS (ADMIN ONLY — hidden from users)
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-              <TInput label="ENTRY FORMULA" value={form.entry_formula} onChange={set("entry_formula")}
-                placeholder="e.g. ma(9) > ma(21) AND rsi(14) < 70" />
-              <TInput label="EXIT FORMULA" value={form.exit_formula} onChange={set("exit_formula")}
-                placeholder="e.g. ma(9) < ma(21) OR rsi(14) > 80" />
-            </div>
-          </>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 4 }}>
-          <div className="field">
-            <label className="field-label">TRADE MODE</label>
-            <div style={{ display: "flex" }}>
-              {["PAPER","REAL"].map((v, i) => (
-                <button key={v} type="button"
-                  onClick={() => setForm(f => ({ ...f, trade_mode: v }))}
-                  style={{
-                    flex: 1, padding: 10, fontFamily: "var(--font)", fontSize: 11, cursor: "pointer",
-                    borderRight: i === 0 ? "none" : undefined, border: "1px solid",
-                    background: form.trade_mode === v ? (v==="REAL" ? "rgba(255,68,102,0.1)" : "rgba(255,208,96,0.1)") : "transparent",
-                    borderColor: form.trade_mode === v ? (v==="REAL" ? "rgba(255,68,102,0.4)" : "rgba(255,208,96,0.4)") : "var(--border)",
-                    color: form.trade_mode === v ? (v==="REAL" ? "var(--red)" : "var(--yellow)") : "var(--muted)",
-                  }}>{v}</button>
-              ))}
-            </div>
-          </div>
-          <div className="field">
-            <label className="field-label">BROKER</label>
-            <select className="field-input" value={form.broker_account_id} onChange={set("broker_account_id")}
-              style={{ background: "rgba(0,255,136,0.04)", color: "var(--text)", fontFamily: "var(--font)" }}>
-              <option value="">Select broker</option>
-              {brokers.map((b: any) => (
-                <option key={b.id} value={b.id}>{b.broker.toUpperCase()} — {b.paper_trading ? "Paper" : "Live"}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label className="field-label">EXECUTION</label>
-            <div style={{ display: "flex" }}>
-              {["AUTO","MANUAL"].map((v, i) => (
-                <button key={v} type="button"
-                  onClick={() => setForm(f => ({ ...f, auto_execute: v === "AUTO" }))}
-                  style={{
-                    flex: 1, padding: 10, fontFamily: "var(--font)", fontSize: 11, cursor: "pointer",
-                    borderRight: i === 0 ? "none" : undefined, border: "1px solid",
-                    background: (form.auto_execute && v==="AUTO") || (!form.auto_execute && v==="MANUAL") ? "var(--green-dim)" : "transparent",
-                    borderColor: (form.auto_execute && v==="AUTO") || (!form.auto_execute && v==="MANUAL") ? "rgba(0,255,136,0.4)" : "var(--border)",
-                    color: (form.auto_execute && v==="AUTO") || (!form.auto_execute && v==="MANUAL") ? "var(--green)" : "var(--muted)",
-                  }}>{v}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 12, marginTop: 16, paddingBottom: 8 }}>
-          <button className={`auth-btn${saveMutation.isPending ? " loading" : ""}`}
-            onClick={() => saveMutation.mutate()} disabled={!form.symbol || saveMutation.isPending}
-            style={{ maxWidth: 220 }}>
-            {saveMutation.isPending ? "SAVING..." : initial ? "UPDATE ROW →" : "ADD TO TERMINAL →"}
-          </button>
-          <button className="exit-btn" onClick={onCancel} style={{ padding: "12px 20px" }}>CANCEL</button>
+          )}
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
-function TInput({ label, value, onChange, type = "text", placeholder }: any) {
-  return (
-    <div className="field">
-      <label className="field-label">{label}</label>
-      <input className="field-input" type={type} value={value ?? ""}
-        onChange={onChange} placeholder={placeholder} />
-    </div>
-  );
-}
-
-function SumCard({ label, value, color }: any) {
-  return (
-    <div className="stat-card">
-      <div className="stat-label">{label}</div>
-      <div className="stat-value" style={{
-        color: color === "green" ? "var(--green)" : color === "red" ? "var(--red)" : "var(--text)"
-      }}>{value}</div>
     </div>
   );
 }

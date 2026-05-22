@@ -19,3 +19,4 @@ __all__ = [
     "TerminalRow", "TerminalRowStatus",
     "UserWatchlist",
 ]
+from app.models.terminal_column import TerminalColumn

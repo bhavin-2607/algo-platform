@@ -144,7 +144,7 @@ class MarketPoller:
                         continue
 
                     resp = await client.post(
-                        "https://api.dhan.co/v2/marketfeed/ohlc",
+                        "https://api.dhan.co/v2/marketfeed/quote",
                         headers=headers,
                         json=securities,
                     )
@@ -161,6 +161,9 @@ class MarketPoller:
                             ltp   = float(raw.get("last_price", 0))
                             ohlc  = raw.get("ohlc", {})
                             close = float(ohlc.get("close", ltp))
+                            depth = raw.get("depth", {})
+                            buy0  = depth.get("buy",  [{}])[0] if depth else {}
+                            sell0 = depth.get("sell", [{}])[0] if depth else {}
                             ticks.append({
                                 "symbol":     sym,
                                 "ltp":        ltp,
@@ -170,6 +173,15 @@ class MarketPoller:
                                 "close":      close,
                                 "change":     round(ltp - close, 2),
                                 "change_pct": round((ltp - close) / max(close, 1) * 100, 2),
+                                "volume":     int(raw.get("volume", 0)),
+                                "oi":         int(raw.get("oi", 0)),
+                                "atp":        float(raw.get("average_price", 0)),  # VWAP
+                                "vwap":       float(raw.get("average_price", 0)),
+                                "buy_qty":    int(raw.get("buy_quantity",  0)),
+                                "sell_qty":   int(raw.get("sell_quantity", 0)),
+                                "bp1":        float(buy0.get("price",  0)),
+                                "sp1":        float(sell0.get("price", 0)),
+                                "net_change": float(raw.get("net_change", 0)),
                                 "source":     "dhan_live",
                             })
 
