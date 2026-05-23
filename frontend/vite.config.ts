@@ -11,5 +11,9 @@ export default defineConfig({
     proxy: {
       "/api": { target: "http://localhost:8000", changeOrigin: true },
     },
+    headers: {
+      // Allow new Function() for the Excel formula engine
+      "Content-Security-Policy": "script-src 'self' 'unsafe-eval' 'unsafe-inline'; default-src 'self' 'unsafe-inline' ws: wss: http: https:",
+    },
   },
 });

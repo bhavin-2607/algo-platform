@@ -6,7 +6,7 @@
  *   Row 1: Account summary (Cash, Margin, Overall PnL, Order Type, Trade Mode)
  *   Row 3+: Per-symbol rows with OHLC, VWAP, Best Buy/Sell, LTP, signals, entry/exit, T/SL, PnL
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
@@ -57,62 +57,92 @@ interface TerminalRow {
 
 
 // ── Excel Formula Evaluator (frontend) ───────────────────────────────────────
-// Supports two syntaxes:
-// 1. Named fields:  =IF((high+low+close)/3>ltp,"DOWN","UP")
-// 2. Excel cell refs: =IF((C4+D4+E4)/3>K4,"DOWN","UP")  (row number ignored)
-// Cell ref map: B=open C=high D=low E=close F=vwap G=bp1 H=sp1 I=volume J=oi K=ltp L=change_pct
-function evalExcelFormula(formula: string, tick: Record<string,any>): string | number | null {
+// Supports: named fields, cell refs, cross-column refs (SIGNAL/ENTRY),
+//           ^ power, % percent, <> not-equal, IF/AND/OR/ROUND/SQRT etc.
+function evalExcelFormula(
+  formula: string,
+  tick: Record<string,any>,
+  colValues?: Record<string,any>
+): string | number | null {
   if (!formula) return null;
   let expr = formula.startsWith("=") ? formula.slice(1) : formula;
 
-  // Map cell references (e.g. C4, D4) → numeric values
-  const cellMap: Record<string, string> = {
-    B: "open",  C: "high",  D: "low",       E: "close",
-    F: "vwap",  G: "bp1",   H: "sp1",         I: "volume",
-    J: "oi",    K: "ltp",   L: "change_pct", M: "atp",
-  };
-  expr = expr.replace(/\b([A-Z]{1,2})\d+\b/g, (_: string, col: string) => {
-    const field = cellMap[col.toUpperCase()];
-    const val   = field ? (tick[field] ?? 0) : 0;
-    return String(parseFloat(val) || 0);
-  });
+  // 1. Percentage literals: 0.5% → (0.5/100)
+  expr = expr.replace(/(\d+\.?\d*)\s*%/g, "($1/100)");
 
-  // Replace named field references (case-insensitive)
+  // 2. Cross-column references (SIGNAL, ENTRY, TREND etc.)
+  if (colValues) {
+    Object.entries(colValues).forEach(([colName, colVal]) => {
+      if (colVal != null) {
+        const re = new RegExp("\\b" + colName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "g");
+        const rep = typeof colVal === "string" ? "'" + colVal + "'" : String(colVal);
+        expr = expr.replace(re, rep);
+      }
+    });
+  }
+
+  // 3. Named field references (must come before cell refs)
   const namedFields: Record<string, string> = {
     open: "open", high: "high", low: "low", close: "close",
-    vwap: "vwap", atp: "atp", ltp: "ltp", volume: "volume", oi: "oi",
-    change_pct: "change_pct", bp1: "bp1", sp1: "sp1",
+    vwap: "vwap", atp: "atp",  ltp: "ltp", volume: "volume",
+    oi: "oi", change_pct: "change_pct", bp1: "bp1", sp1: "sp1",
   };
-  // Replace whole-word named field refs with their values
   Object.entries(namedFields).forEach(([name, field]) => {
-    const re = new RegExp(`\\b${name}\\b`, "gi");
+    const re = new RegExp("\\b" + name + "\\b", "gi");
     expr = expr.replace(re, String(parseFloat(tick[field] ?? 0) || 0));
   });
 
-  // Excel → JS
+  // 4. Cell references: C4 → high value
+  const cellMap: Record<string, string> = {
+    B: "open", C: "high", D: "low",  E: "close",
+    F: "vwap", G: "bp1",  H: "sp1",  I: "volume",
+    J: "oi",   K: "ltp",  L: "change_pct", M: "atp",
+  };
+  expr = expr.replace(/\b([A-Z]{1,2})\d+\b/g, (_: string, col: string) => {
+    const field = cellMap[col.toUpperCase()];
+    return String(parseFloat(tick[field] ?? 0) || 0);
+  });
+
+  // 5. Operators
   expr = expr.replace(/<>/g, "!==");
+  expr = expr.replace(/\^/g, "**");
+  // 0.5% → 0.005
+  expr = expr.replace(/(\d+\.?\d*)\s*%/g, (_:string, n:string) => String(parseFloat(n) / 100));
+  // Excel = is equality → JS === (but not <=, >=, !=, ==)
+  expr = expr.replace(/(?<![<>!=])=(?!=)/g, "===");
+
+  // 6. Excel functions → JS helpers
   expr = expr.replace(/\bIF\s*\(/gi,      "_IF(");
   expr = expr.replace(/\bAND\s*\(/gi,     "_AND(");
   expr = expr.replace(/\bOR\s*\(/gi,      "_OR(");
   expr = expr.replace(/\bAVERAGE\s*\(/gi, "_AVG(");
-  expr = expr.replace(/\bROUND\s*\(/gi,   "Math.round(");
-  expr = expr.replace(/\bABS\s*\(/gi,     "Math.abs(");
+  expr = expr.replace(/\bROUND\s*\(/gi,   "_ROUND(");
+  expr = expr.replace(/\bIFERROR\s*\(/gi, "_IFERROR(");
   expr = expr.replace(/\bSQRT\s*\(/gi,    "Math.sqrt(");
+  expr = expr.replace(/\bPOWER\s*\(/gi,   "_POW(");
+  expr = expr.replace(/\bABS\s*\(/gi,     "Math.abs(");
   expr = expr.replace(/\bMAX\s*\(/gi,     "Math.max(");
   expr = expr.replace(/\bMIN\s*\(/gi,     "Math.min(");
+  expr = expr.replace(/\bINT\s*\(/gi,     "Math.trunc(");
+
+  // 7. String literals: "BUY" → 'BUY'
   expr = expr.replace(/"/g, "'");
 
   try {
-    const _IF  = (c: any, t: any, f: any) => c ? t : f;
-    const _AND = (...a: any[]) => a.every(Boolean);
-    const _OR  = (...a: any[]) => a.some(Boolean);
-    const _AVG = (...a: number[]) => a.reduce((s,v)=>s+v,0)/a.length;
+    const _IF     = (c: any, t: any, f: any) => c ? t : f;
+    const _AND    = (...a: any[]) => a.every(Boolean);
+    const _OR     = (...a: any[]) => a.some(Boolean);
+    const _AVG    = (...a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
+    const _ROUND  = (v: number, d = 0) => { const f = 10 ** d; return Math.round(v * f) / f; };
+    const _POW    = (b: number, e: number) => Math.pow(b, e);
+    const _IFERROR = (v: any, fallback: any = "") => (v == null ? fallback : v);
     // eslint-disable-next-line no-new-func
     const result = new Function(
-      "_IF","_AND","_OR","_AVG","Math",
+      "_IF", "_AND", "_OR", "_AVG", "_ROUND", "_POW", "_IFERROR", "Math",
       `"use strict"; return (${expr});`
-    )(_IF, _AND, _OR, _AVG, Math);
+    )(_IF, _AND, _OR, _AVG, _ROUND, _POW, _IFERROR, Math);
     if (typeof result === "number") return isFinite(result) ? Math.round(result * 100) / 100 : null;
+    if (typeof result === "string") return result.trim() === "" ? null : result.trim();
     return result;
   } catch {
     return null;
@@ -348,228 +378,8 @@ export default function TerminalPage() {
           setShowAdd(false);
         }} />
       )}
-      {/* ── Main Terminal Table ──────────────────────────────────────────────── */}
-      <div style={{overflowX:"auto"}}>
-        <table style={{
-          width:"100%", borderCollapse:"collapse",
-          fontSize:13, fontFamily:"var(--font)",
-        }}>
-          <thead>
-            <tr style={{background:"var(--surface)", borderBottom:"2px solid var(--border)"}}>
-              {/* Fixed columns */}
-              <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
-                borderRight:"1px solid var(--border)",minWidth:30}}>#</th>
-              <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
-                borderRight:"1px solid var(--border)",minWidth:140}}>SYMBOL</th>
-
-              {/* Dynamic columns from DB */}
-              {visibleCols.map((col:any) => (
-                <th key={col.id} style={{
-                  padding:"8px 8px", fontSize:10, letterSpacing:1.5,
-                  color: col.col_type==="custom" ? "var(--yellow)" : "var(--muted)",
-                  whiteSpace:"nowrap", borderRight:"1px solid var(--border)",
-                  minWidth: col.width || 80,
-                }}>
-                  <div style={{display:"flex",alignItems:"center",gap:3}}>
-                    <span>{col.name}</span>
-                    <button
-                      onClick={() => deleteColMutation.mutate(col.id)}
-                      title="Hide/Remove column"
-                      style={{
-                        background:"transparent",border:"none",
-                        color:"rgba(255,68,102,0.4)",cursor:"pointer",
-                        fontSize:9,padding:0,lineHeight:1,
-                        opacity:0.6,
-                      }}>✕</button>
-                  </div>
-                </th>
-              ))}
-
-              {/* Actions column */}
-              <th style={{padding:"8px 6px",fontSize:9,color:"var(--muted)"}}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {watchlist.length === 0 && (
-              <tr><td colSpan={20} style={{padding:"40px 20px", textAlign:"center",
-                color:"var(--muted)", fontSize:12}}>
-                No symbols — click <strong>+ ADD SYMBOL</strong> to start
-              </td></tr>
-            )}
-            {watchlist.map(sym => {
-              const live = liveData[sym] ?? {};
-              const trow = termRowMap[sym];
-              const ltp  = live.ltp ?? trow?.ltp ?? null;
-              const chg  = live.change_pct ?? null;
-              const pos  = (chg ?? 0) >= 0;
-              const inPos = trow?.status === "active";
-              const pnl  = trow?.pnl ?? null;
-              const tick  = { ...live, ltp: ltp ?? 0 };
-
-              // Build cell value for each column
-              function getCellValue(col: any): {value: any, color: string, formatted: string} {
-                let value: any = null;
-                let color = "var(--text)";
-
-                if ((col.col_type === "custom" || col.col_type === "formula") && col.formula) {
-                  value = evalExcelFormula(col.formula, tick);
-                  color = getColColor(value, col.color_rules);
-                } else {
-                  // Default column — get from tick/trow
-                  switch(col.col_key) {
-                    case "open":        value = live.open;  break;
-                    case "high":        value = live.high; color = "var(--green)"; break;
-                    case "low":         value = live.low;  color = "var(--red)";   break;
-                    case "close":       value = live.close; break;
-                    case "vwap":        value = live.vwap || live.atp || null; break;
-                    case "bp1":         value = live.bp1; color = "var(--green)"; break;
-                    case "sp1":         value = live.sp1; color = "var(--red)";   break;
-                    case "volume":      value = live.volume; break;
-                    case "oi":          value = live.oi; break;
-                    case "ltp":         value = ltp; color = "var(--text)"; break;
-                    case "change_pct":  value = chg; color = pos?"var(--green)":"var(--red)"; break;
-                    case "quantity":    value = trow?.quantity; break;
-                    case "side":        return {value:"side", color, formatted:"side"};
-                    case "signal":      return {value:"signal", color, formatted:"signal"};
-                    case "entry_price": value = trow?.entry_price; break;
-                    case "target":      value = trow?.current_target; color = "var(--green)"; break;
-                    case "sl":          value = trow?.current_sl; color = "var(--red)"; break;
-                    case "trail":       return {value:"trail",color,formatted:"trail"};
-                    case "status":      return {value:"status",color,formatted:"status"};
-                    case "pnl":         value = pnl; color = pnl==null?"var(--muted)":pnl>=0?"var(--green)":"var(--red)"; break;
-                  }
-                  // Apply color rules if defined
-                  if (col.color_rules) color = getColColor(value, col.color_rules);
-                }
-
-                // Format value
-                let formatted = "—";
-                if (value != null && value !== "" && value !== 0 || value === 0 && col.col_key === "oi") {
-                  if (col.col_key === "volume" || col.col_key === "oi") {
-                    formatted = value != null && value > 0 ? (Number(value)/100000).toFixed(1)+"L" : "—";
-                  } else if (col.col_key === "change_pct") {
-                    formatted = value != null ? `${pos?"+":""}${Number(value).toFixed(2)}%` : "—";
-                  } else if (typeof value === "number" && col.col_key !== "quantity") {
-                    formatted = `₹${Number(value).toLocaleString()}`;
-                  } else {
-                    formatted = String(value);
-                  }
-                }
-                return {value, color, formatted};
-              }
-
-              return (
-                <tr key={sym} style={{
-                  borderBottom:"1px solid var(--border)",
-                  background: inPos ? "rgba(0,255,136,0.03)" : "transparent",
-                }}
-                  onMouseEnter={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.06)":"rgba(255,255,255,0.02)")}
-                  onMouseLeave={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.03)":"transparent")}
-                >
-
-
-                  {/* Serial number */}
-                  <td style={{padding:"6px 10px",fontSize:12,color:"var(--muted)",
-                    borderRight:"1px solid var(--border)",textAlign:"center",
-                    fontWeight:600}}>
-                    {watchlist.indexOf(sym) + 1}
-                  </td>
-
-                  {/* Symbol */}
-                  <td style={{padding:"6px 10px",fontWeight:700,color:"var(--green)",
-                    whiteSpace:"nowrap",borderRight:"1px solid var(--border)"}}>
-                    {sym}
-                    <div style={{fontSize:11,color:"var(--muted)",fontWeight:400}}>
-                      {trow?.strategy_label ?? "WATCHLIST"}
-                    </div>
-                  </td>
-
-                  {/* Dynamic columns */}
-                  {visibleCols.map((col:any) => {
-                    const {value, color, formatted} = getCellValue(col);
-
-                    // Special render for non-value columns
-                    if (col.col_key === "side") return (
-                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
-                        {inPos?<span className="badge badge-green">BUY</span>:<span style={{color:"var(--muted)"}}>—</span>}
-                      </td>
-                    );
-                    if (col.col_key === "signal") return (
-                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
-                        <span className={`badge ${
-                          trow?.signal==="BUY"?"badge-green":trow?.signal==="SELL"?"badge-red":
-                          trow?.signal==="EXIT"?"badge-yellow":"badge-gray"
-                        }`} style={{minWidth:40,textAlign:"center"}}>
-                          {trow?.signal??"—"}
-                        </span>
-                      </td>
-                    );
-                    if (col.col_key === "trail") return (
-                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
-                        {trow?.trailing_sl
-                          ?<span className="badge badge-yellow">ON {trow?.trail_pct}%</span>
-                          :<span style={{color:"var(--muted)"}}>OFF</span>}
-                      </td>
-                    );
-                    if (col.col_key === "status") return (
-                      <td key={col.id} style={{padding:"6px 8px",borderRight:"1px solid var(--border)"}}>
-                        <span className={`badge ${
-                          trow?.status==="active"?"badge-green":
-                          trow?.status==="watching"?"badge-gray":"badge-gray"
-                        }`}>{trow?.status?.toUpperCase()??"—"}</span>
-                      </td>
-                    );
-                    if (col.col_key === "ltp") return (
-                      <td key={col.id} style={{padding:"6px 10px",fontWeight:700,fontSize:13,
-                        borderRight:"1px solid var(--border)"}}>
-                        {ltp?`₹${Number(ltp).toLocaleString()}`:<span style={{color:"var(--muted)"}}>—</span>}
-                      </td>
-                    );
-                    if (col.col_key === "pnl") return (
-                      <td key={col.id} style={{padding:"6px 10px",fontWeight:700,color,
-                        borderRight:"1px solid var(--border)"}}>
-                        {pnl!=null?`${pnl>=0?"+":""}₹${pnl.toLocaleString()}`:"—"}
-                      </td>
-                    );
-
-                    return (
-                      <td key={col.id} style={{
-                        padding:"7px 10px", color,
-                        borderRight:"1px solid var(--border)",
-                        fontWeight: col.col_key==="ltp"?700:400,
-                      }}>
-                        {formatted}
-                      </td>
-                    );
-                  })}
-
-                  {/* Actions */}
-                  <td style={{padding:"6px 8px"}}>
-                    <div style={{display:"flex",gap:4}}>
-                      {inPos&&(
-                        <button className="exit-btn"
-                          style={{padding:"2px 8px",fontSize:10,color:"var(--red)",
-                            borderColor:"rgba(255,68,102,0.4)"}}
-                          onClick={()=>exitRowMutation.mutate(trow.id)}>EXIT</button>
-                      )}
-                      {isAdmin&&trow&&(
-                        <button onClick={e=>{e.stopPropagation();setFormulaRow({id:trow.id,symbol:sym});}}
-                          style={{padding:"2px 6px",fontSize:10,cursor:"pointer",
-                            background:"rgba(255,208,96,0.1)",border:"1px solid rgba(255,208,96,0.3)",
-                            color:"var(--yellow)",fontFamily:"var(--font)"}}
-                          title="Set strategy formula">🔒</button>
-                      )}
-                      <button onClick={()=>removeMutation.mutate(sym)}
-                        style={{padding:"2px 6px",fontSize:11,background:"transparent",
-                          border:"none",color:"var(--muted)",cursor:"pointer",opacity:0.5}}>✕</button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {/* ── Terminal Table ──────────────────────────────────────────────────── */}
+      <TerminalTable watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
 
             {/* ── Bottom Summary ───────────────────────────────────────────────────── */}
       {watchlist.length > 0 && (
@@ -1145,6 +955,171 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Terminal Table ────────────────────────────────────────────────────────────
+function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
+  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol }: {
+  watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
+  visibleCols: any[]; isAdmin: boolean;
+  onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
+  onFormulaRow:(id:string,sym:string)=>void; onDeleteCol:(id:string)=>void;
+}) {
+  if (watchlist.length === 0) return (
+    <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
+      fontSize:13,border:"1px solid var(--border)",background:"var(--surface)"}}>
+      No symbols — click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to start
+    </div>
+  );
+
+  return (
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:"var(--font)"}}>
+        <thead>
+          <tr style={{background:"var(--surface)",borderBottom:"2px solid var(--border)"}}>
+            <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
+              borderRight:"1px solid var(--border)",minWidth:30}}>#</th>
+            <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
+              borderRight:"1px solid var(--border)",minWidth:140,textAlign:"left"}}>SYMBOL</th>
+            {visibleCols.map((col:any) => (
+              <th key={col.id} style={{
+                padding:"8px 8px",fontSize:10,letterSpacing:1.5,whiteSpace:"nowrap",
+                color:col.col_type==="custom"||col.col_type==="formula"?"var(--yellow)":"var(--muted)",
+                borderRight:"1px solid var(--border)",minWidth:col.width||80,textAlign:"left",
+              }}>
+                <div style={{display:"flex",alignItems:"center",gap:3}}>
+                  <span>{col.name}</span>
+                  <button onClick={()=>onDeleteCol(col.id)} title="Remove column"
+                    style={{background:"transparent",border:"none",
+                      color:"rgba(255,68,102,0.4)",cursor:"pointer",
+                      fontSize:9,padding:0,lineHeight:1,opacity:0.6}}>✕</button>
+                </div>
+              </th>
+            ))}
+            <th style={{padding:"8px 6px",fontSize:9,color:"var(--muted)",minWidth:90}}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {watchlist.map((sym, idx) => {
+            const live  = liveData[sym] ?? {};
+            const trow  = termRowMap[sym];
+            const ltp   = live.ltp ?? trow?.ltp ?? null;
+            const chg   = live.change_pct ?? null;
+            const pos   = (chg ?? 0) >= 0;
+            const inPos = trow?.status === "active";
+            const pnl   = trow?.pnl ?? null;
+            const tick  = { ...live, ltp: ltp ?? 0 };
+
+            // Pre-evaluate formula cols for cross-refs
+            const colValues: Record<string,any> = {};
+            visibleCols.forEach((c:any) => {
+              if ((c.col_type==="custom"||c.col_type==="formula") && c.formula) {
+                const v = evalExcelFormula(c.formula, tick);
+                if (v != null) colValues[c.name] = v;
+              }
+            });
+
+            function getCellValue(col: any): {color:string, formatted:string} {
+              let value: any = null;
+              let color = "var(--text)";
+
+              if ((col.col_type==="custom"||col.col_type==="formula") && col.formula) {
+                value = evalExcelFormula(col.formula, tick, colValues);
+                color = getColColor(value, col.color_rules);
+              } else {
+                switch(col.col_key) {
+                  case "open":       value=live.open; break;
+                  case "high":       value=live.high; color="var(--green)"; break;
+                  case "low":        value=live.low;  color="var(--red)"; break;
+                  case "close":      value=live.close; break;
+                  case "vwap":       value=live.vwap||live.atp||null; break;
+                  case "bp1":        value=live.bp1; color="var(--green)"; break;
+                  case "sp1":        value=live.sp1; color="var(--red)"; break;
+                  case "volume":     value=live.volume; break;
+                  case "oi":         value=live.oi; break;
+                  case "ltp":        value=ltp; break;
+                  case "change_pct": value=chg; color=pos?"var(--green)":"var(--red)"; break;
+                  case "quantity":   value=trow?.quantity; break;
+                  case "entry_price":value=trow?.entry_price; break;
+                  case "target":     value=trow?.current_target; color="var(--green)"; break;
+                  case "sl":         value=trow?.current_sl; color="var(--red)"; break;
+                  case "pnl":        value=pnl; color=pnl==null?"var(--muted)":pnl>=0?"var(--green)":"var(--red)"; break;
+                }
+                if (col.color_rules) color = getColColor(value, col.color_rules);
+              }
+
+              let formatted = "—";
+              if (value != null && value !== "") {
+                if (col.col_key==="volume"||col.col_key==="oi") {
+                  formatted = Number(value)>0 ? (Number(value)/100000).toFixed(1)+"L" : "—";
+                } else if (col.col_key==="change_pct") {
+                  formatted = `${pos?"+":""}${Number(value).toFixed(2)}%`;
+                } else if (typeof value==="number" && col.col_key!=="quantity") {
+                  formatted = `₹${Number(value).toLocaleString()}`;
+                } else {
+                  formatted = String(value);
+                }
+              }
+              return {color, formatted};
+            }
+
+            return (
+              <tr key={sym} style={{
+                borderBottom:"1px solid var(--border)",
+                background:inPos?"rgba(0,255,136,0.03)":"transparent",
+                borderLeft:inPos?"2px solid var(--green)":"2px solid transparent",
+              }}
+                onMouseEnter={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.06)":"rgba(255,255,255,0.02)")}
+                onMouseLeave={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.03)":"transparent")}
+              >
+                <td style={{padding:"6px 10px",fontSize:12,color:"var(--muted)",
+                  borderRight:"1px solid var(--border)",textAlign:"center",fontWeight:600}}>
+                  {idx+1}
+                </td>
+                <td style={{padding:"6px 10px",borderRight:"1px solid var(--border)"}}>
+                  <div style={{fontWeight:700,color:"var(--green)",fontSize:13}}>{sym}</div>
+                  <div style={{fontSize:10,color:"var(--muted)"}}>{trow?.strategy_label??"WATCHLIST"}</div>
+                </td>
+                {visibleCols.map((col:any) => {
+                  const {color, formatted} = getCellValue(col);
+                  return (
+                    <td key={col.id} style={{
+                      padding:"7px 10px", color,
+                      borderRight:"1px solid var(--border)",
+                      fontWeight:col.col_key==="ltp"?"700":"400",
+                      fontSize:col.col_key==="ltp"?"14px":"13px",
+                    }}>
+                      {formatted}
+                    </td>
+                  );
+                })}
+                <td style={{padding:"6px 8px"}}>
+                  <div style={{display:"flex",gap:4}}>
+                    {inPos&&trow&&(
+                      <button className="exit-btn"
+                        style={{padding:"2px 7px",fontSize:10,color:"var(--red)",
+                          borderColor:"rgba(255,68,102,0.4)"}}
+                        onClick={()=>onExitRow(trow.id)}>EXIT</button>
+                    )}
+                    {isAdmin&&trow&&(
+                      <button onClick={()=>onFormulaRow(trow.id,sym)}
+                        style={{padding:"2px 5px",fontSize:10,cursor:"pointer",
+                          background:"rgba(255,208,96,0.1)",border:"1px solid rgba(255,208,96,0.3)",
+                          color:"var(--yellow)",fontFamily:"var(--font)"}}
+                        title="Set strategy formula">🔒</button>
+                    )}
+                    <button onClick={()=>onRemoveSymbol(sym)}
+                      style={{padding:"2px 5px",fontSize:11,background:"transparent",
+                        border:"none",color:"var(--muted)",cursor:"pointer",opacity:0.5}}>✕</button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

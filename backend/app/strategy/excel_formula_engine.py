@@ -131,6 +131,7 @@ class ExcelFormulaEngine:
         expr = re.sub(r'\bMIN\s*\(',     'min(',      expr, flags=re.IGNORECASE)
         expr = re.sub(r'\bABS\s*\(',     'abs(',      expr, flags=re.IGNORECASE)
         expr = re.sub(r'\bROUND\s*\(',   '_ROUND(',   expr, flags=re.IGNORECASE)
+        expr = re.sub(r'\bIFERROR\s*\(', '_IFERROR(', expr, flags=re.IGNORECASE)
         expr = re.sub(r'\bSQRT\s*\(',    'math.sqrt(', expr, flags=re.IGNORECASE)
         expr = re.sub(r'\bPOWER\s*\(',   '_POW(',     expr, flags=re.IGNORECASE)
 
@@ -139,6 +140,13 @@ class ExcelFormulaEngine:
 
         # Excel uses <> for not-equal, Python uses !=
         expr = expr.replace('<>', '!=')
+        # ^ is power in Excel (not XOR) → Python **
+        expr = re.sub(r'\^', '**', expr)
+        # 0.5% → 0.005 (percentage literal)
+        expr = re.sub(r'(\d+\.?\d*)\s*%', lambda m: str(float(m.group(1)) / 100), expr)
+        # Excel = is equality (not assignment) — convert single = to ==
+        # but not <=, >=, !=, == (already doubled)
+        expr = re.sub(r'(?<![<>!=])=(?!=)', '==', expr)
 
         return expr
 
@@ -151,7 +159,8 @@ class ExcelFormulaEngine:
             "_AND":   lambda *args: all(args),
             "_OR":    lambda *args: any(args),
             "_AVG":   lambda *args: sum(args) / len(args) if args else 0,
-            "_ROUND": lambda v, d=0: round(v, int(d)),
+            "_ROUND":  lambda v, d=0: round(v, int(d)),
+            "_IFERROR": lambda v, fallback="": (v if not (v is None or v != v) else fallback),
             "_POW":   lambda base, exp: math.pow(base, exp),
             "abs":    abs, "max": max, "min": min,
             # Direct field access as variables too
@@ -168,3 +177,33 @@ def evaluate_formula(formula: str, tick: dict) -> Any:
 
 def validate_formula_excel(formula: str) -> tuple[bool, str]:
     return _engine.validate(formula)
+
+
+def evaluate_columns_in_order(columns: list[dict], tick: dict) -> dict:
+    """
+    Evaluate multiple formula columns in order, passing each result
+    into the next column's context. Supports cross-column references
+    like SIGNAL, ENTRY in SL/Target formulas.
+
+    columns: [{"name": "SIGNAL", "formula": "=IF(ltp>open,'BUY','SELL')"}, ...]
+    tick: live market data dict
+    Returns: dict of {column_name_lower: result}
+    """
+    results = {}
+    enriched = {**tick}
+
+    for col in columns:
+        formula = col.get("formula")
+        name    = col.get("name", "").lower()
+        if not formula:
+            continue
+        result = evaluate_formula(formula, enriched)
+        if result is not None and result not in (" ", ""):
+            results[name] = result
+            enriched[name] = result   # inject into next col's context
+            # Common aliases
+            if name == "signal": enriched["signal"] = result
+            if name == "entry":  enriched["entry"]  = result
+            if name == "trend":  enriched["trend"]  = result
+
+    return results
