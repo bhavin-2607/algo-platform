@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
 
     # ── Dhan (primary broker) ─────────────────────────────────────────────────
+    DHAN_PIN:         str = ""
+    DHAN_TOTP_SECRET: str = ""
+    SMTP_HOST:        str = ""   # optional email alerts
+    SMTP_PORT:        int = 587
+    ALERT_EMAIL:      str = ""
     DHAN_CLIENT_ID:    str = ""
     DHAN_ACCESS_TOKEN: str = ""
 

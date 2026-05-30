@@ -6,3 +6,6 @@ cd ~/Algo/algo-platform/backend && celery -A app.worker.celery_app worker --logl
 
 # Terminal 3 — Frontend
 cd ~/Algo/algo-platform/frontend && npm run dev
+
+# Open a new terminal (Terminal 4)
+cd ~/Algo/algo-platform/backend && celery -A app.worker.celery_app beat --loglevel=info

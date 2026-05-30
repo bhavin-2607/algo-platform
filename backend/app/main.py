@@ -9,6 +9,8 @@ from app.api.routes import (
     auth, users, brokers, strategies, trades,
     websocket, admin, signals, risk, market, backtest, formula, terminal
 )
+from app.api.routes.dhan_auth_route import router as dhan_auth_router
+
 import app.models  # noqa
 
 
@@ -49,6 +51,7 @@ app.include_router(market.router,     prefix="/api/market",     tags=["Market"])
 app.include_router(backtest.router,   prefix="/api/backtest",   tags=["Backtest"])
 app.include_router(formula.router,    prefix="/api/formula",    tags=["Formula"])
 app.include_router(terminal.router,   prefix="/api/terminal",   tags=["Terminal"])
+app.include_router(dhan_auth_router, prefix="/api")
 
 
 @app.get("/api/health")
