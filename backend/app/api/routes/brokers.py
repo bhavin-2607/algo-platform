@@ -175,3 +175,16 @@ async def _get_account(account_id: UUID, user_id, db: AsyncSession) -> BrokerAcc
     if not account:
         raise HTTPException(status_code=404, detail="Broker account not found")
     return account
+
+
+@router.patch("/{account_id}/deactivate")
+async def deactivate_broker(
+    account_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deactivate a broker account without removing it."""
+    account = await _get_account(account_id, current_user.id, db)
+    account.is_active = False
+    await db.commit()
+    return {"status": "deactivated", "id": str(account_id)}

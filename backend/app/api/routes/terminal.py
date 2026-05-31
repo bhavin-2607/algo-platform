@@ -847,3 +847,131 @@ async def validate_column_formula(
     from app.strategy.excel_formula_engine import validate_formula_excel
     ok, msg = validate_formula_excel(body.get("formula", ""))
     return {"valid": ok, "message": msg}
+
+
+class ManualOrderRequest(BaseModel):
+    symbol:           str
+    security_id:      str
+    exchange_segment: str   = "NSE_EQ"
+    transaction_type: str
+    quantity:         int
+    order_type:       str   = "MARKET"
+    product_type:     str   = "INTRADAY"
+    price:            float = 0.0
+    trigger_price:    float = 0.0
+
+
+@router.post("/order")
+async def place_manual_order(
+    body: ManualOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Place a manual BUY/SELL order via Dhan."""
+    from app.broker.factory import get_broker_adapter
+    from app.broker.base import OrderRequest
+    from app.models.broker import BrokerAccount, BrokerName
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.user_id       == current_user.id,
+            BrokerAccount.broker        == BrokerName.dhan,
+            BrokerAccount.paper_trading == False,
+            BrokerAccount.is_active     == True,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=400, detail="No active Dhan live account")
+
+    try:
+        adapter  = get_broker_adapter(account)
+        order    = OrderRequest(
+            symbol        = body.symbol,
+            exchange      = body.exchange_segment,
+            direction     = body.transaction_type.upper(),
+            quantity      = body.quantity,
+            order_type    = body.order_type.upper(),
+            product       = body.product_type.upper(),
+            price         = body.price if body.order_type == "LIMIT" else 0,
+            trigger_price = body.trigger_price,
+        )
+        response = await adapter.place_order(order)
+        if response.status == "FAILED":
+            raise HTTPException(status_code=502, detail=response.message)
+        return {
+            "status":           "placed",
+            "order_id":         response.broker_order_id,
+            "symbol":           body.symbol,
+            "transaction_type": body.transaction_type,
+            "quantity":         body.quantity,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Order failed: {str(e)}")
+
+
+class ManualOrderRequest(BaseModel):
+    symbol:           str
+    security_id:      str
+    exchange_segment: str   = "NSE_EQ"
+    transaction_type: str
+    quantity:         int
+    order_type:       str   = "MARKET"
+    product_type:     str   = "INTRADAY"
+    price:            float = 0.0
+    trigger_price:    float = 0.0
+
+
+@router.post("/order")
+async def place_manual_order(
+    body: ManualOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Place a manual BUY/SELL order via Dhan."""
+    from app.broker.factory import get_broker_adapter
+    from app.broker.base import OrderRequest
+    from app.models.broker import BrokerAccount, BrokerName
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.user_id       == current_user.id,
+            BrokerAccount.broker        == BrokerName.dhan,
+            BrokerAccount.paper_trading == False,
+            BrokerAccount.is_active     == True,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=400, detail="No active Dhan live account")
+
+    try:
+        adapter  = get_broker_adapter(account)
+        order    = OrderRequest(
+            symbol        = body.symbol,
+            exchange      = body.exchange_segment,
+            direction     = body.transaction_type.upper(),
+            quantity      = body.quantity,
+            order_type    = body.order_type.upper(),
+            product       = body.product_type.upper(),
+            price         = body.price if body.order_type == "LIMIT" else 0,
+            trigger_price = body.trigger_price,
+        )
+        response = await adapter.place_order(order)
+        if response.status == "FAILED":
+            raise HTTPException(status_code=502, detail=response.message)
+        return {
+            "status":           "placed",
+            "order_id":         response.broker_order_id,
+            "symbol":           body.symbol,
+            "transaction_type": body.transaction_type,
+            "quantity":         body.quantity,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Order failed: {str(e)}")

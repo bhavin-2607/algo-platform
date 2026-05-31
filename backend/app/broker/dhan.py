@@ -130,26 +130,42 @@ class DhanAdapter(BaseBrokerAdapter):
 
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         try:
-            dhan       = self._get_sdk()
+            import requests as _req
+            from app.core.config import settings
+
             exchange   = EXCHANGE_MAP.get(order.exchange, "NSE_EQ")
-            product    = PRODUCT_MAP.get(order.product, "INTRA")
+            product    = PRODUCT_MAP.get(order.product, "INTRADAY")
             order_type = ORDER_TYPE_MAP.get(order.order_type, "MARKET")
             txn_type   = "BUY" if order.direction == "BUY" else "SELL"
 
-            resp = dhan.place_order(
-                security_id      = str(order.symbol),
-                exchange_segment = exchange,
-                transaction_type = txn_type,
-                quantity         = order.quantity,
-                order_type       = order_type,
-                product_type     = product,
-                price            = order.price or 0,
-                trigger_price    = order.trigger_price or 0,
-                validity         = "DAY",
-                disclosed_quantity = 0,
-                after_market_order = False,
-                tag              = "algo-platform",
+            payload = {
+                "dhanClientId":      self._client_id,
+                "transactionType":   txn_type,
+                "exchangeSegment":   exchange,
+                "productType":       product,
+                "orderType":         order_type,
+                "validity":          "DAY",
+                "securityId":        str(order.symbol),
+                "quantity":          int(order.quantity),
+                "disclosedQuantity": 0,
+                "price":             float(order.price or 0),
+                "triggerPrice":      float(order.trigger_price or 0),
+                "afterMarketOrder":  False,
+                "correlationId":     "algo-platform",
+            }
+
+            resp_raw = _req.post(
+                "https://api.dhan.co/v2/orders",
+                headers={
+                    "access-token": self._access_token,
+                    "client-id":    self._client_id,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=10,
             )
+            resp = resp_raw.json()
+            logger.info(f"Dhan place_order response: {resp}")
 
             if resp and resp.get("status") == "success":
                 order_id = str(resp.get("data", {}).get("orderId", ""))

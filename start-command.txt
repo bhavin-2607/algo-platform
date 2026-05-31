@@ -1,11 +1,11 @@
 # Terminal 1 — Backend
-cd ~/Algo/algo-platform/backend && uvicorn app.main:app --reload
+clear && cd ~/Algo/algo-platform/backend && uvicorn app.main:app --reload
 
 # Terminal 2 — Celery worker
-cd ~/Algo/algo-platform/backend && celery -A app.worker.celery_app worker --loglevel=info
+clear && cd ~/Algo/algo-platform/backend && celery -A app.worker.celery_app worker --loglevel=info
 
 # Terminal 3 — Frontend
-cd ~/Algo/algo-platform/frontend && npm run dev
+clear && cd ~/Algo/algo-platform/frontend && npm run dev
 
 # Open a new terminal (Terminal 4)
-cd ~/Algo/algo-platform/backend && celery -A app.worker.celery_app beat --loglevel=info
+clear && cd ~/Algo/algo-platform/backend && celery -A app.worker.celery_app beat --loglevel=info

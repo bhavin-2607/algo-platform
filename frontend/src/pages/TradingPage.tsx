@@ -2,21 +2,21 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api, brokerApi } from "@/utils/api";
+import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 
-// Only Dhan shown in UI — Shoonya is legacy/hidden
 const BROKER_OPTIONS = [
   { value: "dhan", label: "Dhan / DhanHQ",
     desc: "Free Trading API · Data API available · Recommended" },
 ];
 
 export default function TradingPage() {
-  const qc   = useQueryClient();
-  const [tab, setTab] = useState<"orders"|"brokers">("brokers");
+  const qc = useQueryClient();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === "admin";
+  const [tab, setTab] = useState<"orders"|"brokers"|"credentials">("brokers");
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    broker: "dhan", client_id: "", paper_trading: true,
-  });
+  const [form, setForm] = useState({ broker:"dhan", client_id:"", access_token:"", paper_trading:true });
 
   const { data: brokers } = useQuery({
     queryKey: ["brokers"],
@@ -25,15 +25,19 @@ export default function TradingPage() {
 
   const connectMutation = useMutation({
     mutationFn: () => api.post("/brokers", {
-      broker:        form.broker,
-      client_id:     form.client_id || "DHAN_PAPER",
+      broker: form.broker, client_id: form.client_id || "DHAN_PAPER",
       paper_trading: form.paper_trading,
+    }).then(async (res) => {
+      // If live broker with token provided, save credentials too
+      if (!form.paper_trading && form.access_token && form.client_id) {
+        await api.post("/settings/dhan-credentials", {
+          client_id: form.client_id,
+          access_token: form.access_token,
+        });
+      }
+      return res;
     }),
-    onSuccess: () => {
-      toast.success("Broker account added");
-      qc.invalidateQueries({ queryKey: ["brokers"] });
-      setShowForm(false);
-    },
+    onSuccess: () => { toast.success("Broker account added"); qc.invalidateQueries({queryKey:["brokers"]}); setShowForm(false); },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
   });
 
@@ -48,7 +52,6 @@ export default function TradingPage() {
     onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({queryKey:["brokers"]}); },
   });
 
-  // Filter out legacy Shoonya accounts from display
   const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker !== "shoonya");
 
   return (
@@ -58,14 +61,16 @@ export default function TradingPage() {
           <h1 className="page-title">TRADING</h1>
           <p className="page-sub">Order management & broker connections</p>
         </div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex", gap:8}}>
           <div className="tab-switcher">
-            <button className={`tab-btn${tab==="orders"  ?" active":""}`} onClick={()=>setTab("orders")}>ORDER BOOK</button>
-            <button className={`tab-btn${tab==="brokers" ?" active":""}`} onClick={()=>setTab("brokers")}>BROKERS</button>
+            <button className={`tab-btn${tab==="orders"?"  active":""}`} onClick={()=>setTab("orders")}>ORDER BOOK</button>
+            <button className={`tab-btn${tab==="brokers"?" active":""}`} onClick={()=>setTab("brokers")}>BROKERS</button>
+
           </div>
         </div>
       </div>
 
+      {/* ── BROKERS TAB ──────────────────────────────────────────────────────── */}
       {tab === "brokers" && (
         <div>
           <div className="card">
@@ -78,13 +83,13 @@ export default function TradingPage() {
 
             {showForm && (
               <div style={{padding:"20px 20px 0"}}>
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:16}}>
+                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:12}}>
                   <div className="field">
                     <label className="field-label">BROKER</label>
                     <select className="field-input" value={form.broker}
-                      onChange={e => setForm(f=>({...f, broker:e.target.value}))}
+                      onChange={e=>setForm(f=>({...f, broker:e.target.value}))}
                       style={{background:"rgba(0,255,136,0.04)", color:"var(--text)", fontFamily:"var(--font)"}}>
-                      {BROKER_OPTIONS.map(b => (
+                      {BROKER_OPTIONS.map(b=>(
                         <option key={b.value} value={b.value}>{b.label}</option>
                       ))}
                     </select>
@@ -92,46 +97,46 @@ export default function TradingPage() {
                   <div className="field">
                     <label className="field-label">CLIENT ID</label>
                     <input className="field-input" value={form.client_id}
-                      onChange={e => setForm(f=>({...f, client_id:e.target.value}))}
+                      onChange={e=>setForm(f=>({...f, client_id:e.target.value}))}
                       placeholder="Your Dhan client ID" />
                   </div>
                   <div className="field">
                     <label className="field-label">MODE</label>
                     <div style={{display:"flex"}}>
-                      {["Paper","Live"].map((m,i) => (
+                      {["Paper","Live"].map((m,i)=>(
                         <button key={m} type="button"
-                          onClick={() => setForm(f=>({...f, paper_trading: m==="Paper"}))}
+                          onClick={()=>setForm(f=>({...f, paper_trading:m==="Paper"}))}
                           style={{
-                            flex:1, padding:11, fontFamily:"var(--font)", fontSize:11,
-                            cursor:"pointer", borderRight:i===0?"none":undefined,
-                            border:"1px solid",
-                            background: (form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                              ? m==="Paper"?"rgba(255,208,96,0.15)":"rgba(255,68,102,0.1)"
-                              : "transparent",
-                            borderColor: (form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                              ? m==="Paper"?"rgba(255,208,96,0.4)":"rgba(255,68,102,0.4)"
-                              : "var(--border)",
-                            color: (form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                              ? m==="Paper"?"var(--yellow)":"var(--red)"
-                              : "var(--muted)",
+                            flex:1, padding:11, fontFamily:"var(--font)", fontSize:11, cursor:"pointer",
+                            borderRight:i===0?"none":undefined, border:"1px solid",
+                            background:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
+                              ? m==="Paper"?"rgba(255,208,96,0.15)":"rgba(255,68,102,0.1)" : "transparent",
+                            borderColor:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
+                              ? m==="Paper"?"rgba(255,208,96,0.4)":"rgba(255,68,102,0.4)" : "var(--border)",
+                            color:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
+                              ? m==="Paper"?"var(--yellow)":"var(--red)" : "var(--muted)",
                           }}>{m.toUpperCase()}</button>
                       ))}
                     </div>
                   </div>
                 </div>
-                <div className="info-box" style={{marginBottom:16}}>
-                  <div className="info-icon">ℹ</div>
-                  <div>
-                    <div className="info-title">DHAN CREDENTIALS</div>
-                    <div className="info-body">
-                      Add <code>DHAN_CLIENT_ID</code> and <code>DHAN_ACCESS_TOKEN</code> to your{" "}
-                      <code>.env</code> file. Generate token at{" "}
-                      <strong>web.dhan.co → My Profile → Access DhanHQ APIs</strong>.
+
+                {/* Access token — only for live mode */}
+                {!form.paper_trading && (
+                  <div className="field" style={{marginBottom:16}}>
+                    <label className="field-label">ACCESS TOKEN</label>
+                    <input className="field-input" type="password"
+                      value={form.access_token}
+                      onChange={e=>setForm(f=>({...f, access_token:e.target.value}))}
+                      placeholder="Paste access token from web.dhan.co (eyJ...)" />
+                    <div style={{fontSize:10, color:"var(--muted)", marginTop:4}}>
+                      web.dhan.co → My Profile → Access DhanHQ APIs → Generate Token
                     </div>
                   </div>
-                </div>
+                )}
+
                 <button className={`auth-btn${connectMutation.isPending?" loading":""}`}
-                  onClick={() => connectMutation.mutate()}
+                  onClick={()=>connectMutation.mutate()}
                   disabled={connectMutation.isPending}
                   style={{maxWidth:220, marginBottom:20}}>
                   {connectMutation.isPending ? "ADDING..." : "ADD BROKER →"}
@@ -144,45 +149,11 @@ export default function TradingPage() {
             )}
 
             {visibleBrokers.map((b: any) => (
-              <div key={b.id} style={{
-                padding:"16px 20px", borderTop:"1px solid var(--border)",
-                display:"flex", alignItems:"center", justifyContent:"space-between",
-              }}>
-                <div style={{display:"flex", alignItems:"center", gap:14}}>
-                  <div style={{
-                    width:36, height:36, borderRadius:4,
-                    background:"rgba(0,255,136,0.1)",
-                    border:"1px solid rgba(0,255,136,0.3)",
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:13, fontWeight:700, color:"var(--green)",
-                  }}>{b.broker[0].toUpperCase()}</div>
-                  <div>
-                    <div style={{fontWeight:700, fontSize:13}}>
-                      {b.broker.toUpperCase()}
-                    </div>
-                    <div style={{fontSize:11, color:"var(--muted)"}}>
-                      Client ID: {b.client_id}
-                    </div>
-                  </div>
-                </div>
-                <div style={{display:"flex", alignItems:"center", gap:10}}>
-                  <span className={`badge ${b.paper_trading ? "badge-yellow" : "badge-green"}`}>
-                    {b.paper_trading ? "PAPER" : "LIVE"}
-                  </span>
-                  <span className={`badge ${b.is_active ? "badge-green" : "badge-gray"}`}>
-                    {b.is_active ? "● ACTIVE" : "○ INACTIVE"}
-                  </span>
-                  {!b.is_active && (
-                    <button className="connect-btn" style={{padding:"5px 12px", fontSize:10}}
-                      onClick={() => activateMutation.mutate(b.id)}
-                      disabled={activateMutation.isPending}>
-                      {activateMutation.isPending ? "..." : "⚡ ACTIVATE"}
-                    </button>
-                  )}
-                  <button className="exit-btn"
-                    onClick={() => removeMutation.mutate(b.id)}>REMOVE</button>
-                </div>
-              </div>
+              <BrokerRow key={b.id} broker={b} qc={qc}
+                onActivate={()=>activateMutation.mutate(b.id)}
+                onRemove={()=>removeMutation.mutate(b.id)}
+                activating={activateMutation.isPending}
+              />
             ))}
           </div>
 
@@ -193,13 +164,13 @@ export default function TradingPage() {
               <div className="info-body">
                 Paper mode simulates all orders without touching real capital.
                 Use it to validate strategies before going live.
-                Switch to Live mode only after thorough paper testing.
               </div>
             </div>
           </div>
         </div>
       )}
 
+      {/* ── ORDER BOOK TAB ───────────────────────────────────────────────────── */}
       {tab === "orders" && (
         <div className="card">
           <div className="card-header"><span className="card-title">ORDER BOOK</span></div>
@@ -207,5 +178,160 @@ export default function TradingPage() {
         </div>
       )}
     </Layout>
+  );
+}
+
+// ── Broker Row with inline Edit + Deactivate ──────────────────────────────────
+function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
+  broker: any; qc: any;
+  onActivate: () => void; onRemove: () => void; activating: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [token, setToken]       = useState("");
+  const [showToken, setShow]    = useState(false);
+
+  const deactivateMutation = useMutation({
+    mutationFn: () => api.patch(`/brokers/${b.id}/deactivate`),
+    onSuccess: () => { toast.success("Broker deactivated"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onError: () => toast.error("Deactivation failed"),
+  });
+
+  const renewMutation = useMutation({
+    mutationFn: () => api.post("/settings/dhan-renew"),
+    onSuccess: (res: any) => {
+      toast.success(`✅ Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
+      qc.invalidateQueries({queryKey:["settings-status"]});
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed — token may be expired"),
+  });
+
+  const updateTokenMutation = useMutation({
+    mutationFn: () => api.post("/settings/dhan-token", {access_token: token}),
+    onSuccess: (res: any) => {
+      toast.success(res.data?.valid ? "✅ Token updated & verified" : "Token saved");
+      qc.invalidateQueries({queryKey:["settings-status","brokers"]});
+      setToken(""); setExpanded(false);
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Update failed"),
+  });
+
+  return (
+    <div style={{borderTop:"1px solid var(--border)"}}>
+      {/* Main row */}
+      <div style={{
+        padding:"16px 20px", display:"flex",
+        alignItems:"center", justifyContent:"space-between",
+      }}>
+        <div style={{display:"flex", alignItems:"center", gap:14}}>
+          <div style={{
+            width:36, height:36, borderRadius:4,
+            background:"rgba(0,255,136,0.1)", border:"1px solid rgba(0,255,136,0.3)",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:13, fontWeight:700, color:"var(--green)",
+          }}>{b.broker[0].toUpperCase()}</div>
+          <div>
+            <div style={{fontWeight:700, fontSize:13}}>{b.broker.toUpperCase()}</div>
+            <div style={{fontSize:11, color:"var(--muted)"}}>Client ID: {b.client_id}</div>
+          </div>
+        </div>
+
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <span className={`badge ${b.paper_trading?"badge-yellow":"badge-green"}`}>
+            {b.paper_trading ? "PAPER" : "LIVE"}
+          </span>
+          <span className={`badge ${b.is_active?"badge-green":"badge-gray"}`}>
+            {b.is_active ? "● ACTIVE" : "○ INACTIVE"}
+          </span>
+
+          {/* Activate / Deactivate */}
+          {!b.is_active ? (
+            <button className="connect-btn" style={{padding:"5px 12px", fontSize:10}}
+              onClick={onActivate} disabled={activating}>
+              {activating ? "..." : "⚡ ACTIVATE"}
+            </button>
+          ) : (
+            <button className="exit-btn"
+              style={{padding:"5px 12px", fontSize:10,
+                color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
+              onClick={() => deactivateMutation.mutate()}
+              disabled={deactivateMutation.isPending}>
+              {deactivateMutation.isPending ? "..." : "⏸ DEACTIVATE"}
+            </button>
+          )}
+
+          {/* Edit token */}
+          {!b.paper_trading && (
+            <button
+              onClick={() => setExpanded(v => !v)}
+              style={{
+                padding:"5px 12px", fontSize:10, cursor:"pointer",
+                fontFamily:"var(--font)",
+                background: expanded ? "rgba(0,255,136,0.1)" : "transparent",
+                border: `1px solid ${expanded ? "rgba(0,255,136,0.4)" : "var(--border)"}`,
+                color: expanded ? "var(--green)" : "var(--muted)",
+              }}>
+              {expanded ? "✕ CLOSE" : "✎ EDIT TOKEN"}
+            </button>
+          )}
+
+          <button className="exit-btn" onClick={onRemove}>REMOVE</button>
+        </div>
+      </div>
+
+      {/* Expanded token edit panel */}
+      {expanded && !b.paper_trading && (
+        <div style={{
+          margin:"0 20px 16px",
+          padding:"16px",
+          background:"rgba(0,0,0,0.2)",
+          border:"1px solid var(--border)",
+        }}>
+          <div style={{fontSize:11, color:"var(--muted)", marginBottom:12}}>
+            Get new token from{" "}
+            <a href="https://web.dhan.co" target="_blank" rel="noreferrer"
+              style={{color:"var(--green)"}}>web.dhan.co</a>
+            {" → My Profile → Access DhanHQ APIs → Generate Token"}
+          </div>
+
+          {/* Auto renew */}
+          <div style={{marginBottom:12}}>
+            <span style={{fontSize:11, color:"var(--muted)", marginRight:10}}>
+              Token still active?
+            </span>
+            <button
+              className={`connect-btn${renewMutation.isPending?" loading":""}`}
+              onClick={() => renewMutation.mutate()}
+              disabled={renewMutation.isPending}
+              style={{fontSize:10, padding:"4px 12px"}}>
+              {renewMutation.isPending ? "RENEWING..." : "⟳ AUTO RENEW (extends 24h)"}
+            </button>
+          </div>
+
+          {/* Manual token paste */}
+          <div style={{display:"flex", gap:8, alignItems:"center"}}>
+            <div style={{position:"relative", flex:1}}>
+              <input className="field-input"
+                type={showToken ? "text" : "password"}
+                value={token}
+                onChange={e => setToken(e.target.value)}
+                placeholder="Paste new token (eyJ...) — use when expired"
+                style={{paddingRight:60, width:"100%"}} />
+              <button onClick={() => setShow(v => !v)} style={{
+                position:"absolute", right:10, top:"50%",
+                transform:"translateY(-50%)", background:"transparent",
+                border:"none", color:"var(--muted)", cursor:"pointer", fontSize:10,
+              }}>{showToken ? "HIDE" : "SHOW"}</button>
+            </div>
+            <button
+              className={`connect-btn${updateTokenMutation.isPending?" loading":""}`}
+              onClick={() => updateTokenMutation.mutate()}
+              disabled={!token.trim() || updateTokenMutation.isPending}
+              style={{whiteSpace:"nowrap", fontSize:10}}>
+              {updateTokenMutation.isPending ? "..." : "UPDATE →"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

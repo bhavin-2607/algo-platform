@@ -177,6 +177,20 @@ function getColColor(value: any, colorRules: string | null): string {
   return "var(--text)";
 }
 
+const SECURITY_IDS: Record<string, {security_id:string, segment:string}> = {
+  "NIFTY50":    {security_id:"13",    segment:"IDX_I"},
+  "BANKNIFTY":  {security_id:"25",    segment:"IDX_I"},
+  "RELIANCE":   {security_id:"2885",  segment:"NSE_EQ"},
+  "TCS":        {security_id:"11536", segment:"NSE_EQ"},
+  "INFY":       {security_id:"1594",  segment:"NSE_EQ"},
+  "HDFCBANK":   {security_id:"1333",  segment:"NSE_EQ"},
+  "ICICIBANK":  {security_id:"4963",  segment:"NSE_EQ"},
+  "SBIN":       {security_id:"3045",  segment:"NSE_EQ"},
+  "WIPRO":      {security_id:"3787",  segment:"NSE_EQ"},
+  "TATAMOTORS": {security_id:"3456",  segment:"NSE_EQ"},
+  "BAJFINANCE": {security_id:"317",   segment:"NSE_EQ"},
+};
+
 export default function TerminalPage() {
   const qc = useQueryClient();
   const { accessToken, user } = useAuthStore();
@@ -187,6 +201,7 @@ export default function TerminalPage() {
   const [showAdd,    setShowAdd]    = useState(false);
   const [formulaRow, setFormulaRow] = useState<{id:string,symbol:string}|null>(null);
   const [showColumns, setShowColumns] = useState(false);
+  const [orderPanel,  setOrderPanel]  = useState(null);
   const wsRef = useRef<WebSocket|null>(null);
 
   // ── Watchlist (persisted to DB) ─────────────────────────────────────────────
@@ -301,6 +316,20 @@ export default function TerminalPage() {
     onError: () => toast.error("No active position"),
   });
 
+
+  const SECURITY_IDS = {
+    "NIFTY50":   {security_id:"13",    segment:"IDX_I"},
+    "BANKNIFTY": {security_id:"25",    segment:"IDX_I"},
+    "RELIANCE":  {security_id:"2885",  segment:"NSE_EQ"},
+    "TCS":       {security_id:"11536", segment:"NSE_EQ"},
+    "INFY":      {security_id:"1594",  segment:"NSE_EQ"},
+    "HDFCBANK":  {security_id:"1333",  segment:"NSE_EQ"},
+    "ICICIBANK": {security_id:"4963",  segment:"NSE_EQ"},
+    "SBIN":      {security_id:"3045",  segment:"NSE_EQ"},
+    "WIPRO":     {security_id:"3787",  segment:"NSE_EQ"},
+    "TATAMOTORS":{security_id:"3456",  segment:"NSE_EQ"},
+    "BAJFINANCE":{security_id:"317",   segment:"NSE_EQ"},
+  };
   const isLive = wsStatus === "live";
 
   // Build unified row list — watchlist symbols merged with terminal rows
@@ -371,6 +400,16 @@ export default function TerminalPage() {
         <AdminColumnManager onClose={() => setShowColumns(false)} />
       )}
 
+      {orderPanel && (
+        <OrderPanel
+          symbol={orderPanel.symbol}
+          securityId={orderPanel.securityId}
+          segment={orderPanel.segment}
+          ltp={liveData[orderPanel.symbol]?.ltp ?? null}
+          onClose={() => setOrderPanel(null)}
+        />
+      )}
+
       {/* ── Add Symbol Panel ────────────────────────────────────────────────── */}
       {showAdd && (
         <AddSymbolPanel onAdded={() => {
@@ -379,7 +418,7 @@ export default function TerminalPage() {
         }} />
       )}
       {/* ── Terminal Table ──────────────────────────────────────────────────── */}
-      <TerminalTable watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
+      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
 
             {/* ── Bottom Summary ───────────────────────────────────────────────────── */}
       {watchlist.length > 0 && (
@@ -961,11 +1000,12 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
 function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
-  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol }: {
+  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol, onOrder }: {
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
   onFormulaRow:(id:string,sym:string)=>void; onDeleteCol:(id:string)=>void;
+  onOrder:(sym:string,inst:{security_id:string,segment:string})=>void;
 }) {
   if (watchlist.length === 0) return (
     <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
@@ -1103,7 +1143,21 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
                           borderColor:"rgba(255,68,102,0.4)"}}
                         onClick={()=>onExitRow(trow.id)}>EXIT</button>
                     )}
-                    {isAdmin&&trow&&(
+                    {(() => {
+                        const inst = SECURITY_IDS[sym];
+                        if (!inst) return null;
+                        return <>
+                          <button onClick={e=>{e.stopPropagation();onOrder(sym, inst);}}
+                            style={{padding:"2px 8px",fontSize:10,cursor:"pointer",fontWeight:700,
+                              background:"rgba(0,255,136,0.1)",border:"1px solid rgba(0,255,136,0.3)",
+                              color:"var(--green)",fontFamily:"var(--font)"}}>B</button>
+                          <button onClick={e=>{e.stopPropagation();onOrder(sym, inst);}}
+                            style={{padding:"2px 8px",fontSize:10,cursor:"pointer",fontWeight:700,
+                              background:"rgba(255,68,102,0.1)",border:"1px solid rgba(255,68,102,0.3)",
+                              color:"var(--red)",fontFamily:"var(--font)"}}>S</button>
+                        </>;
+                      })()}
+                      {isAdmin&&trow&&(
                       <button onClick={()=>onFormulaRow(trow.id,sym)}
                         style={{padding:"2px 5px",fontSize:10,cursor:"pointer",
                           background:"rgba(255,208,96,0.1)",border:"1px solid rgba(255,208,96,0.3)",
@@ -1120,6 +1174,211 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Order Panel (BUY/SELL) ────────────────────────────────────────────────────
+function OrderPanel({ symbol, securityId, segment, ltp, onClose }: {
+  symbol: string; securityId: string; segment: string;
+  ltp: number | null; onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [side,     setSide]     = useState<"BUY"|"SELL">("BUY");
+  const [qty,      setQty]      = useState("1");
+  const [orderType,setOrderType]= useState<"MARKET"|"LIMIT">("MARKET");
+  const [product,  setProduct]  = useState<"INTRADAY"|"CNC">("INTRADAY");
+  const [price,    setPrice]    = useState("");
+  const [confirm,  setConfirm]  = useState(false);
+
+  const orderMutation = useMutation({
+    mutationFn: () => api.post("/terminal/order", {
+      symbol,
+      security_id:      securityId,
+      exchange_segment: segment,
+      transaction_type: side,
+      quantity:         parseInt(qty),
+      order_type:       orderType,
+      product_type:     product,
+      price:            orderType === "LIMIT" ? parseFloat(price) : 0,
+    }),
+    onSuccess: (res: any) => {
+      toast.success(`✅ ${side} order placed — ID: ${res.data?.order_id}`);
+      qc.invalidateQueries({queryKey:["orderbook"]});
+      onClose();
+    },
+    onError: (e: any) => { const d = e.response?.data?.detail; const msg = Array.isArray(d) ? d.map((x:any) => x.msg || JSON.stringify(x)).join(", ") : typeof d === "string" ? d : d?.error_message || JSON.stringify(d) || "Order failed"; toast.error(msg); setConfirm(false); },
+  });
+
+  const estimatedValue = ltp && qty ? (ltp * parseInt(qty || "0")).toLocaleString() : "—";
+
+  return (
+    <div style={{
+      position:"fixed", top:0, left:0, right:0, bottom:0,
+      background:"rgba(0,0,0,0.85)", zIndex:1000,
+      display:"flex", alignItems:"center", justifyContent:"center",
+    }}>
+      <div style={{
+        background:"var(--surface)", border:"1px solid var(--border)",
+        width:420, padding:0, overflow:"hidden",
+      }}>
+        {/* Header */}
+        <div style={{
+          padding:"14px 20px",
+          background: side==="BUY" ? "rgba(0,255,136,0.1)" : "rgba(255,68,102,0.1)",
+          borderBottom:"1px solid var(--border)",
+          display:"flex", justifyContent:"space-between", alignItems:"center",
+        }}>
+          <div>
+            <span style={{
+              fontSize:16, fontWeight:700,
+              color: side==="BUY" ? "var(--green)" : "var(--red)",
+            }}>{side} ORDER</span>
+            <span style={{fontSize:13, color:"var(--text)", marginLeft:10, fontWeight:700}}>{symbol}</span>
+          </div>
+          <button onClick={onClose} style={{
+            background:"transparent", border:"none",
+            color:"var(--muted)", cursor:"pointer", fontSize:18,
+          }}>✕</button>
+        </div>
+
+        <div style={{padding:"20px"}}>
+          {/* BUY / SELL toggle */}
+          <div style={{display:"flex", marginBottom:16}}>
+            {(["BUY","SELL"] as const).map(s => (
+              <button key={s} onClick={() => setSide(s)} style={{
+                flex:1, padding:"10px", fontSize:12, fontWeight:700,
+                cursor:"pointer", fontFamily:"var(--font)",
+                border:"1px solid",
+                background: side===s
+                  ? s==="BUY" ? "rgba(0,255,136,0.15)" : "rgba(255,68,102,0.15)"
+                  : "transparent",
+                borderColor: side===s
+                  ? s==="BUY" ? "rgba(0,255,136,0.5)" : "rgba(255,68,102,0.5)"
+                  : "var(--border)",
+                color: side===s
+                  ? s==="BUY" ? "var(--green)" : "var(--red)"
+                  : "var(--muted)",
+                borderRight: s==="BUY" ? "none" : undefined,
+              }}>{s}</button>
+            ))}
+          </div>
+
+          {/* LTP */}
+          {ltp && (
+            <div style={{
+              padding:"8px 12px", marginBottom:16,
+              background:"rgba(255,255,255,0.03)",
+              border:"1px solid var(--border)",
+              display:"flex", justifyContent:"space-between",
+            }}>
+              <span style={{fontSize:11, color:"var(--muted)"}}>LTP</span>
+              <span style={{fontSize:14, fontWeight:700}}>₹{Number(ltp).toLocaleString()}</span>
+            </div>
+          )}
+
+          {/* Order Type + Product */}
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12}}>
+            <div className="field">
+              <label className="field-label">ORDER TYPE</label>
+              <select className="field-input" value={orderType}
+                onChange={e => setOrderType(e.target.value as any)}
+                style={{background:"var(--surface)", color:"var(--text)", fontFamily:"var(--font)"}}>
+                <option value="MARKET">MARKET</option>
+                <option value="LIMIT">LIMIT</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="field-label">PRODUCT</label>
+              <select className="field-input" value={product}
+                onChange={e => setProduct(e.target.value as any)}
+                style={{background:"var(--surface)", color:"var(--text)", fontFamily:"var(--font)"}}>
+                <option value="INTRADAY">INTRADAY (MIS)</option>
+                <option value="CNC">CNC (Delivery)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Quantity + Price */}
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16}}>
+            <div className="field">
+              <label className="field-label">QUANTITY</label>
+              <input className="field-input" type="number" min="1"
+                value={qty} onChange={e => setQty(e.target.value)} />
+            </div>
+            {orderType === "LIMIT" && (
+              <div className="field">
+                <label className="field-label">PRICE (₹)</label>
+                <input className="field-input" type="number" step="0.05"
+                  value={price} onChange={e => setPrice(e.target.value)}
+                  placeholder={ltp ? String(ltp) : "0.00"} />
+              </div>
+            )}
+          </div>
+
+          {/* Order summary */}
+          <div style={{
+            padding:"10px 12px", marginBottom:16,
+            background:"rgba(255,255,255,0.02)",
+            border:"1px solid var(--border)", fontSize:11,
+          }}>
+            <div style={{display:"flex", justifyContent:"space-between", marginBottom:4}}>
+              <span style={{color:"var(--muted)"}}>Est. Value</span>
+              <span style={{fontWeight:700}}>₹{estimatedValue}</span>
+            </div>
+            <div style={{display:"flex", justifyContent:"space-between"}}>
+              <span style={{color:"var(--muted)"}}>Exchange</span>
+              <span>{segment}</span>
+            </div>
+          </div>
+
+          {/* Confirm step */}
+          {!confirm ? (
+            <button
+              onClick={() => setConfirm(true)}
+              disabled={!qty || parseInt(qty) < 1}
+              style={{
+                width:"100%", padding:"12px", fontSize:13, fontWeight:700,
+                cursor:"pointer", fontFamily:"var(--font)", border:"none",
+                background: side==="BUY" ? "var(--green)" : "var(--red)",
+                color: "#000",
+                opacity: !qty || parseInt(qty) < 1 ? 0.5 : 1,
+              }}>
+              {side} {qty || 0} × {symbol}
+            </button>
+          ) : (
+            <div>
+              <div style={{
+                padding:"10px 12px", marginBottom:10, fontSize:12,
+                background:"rgba(255,208,96,0.1)",
+                border:"1px solid rgba(255,208,96,0.3)",
+                color:"var(--yellow)", textAlign:"center",
+              }}>
+                ⚠ Confirm {side} {qty} shares of {symbol}
+                {orderType==="LIMIT" ? ` @ ₹${price}` : " at MARKET price"}?
+              </div>
+              <div style={{display:"flex", gap:8}}>
+                <button
+                  className={`auth-btn${orderMutation.isPending?" loading":""}`}
+                  onClick={() => orderMutation.mutate()}
+                  disabled={orderMutation.isPending}
+                  style={{
+                    flex:1,
+                    background: side==="BUY" ? "var(--green)" : "var(--red)",
+                    color:"#000", border:"none",
+                  }}>
+                  {orderMutation.isPending ? "PLACING..." : `CONFIRM ${side}`}
+                </button>
+                <button onClick={() => setConfirm(false)} style={{
+                  padding:"12px 16px", cursor:"pointer", fontFamily:"var(--font)",
+                  background:"transparent", border:"1px solid var(--border)",
+                  color:"var(--muted)", fontSize:12,
+                }}>CANCEL</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

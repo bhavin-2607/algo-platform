@@ -42,21 +42,27 @@ class DhanAuthManager:
         """
         Renew current active token for 24 more hours.
         POST /v2/RenewToken — no TOTP needed.
-        Only works if current token is still active (not expired).
+        NOTE: Only works if current token is still ACTIVE (not expired).
+        If token is expired, this will fail — use generate_token_totp instead.
         """
         try:
             resp = requests.post(
                 f"{DHAN_API_URL}/RenewToken",
                 headers={
                     "access-token": self.access_token,
-                    "dhanClientId": self.client_id,
+                    "client-id":    self.client_id,   # correct header per Dhan docs
                     "Content-Type": "application/json",
                 },
                 timeout=10,
             )
             data = resp.json()
 
-            # Token is returned directly in response
+            # Check for expired token error
+            err_code = str(data.get("errorCode", ""))
+            if err_code in ("DH-901", "DH-902", "808"):
+                logger.warning("Token already expired — RenewToken cannot extend expired tokens")
+                return None
+
             new_token = (
                 data.get("accessToken") or
                 data.get("access_token") or
@@ -270,18 +276,30 @@ class DhanAuthManager:
 
     def is_token_valid(self) -> bool:
         """Quick check if current token is still valid."""
+        if not self.access_token or not self.client_id:
+            return False
         try:
             resp = requests.get(
                 f"{DHAN_API_URL}/fundlimit",
                 headers={
                     "access-token": self.access_token,
-                    "dhanClientId": self.client_id,
+                    "client-id":    self.client_id,
                 },
                 timeout=5,
             )
             return resp.status_code == 200
         except Exception:
             return False
+
+    def is_token_expiring_soon(self, hours: int = 2) -> bool:
+        """
+        RenewToken only works on ACTIVE tokens.
+        We should renew BEFORE expiry (e.g. at 7:45 AM when token expires at ~same time).
+        This checks if we should proactively renew.
+        """
+        # Since we can't check expiry time without storing it,
+        # always attempt renewal if called during scheduled window
+        return True
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
