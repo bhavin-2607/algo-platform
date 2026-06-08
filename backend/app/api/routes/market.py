@@ -554,10 +554,11 @@ async def search_instruments_csv(
             os.path.dirname(__file__), "../../market/instruments.csv"))
         df = pd.read_csv(csv_path, header=0, low_memory=False)
 
-        # Equity only
+        # Equity + Indices
         eq_df = df[
             ((df["EXCH_ID"] == "NSE") & (df["SERIES"] == "EQ")) |
-            ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))
+            ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))  |
+            ((df["EXCH_ID"] == "NSE") & (df["SEGMENT"] == "I"))
         ]
 
         mask = (
@@ -675,19 +676,7 @@ BUNDLED_INSTRUMENTS = [
 
 # ── Watchlist Management (DB-backed, persists across restarts) ───────────────
 
-DEFAULT_WATCHLIST = [
-    {"symbol": "NIFTY50",    "security_id": "13",    "exchange_segment": "IDX_I"},
-    {"symbol": "BANKNIFTY",  "security_id": "25",    "exchange_segment": "IDX_I"},
-    {"symbol": "RELIANCE",   "security_id": "2885",  "exchange_segment": "NSE_EQ"},
-    {"symbol": "TCS",        "security_id": "11536", "exchange_segment": "NSE_EQ"},
-    {"symbol": "INFY",       "security_id": "1594",  "exchange_segment": "NSE_EQ"},
-    {"symbol": "HDFCBANK",   "security_id": "1333",  "exchange_segment": "NSE_EQ"},
-    {"symbol": "ICICIBANK",  "security_id": "4963",  "exchange_segment": "NSE_EQ"},
-    {"symbol": "SBIN",       "security_id": "3045",  "exchange_segment": "NSE_EQ"},
-    {"symbol": "WIPRO",      "security_id": "3787",  "exchange_segment": "NSE_EQ"},
-    {"symbol": "TATAMOTORS", "security_id": "3456",  "exchange_segment": "NSE_EQ"},
-    {"symbol": "BAJFINANCE", "security_id": "317",   "exchange_segment": "NSE_EQ"},
-]
+DEFAULT_WATCHLIST = []  # No default symbols — users add their own  # No default symbols — users add their own
 
 
 @router.get("/watchlist")
@@ -859,10 +848,37 @@ async def remove_from_watchlist(
 async def get_funds(current_user: User = Depends(get_current_user)):
     """Fetch Dhan fund limits for account summary bar."""
     from app.core.config import settings
-    if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
+    # Use requesting user's broker credentials for isolation
+    from app.models.broker import BrokerAccount, BrokerName
+    from sqlalchemy import select as sa_select
+    from app.core.database import AsyncSessionLocal
+    user_client_id    = None
+    user_access_token = None
+    try:
+        async with AsyncSessionLocal() as _db:
+            _res = await _db.execute(
+                sa_select(BrokerAccount).where(
+                    BrokerAccount.user_id       == current_user.id,
+                    BrokerAccount.broker        == BrokerName.dhan,
+                    BrokerAccount.paper_trading == False,
+                    BrokerAccount.is_active     == True,
+                )
+            )
+            _acct = _res.scalar_one_or_none()
+            if _acct:
+                user_client_id    = _acct.client_id
+                user_access_token = settings.DHAN_ACCESS_TOKEN  # token from env
+    except Exception:
+        pass
+
+    # Only fetch balance if THIS user has an active live broker
+    if user_client_id and settings.DHAN_ACCESS_TOKEN:
         try:
             from dhanhq import DhanContext, dhanhq
-            ctx  = DhanContext(settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
+            ctx  = DhanContext(
+                user_client_id or settings.DHAN_CLIENT_ID,
+                settings.DHAN_ACCESS_TOKEN
+            )
             dhan = dhanhq(ctx)
             resp = dhan.get_fund_limits()
             if resp and resp.get("status") == "success":

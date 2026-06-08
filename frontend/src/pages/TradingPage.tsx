@@ -14,7 +14,7 @@ export default function TradingPage() {
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
-  const [tab, setTab] = useState<"orders"|"brokers"|"credentials">("brokers");
+  const [tab, setTab] = useState<"orders">("orders");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ broker:"dhan", client_id:"", access_token:"", paper_trading:true });
 
@@ -64,111 +64,11 @@ export default function TradingPage() {
         <div style={{display:"flex", gap:8}}>
           <div className="tab-switcher">
             <button className={`tab-btn${tab==="orders"?"  active":""}`} onClick={()=>setTab("orders")}>ORDER BOOK</button>
-            <button className={`tab-btn${tab==="brokers"?" active":""}`} onClick={()=>setTab("brokers")}>BROKERS</button>
 
           </div>
         </div>
       </div>
 
-      {/* ── BROKERS TAB ──────────────────────────────────────────────────────── */}
-      {tab === "brokers" && (
-        <div>
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">CONNECTED BROKERS</span>
-              <button className="connect-btn" onClick={() => setShowForm(v=>!v)}>
-                {showForm ? "✕ CANCEL" : "+ ADD BROKER"}
-              </button>
-            </div>
-
-            {showForm && (
-              <div style={{padding:"20px 20px 0"}}>
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:12}}>
-                  <div className="field">
-                    <label className="field-label">BROKER</label>
-                    <select className="field-input" value={form.broker}
-                      onChange={e=>setForm(f=>({...f, broker:e.target.value}))}
-                      style={{background:"rgba(0,255,136,0.04)", color:"var(--text)", fontFamily:"var(--font)"}}>
-                      {BROKER_OPTIONS.map(b=>(
-                        <option key={b.value} value={b.value}>{b.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="field">
-                    <label className="field-label">CLIENT ID</label>
-                    <input className="field-input" value={form.client_id}
-                      onChange={e=>setForm(f=>({...f, client_id:e.target.value}))}
-                      placeholder="Your Dhan client ID" />
-                  </div>
-                  <div className="field">
-                    <label className="field-label">MODE</label>
-                    <div style={{display:"flex"}}>
-                      {["Paper","Live"].map((m,i)=>(
-                        <button key={m} type="button"
-                          onClick={()=>setForm(f=>({...f, paper_trading:m==="Paper"}))}
-                          style={{
-                            flex:1, padding:11, fontFamily:"var(--font)", fontSize:11, cursor:"pointer",
-                            borderRight:i===0?"none":undefined, border:"1px solid",
-                            background:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                              ? m==="Paper"?"rgba(255,208,96,0.15)":"rgba(255,68,102,0.1)" : "transparent",
-                            borderColor:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                              ? m==="Paper"?"rgba(255,208,96,0.4)":"rgba(255,68,102,0.4)" : "var(--border)",
-                            color:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                              ? m==="Paper"?"var(--yellow)":"var(--red)" : "var(--muted)",
-                          }}>{m.toUpperCase()}</button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Access token — only for live mode */}
-                {!form.paper_trading && (
-                  <div className="field" style={{marginBottom:16}}>
-                    <label className="field-label">ACCESS TOKEN</label>
-                    <input className="field-input" type="password"
-                      value={form.access_token}
-                      onChange={e=>setForm(f=>({...f, access_token:e.target.value}))}
-                      placeholder="Paste access token from web.dhan.co (eyJ...)" />
-                    <div style={{fontSize:10, color:"var(--muted)", marginTop:4}}>
-                      web.dhan.co → My Profile → Access DhanHQ APIs → Generate Token
-                    </div>
-                  </div>
-                )}
-
-                <button className={`auth-btn${connectMutation.isPending?" loading":""}`}
-                  onClick={()=>connectMutation.mutate()}
-                  disabled={connectMutation.isPending}
-                  style={{maxWidth:220, marginBottom:20}}>
-                  {connectMutation.isPending ? "ADDING..." : "ADD BROKER →"}
-                </button>
-              </div>
-            )}
-
-            {visibleBrokers.length === 0 && !showForm && (
-              <div className="empty-state">No broker connected. Add Dhan to start trading.</div>
-            )}
-
-            {visibleBrokers.map((b: any) => (
-              <BrokerRow key={b.id} broker={b} qc={qc}
-                onActivate={()=>activateMutation.mutate(b.id)}
-                onRemove={()=>removeMutation.mutate(b.id)}
-                activating={activateMutation.isPending}
-              />
-            ))}
-          </div>
-
-          <div className="info-box" style={{marginTop:16}}>
-            <div className="info-icon">ℹ</div>
-            <div>
-              <div className="info-title">ABOUT PAPER TRADING</div>
-              <div className="info-body">
-                Paper mode simulates all orders without touching real capital.
-                Use it to validate strategies before going live.
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── ORDER BOOK TAB ───────────────────────────────────────────────────── */}
       {tab === "orders" && (
