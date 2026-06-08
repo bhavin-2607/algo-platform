@@ -20,13 +20,9 @@ export default function SettingsPage() {
       </div>
       <div style={{display:"flex", flexDirection:"column", gap:16, maxWidth:720}}>
         <BrokerSettingsSection />
-        {isAdmin && (
-          <>
-            <PlatformStatus />
-            <DhanCredentialsCard qc={qc} />
-            <TokenRenewalCard qc={qc} />
-          </>
-        )}
+        <PlatformStatus />
+        <DhanCredentialsCard qc={qc} />
+        <TokenRenewalCard qc={qc} />
       </div>
     </Layout>
   );
