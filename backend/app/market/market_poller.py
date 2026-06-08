@@ -127,12 +127,6 @@ class MarketPoller:
 
     async def _poll_loop(self):
         """Background task: poll Dhan and broadcast to all clients."""
-        headers = {
-            "access-token": settings.DHAN_ACCESS_TOKEN,
-            "client-id":    settings.DHAN_CLIENT_ID,
-            "Content-Type": "application/json",
-            "Accept":       "application/json",
-        }
         backoff = self._interval
 
         async with httpx.AsyncClient(timeout=4) as client:
@@ -143,6 +137,12 @@ class MarketPoller:
                         await asyncio.sleep(backoff)
                         continue
 
+                    headers = {
+                        "access-token": settings.DHAN_ACCESS_TOKEN,
+                        "client-id":    settings.DHAN_CLIENT_ID,
+                        "Content-Type": "application/json",
+                        "Accept":       "application/json",
+                    }
                     resp = await client.post(
                         "https://api.dhan.co/v2/marketfeed/quote",
                         headers=headers,

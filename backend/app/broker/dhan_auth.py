@@ -24,6 +24,10 @@ import requests
 from datetime import datetime
 from app.core.config import settings
 
+import socket
+_orig = socket.getaddrinfo
+socket.getaddrinfo = lambda h,p,f=0,t=0,pr=0,fl=0: _orig(h,p,socket.AF_INET,t,pr,fl)
+
 logger = logging.getLogger(__name__)
 
 DHAN_AUTH_URL = "https://auth.dhan.co"

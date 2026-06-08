@@ -886,10 +886,31 @@ async def place_manual_order(
         raise HTTPException(status_code=400, detail="No active Dhan live account")
 
     try:
+        # If BSE segment, look up NSE equivalent for Dhan compatibility
+        security_id = body.security_id
+        exchange    = body.exchange_segment
+        if exchange == "BSE_EQ":
+            try:
+                import pandas as pd, os
+                csv_path = os.path.join(os.path.dirname(__file__),
+                    "../../market/instruments.csv")
+                df = pd.read_csv(csv_path, header=None, low_memory=False)
+                # Find NSE row matching same ISIN
+                bse_row = df[df.iloc[:,2].astype(str) == str(security_id)]
+                if not bse_row.empty:
+                    isin = bse_row.iloc[0, 3]
+                    nse_row = df[(df.iloc[:,0] == "NSE") & (df.iloc[:,3] == isin)]
+                    if not nse_row.empty:
+                        security_id = str(nse_row.iloc[0, 2])
+                        exchange    = "NSE_EQ"
+            except Exception as e:
+                logger.warning(f"NSE lookup failed: {e}")
+
         adapter  = get_broker_adapter(account)
         order    = OrderRequest(
             symbol        = body.symbol,
-            exchange      = body.exchange_segment,
+            exchange      = exchange,
+            security_id   = security_id,
             direction     = body.transaction_type.upper(),
             quantity      = body.quantity,
             order_type    = body.order_type.upper(),
@@ -950,10 +971,31 @@ async def place_manual_order(
         raise HTTPException(status_code=400, detail="No active Dhan live account")
 
     try:
+        # If BSE segment, look up NSE equivalent for Dhan compatibility
+        security_id = body.security_id
+        exchange    = body.exchange_segment
+        if exchange == "BSE_EQ":
+            try:
+                import pandas as pd, os
+                csv_path = os.path.join(os.path.dirname(__file__),
+                    "../../market/instruments.csv")
+                df = pd.read_csv(csv_path, header=None, low_memory=False)
+                # Find NSE row matching same ISIN
+                bse_row = df[df.iloc[:,2].astype(str) == str(security_id)]
+                if not bse_row.empty:
+                    isin = bse_row.iloc[0, 3]
+                    nse_row = df[(df.iloc[:,0] == "NSE") & (df.iloc[:,3] == isin)]
+                    if not nse_row.empty:
+                        security_id = str(nse_row.iloc[0, 2])
+                        exchange    = "NSE_EQ"
+            except Exception as e:
+                logger.warning(f"NSE lookup failed: {e}")
+
         adapter  = get_broker_adapter(account)
         order    = OrderRequest(
             symbol        = body.symbol,
-            exchange      = body.exchange_segment,
+            exchange      = exchange,
+            security_id   = security_id,
             direction     = body.transaction_type.upper(),
             quantity      = body.quantity,
             order_type    = body.order_type.upper(),

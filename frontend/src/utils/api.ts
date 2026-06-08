@@ -16,7 +16,12 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
-      useAuthStore.getState().logout();
+      // Don't logout for Dhan API errors — only for our own auth failures
+      const url = err.config?.url || '';
+      const isDhanError = url.includes('dhan') || url.includes('market');
+      if (!isDhanError) {
+        useAuthStore.getState().logout();
+      }
       window.location.replace("/login");
     }
     return Promise.reject(err);

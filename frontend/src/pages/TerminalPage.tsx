@@ -207,9 +207,13 @@ export default function TerminalPage() {
   // ── Watchlist (persisted to DB) ─────────────────────────────────────────────
   const { data: wlData } = useQuery({
     queryKey: ["watchlist"],
-    queryFn: () => api.get("/market/watchlist").then(r => r.data.symbols as string[]),
+    queryFn: () => api.get("/market/watchlist").then(r => r.data),
   });
-  const watchlist: string[] = wlData ?? [];
+  const watchlist: string[] = wlData?.symbols ?? [];
+  const instrMap: Record<string,{security_id:string,segment:string}> = {};
+  (wlData?.instruments ?? []).forEach((i: any) => {
+    instrMap[i.symbol] = {security_id: i.security_id, segment: i.exchange_segment};
+  });
 
   // ── Terminal rows (strategies/formulas with T/SL config) ───────────────────
   const { data: termRows } = useQuery({
@@ -418,7 +422,7 @@ export default function TerminalPage() {
         }} />
       )}
       {/* ── Terminal Table ──────────────────────────────────────────────────── */}
-      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
+      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
 
             {/* ── Bottom Summary ───────────────────────────────────────────────────── */}
       {watchlist.length > 0 && (
@@ -1000,12 +1004,13 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
 function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
-  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol, onOrder }: {
+  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol, onOrder, instrMap }: {
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
   onFormulaRow:(id:string,sym:string)=>void; onDeleteCol:(id:string)=>void;
   onOrder:(sym:string,inst:{security_id:string,segment:string})=>void;
+  instrMap: Record<string,{security_id:string,segment:string}>;
 }) {
   if (watchlist.length === 0) return (
     <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
@@ -1144,7 +1149,7 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
                         onClick={()=>onExitRow(trow.id)}>EXIT</button>
                     )}
                     {(() => {
-                        const inst = SECURITY_IDS[sym];
+                        const inst = (typeof instrMap !== "undefined" ? instrMap[sym] : null) || SECURITY_IDS[sym];
                         if (!inst) return null;
                         return <>
                           <button onClick={e=>{e.stopPropagation();onOrder(sym, inst);}}

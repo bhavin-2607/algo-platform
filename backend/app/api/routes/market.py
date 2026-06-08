@@ -51,12 +51,67 @@ async def search_instruments(
     q: str = Query(""),
     current_user: User = Depends(get_current_user),
 ):
-    q = q.upper()
-    return [
-        {"symbol": sym, "name": info["name"], "sector": info["sector"], "exchange": "NSE"}
-        for sym, info in INSTRUMENTS.items()
-        if not q or q in sym or q in info["name"].upper()
-    ]
+    """Search instruments from CSV — NSE first, BSE as fallback."""
+    if not q or len(q) < 2:
+        return []
+
+    import pandas as pd, os
+    q = q.upper().strip()
+
+    try:
+        csv_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "../../market/instruments.csv"))
+        df = pd.read_csv(csv_path, header=0, low_memory=False)
+
+        # Filter equity only (EQ series for NSE, E series for BSE)
+        eq_df = df[
+            ((df["EXCH_ID"] == "NSE") & (df["SERIES"] == "EQ")) |
+            ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))
+        ]
+
+        # Search by symbol name or display name
+        mask = (
+            eq_df["SYMBOL_NAME"].str.upper().str.contains(q, na=False) |
+            eq_df["DISPLAY_NAME"].str.upper().str.contains(q, na=False)
+        )
+        matches = eq_df[mask].head(40)
+
+        # Build results — deduplicate by ISIN, prefer NSE
+        seen_isin = {}
+        results   = []
+
+        # Process NSE first
+        for _, row in matches[matches["EXCH_ID"] == "NSE"].iterrows():
+            isin = str(row["ISIN"])
+            entry = {
+                "symbol":           str(row["DISPLAY_NAME"]),
+                "security_id":      str(int(row["SECURITY_ID"])),
+                "exchange_segment": "NSE_EQ",
+                "exchange":         "NSE",
+                "series":           str(row["SERIES"]),
+                "isin":             isin,
+            }
+            seen_isin[isin] = len(results)
+            results.append(entry)
+
+        # Add BSE only if no NSE equivalent
+        for _, row in matches[matches["EXCH_ID"] == "BSE"].iterrows():
+            isin = str(row["ISIN"])
+            if isin not in seen_isin:
+                results.append({
+                    "symbol":           str(row["DISPLAY_NAME"]),
+                    "security_id":      str(int(row["SECURITY_ID"])),
+                    "exchange_segment": "BSE_EQ",
+                    "exchange":         "BSE",
+                    "series":           str(row["SERIES"]),
+                    "isin":             isin,
+                })
+
+        return results[:20]
+
+    except Exception as e:
+        logger.error(f"Instrument search error: {e}")
+        return []
 
 
 @router.get("/quote/{symbol}")
@@ -485,28 +540,77 @@ async def _load_instruments() -> list:
 
 
 @router.get("/instruments/search")
-async def search_instruments(
+async def search_instruments_csv(
     q:    str = Query(..., min_length=1),
     exch: str = Query("NSE"),
     current_user: User = Depends(get_current_user),
 ):
-    """Search NSE/BSE instruments by symbol or company name."""
-    instruments = await _load_instruments()
-    q_upper = q.upper()
+    """Search instruments from CSV — NSE first, BSE as fallback."""
+    import pandas as pd, os, re
+    q_upper = q.upper().strip()
 
-    results = [
-        i for i in instruments
-        if q_upper in i["symbol"].upper() or q_upper in i["name"].upper()
-    ]
+    try:
+        csv_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "../../market/instruments.csv"))
+        df = pd.read_csv(csv_path, header=0, low_memory=False)
 
-    def sort_key(i: dict) -> int:
-        s = i["symbol"].upper()
-        if s == q_upper:          return 0
-        if s.startswith(q_upper): return 1
-        return 2
+        # Equity only
+        eq_df = df[
+            ((df["EXCH_ID"] == "NSE") & (df["SERIES"] == "EQ")) |
+            ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))
+        ]
 
-    results.sort(key=sort_key)
-    return results[:20]
+        mask = (
+            eq_df["SYMBOL_NAME"].str.upper().str.contains(q_upper, na=False, regex=False) |
+            eq_df["DISPLAY_NAME"].str.upper().str.contains(q_upper, na=False, regex=False)
+        )
+        matches = eq_df[mask].head(60)
+
+        # Deduplicate by ISIN — NSE first
+        seen_isin = {}
+        results   = []
+
+        for _, row in matches[matches["EXCH_ID"] == "NSE"].iterrows():
+            isin = str(row["ISIN"])
+            entry = {
+                "symbol":           str(row["DISPLAY_NAME"]),
+                "name":             str(row["SYMBOL_NAME"]),
+                "security_id":      str(int(float(row["SECURITY_ID"]))),
+                "exchange_segment": "NSE_EQ",
+                "exchange":         "NSE",
+                "series":           "EQ",
+                "isin":             isin,
+            }
+            seen_isin[isin] = len(results)
+            results.append(entry)
+
+        for _, row in matches[matches["EXCH_ID"] == "BSE"].iterrows():
+            isin = str(row["ISIN"])
+            if isin not in seen_isin:
+                results.append({
+                    "symbol":           str(row["DISPLAY_NAME"]),
+                    "name":             str(row["SYMBOL_NAME"]),
+                    "security_id":      str(int(float(row["SECURITY_ID"]))),
+                    "exchange_segment": "BSE_EQ",
+                    "exchange":         "BSE",
+                    "series":           "E",
+                    "isin":             isin,
+                })
+
+        # Sort: exact match first, then starts-with, then contains
+        def sort_key(r):
+            s = r["symbol"].upper()
+            n = r["name"].upper()
+            if s == q_upper or n == q_upper:          return 0
+            if s.startswith(q_upper) or n.startswith(q_upper): return 1
+            return 2
+
+        results.sort(key=sort_key)
+        return results[:20]
+
+    except Exception as e:
+        logger.error(f"Instrument search error: {e}")
+        return []
 
 
 BUNDLED_INSTRUMENTS = [
@@ -622,7 +726,22 @@ async def get_watchlist(
     for row in rows:
         poller.add_symbol(row.symbol, row.security_id, row.exchange_segment)
 
-    return {"symbols": [r.symbol for r in rows]}
+    # Sync poller
+    poller = get_poller()
+    for row in rows:
+        poller.add_symbol(row.symbol, row.security_id, row.exchange_segment)
+
+    return {
+        "symbols": [r.symbol for r in rows],
+        "instruments": [
+            {
+                "symbol":           r.symbol,
+                "security_id":      r.security_id,
+                "exchange_segment": r.exchange_segment,
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.post("/watchlist")
@@ -631,6 +750,42 @@ async def add_to_watchlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # If BSE symbol, try to find NSE equivalent before saving
+    if body.get("exchange_segment", "").startswith("BSE"):
+        try:
+            import pandas as pd, os
+            csv_path = os.path.abspath(os.path.join(
+                os.path.dirname(__file__), "../../market/instruments.csv"))
+            df = pd.read_csv(csv_path, header=None, low_memory=False)
+            bse_row = df[df.iloc[:, 2].astype(str) == str(body.get("security_id", ""))]
+            if not bse_row.empty:
+                isin = bse_row.iloc[0, 3]
+                nse_row = df[(df.iloc[:, 0] == "NSE") & (df.iloc[:, 3] == isin) & (df.iloc[:, 10] == "EQ")]
+                if not nse_row.empty:
+                    body["security_id"]      = str(int(nse_row.iloc[0, 2]))
+                    body["exchange_segment"] = "NSE_EQ"
+                    logger.info(f"Watchlist: BSE→NSE for {body.get('symbol')}")
+        except Exception as e:
+            logger.warning(f"Watchlist BSE→NSE lookup failed: {e}")
+
+    # If BSE symbol, try to find NSE equivalent before saving
+    if body.get("exchange_segment", "").startswith("BSE"):
+        try:
+            import pandas as pd, os
+            csv_path = os.path.abspath(os.path.join(
+                os.path.dirname(__file__), "../../market/instruments.csv"))
+            df = pd.read_csv(csv_path, header=None, low_memory=False)
+            bse_row = df[df.iloc[:, 2].astype(str) == str(body.get("security_id", ""))]
+            if not bse_row.empty:
+                isin = bse_row.iloc[0, 3]
+                nse_row = df[(df.iloc[:, 0] == "NSE") & (df.iloc[:, 3] == isin) & (df.iloc[:, 10] == "EQ")]
+                if not nse_row.empty:
+                    body["security_id"]      = str(int(nse_row.iloc[0, 2]))
+                    body["exchange_segment"] = "NSE_EQ"
+                    logger.info(f"Watchlist: BSE→NSE for {body.get('symbol')}")
+        except Exception as e:
+            logger.warning(f"Watchlist BSE→NSE lookup failed: {e}")
+
     """Add a symbol to user's watchlist — persisted to DB."""
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
