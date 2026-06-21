@@ -217,3 +217,53 @@ async def get_underlyings(current_user: User = Depends(get_current_user)):
         {"symbol": k, "lot_size": v["lot_size"], "scrip": v["scrip"]}
         for k, v in UNDERLYINGS.items()
     ]
+
+
+@router.get("/watchlist/live")
+async def get_options_live(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch live quotes for all options in user watchlist via Dhan marketfeed."""
+    from sqlalchemy import text
+    import httpx
+
+    result = await db.execute(
+        text("SELECT security_id, symbol, option_type, strike, lot_size FROM user_options_watchlist WHERE user_id=:uid"),
+        {"uid": str(current_user.id)}
+    )
+    rows = result.mappings().all()
+    if not rows:
+        return {}
+
+    # Build securities dict for Dhan quote API
+    securities = {"NSE_FNO": [int(r["security_id"]) for r in rows]}
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://api.dhan.co/v2/marketfeed/quote",
+            headers=_dhan_headers(),
+            json={"securities": securities},
+            timeout=10,
+        )
+    data = resp.json()
+
+    # Map security_id → quote
+    result_map = {}
+    if data.get("status") == "success" or "data" in data:
+        raw = data.get("data", {}).get("NSE_FNO", {})
+        for sid_str, quote in raw.items():
+            result_map[sid_str] = {
+                "ltp":        quote.get("last_price"),
+                "open":       quote.get("open"),
+                "high":       quote.get("high"),
+                "low":        quote.get("low"),
+                "close":      quote.get("close"),
+                "volume":     quote.get("volume"),
+                "oi":         quote.get("oi"),
+                "change_pct": round(
+                    ((quote.get("last_price",0) - quote.get("close",1)) /
+                     max(quote.get("close",1), 0.01)) * 100, 2
+                ) if quote.get("close") else 0,
+            }
+    return result_map

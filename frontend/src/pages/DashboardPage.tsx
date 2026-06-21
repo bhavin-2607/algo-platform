@@ -1,17 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import Layout from "@/components/common/Layout";
-import { tradesApi, brokerApi } from "@/utils/api";
+import { tradesApi, brokerApi, api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 
-const MOCK_PNL = [
-  { day: "Mon", pnl: 1200 }, { day: "Tue", pnl: 3400 }, { day: "Wed", pnl: 2100 },
-  { day: "Thu", pnl: 5600 }, { day: "Fri", pnl: 4200 }, { day: "Sat", pnl: 7800 },
-  { day: "Sun", pnl: 6500 },
-];
+
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
+  const { data: weeklyPnl } = useQuery({
+    queryKey: ["weekly-pnl"],
+    queryFn: () => api.get("/trades/weekly-pnl").then(r => r.data),
+    refetchInterval: 30_000,
+  });
 
   const { data: summary } = useQuery({
     queryKey: ["trade-summary"],
@@ -21,7 +22,7 @@ export default function DashboardPage() {
 
   const { data: trades } = useQuery({
     queryKey: ["recent-trades"],
-    queryFn: () => tradesApi.list({ limit: 5 }).then(r => r.data),
+    queryFn: () => api.get("/trades?limit=5").then(r => r.data),
   });
 
   const { data: brokers } = useQuery({
@@ -82,7 +83,7 @@ export default function DashboardPage() {
         </div>
         <div style={{ padding: "8px 0 0" }}>
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={MOCK_PNL} margin={{ left: 10, right: 20, top: 10, bottom: 0 }}>
+            <AreaChart data={weeklyPnl ?? []} margin={{ left: 10, right: 20, top: 10, bottom: 0 }}>
               <defs>
                 <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%"  stopColor="#00ff88" stopOpacity={0.15} />

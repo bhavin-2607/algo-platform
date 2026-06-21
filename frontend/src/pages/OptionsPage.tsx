@@ -45,6 +45,13 @@ export default function OptionsPage() {
     refetchInterval: 5000,
   });
 
+  const { data: optLive } = useQuery({
+    queryKey: ["options-live"],
+    queryFn: () => api.get("/options/watchlist/live").then(r => r.data),
+    refetchInterval: 4000,
+    enabled: (optWatchlist ?? []).length > 0,
+  });
+
   const addMutation = useMutation({
     mutationFn: (item: any) => api.post("/options/watchlist", item),
     onSuccess: () => { toast.success("Added to watchlist"); qc.invalidateQueries({queryKey:["options-watchlist"]}); },
@@ -294,7 +301,7 @@ export default function OptionsPage() {
             <table style={{width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"var(--font)"}}>
               <thead>
                 <tr style={{background:"rgba(0,0,0,0.3)"}}>
-                  {["SYMBOL","TYPE","STRIKE","EXPIRY","LOT SIZE","ACTIONS"].map(h => (
+                  {["SYMBOL","TYPE","STRIKE","EXPIRY","LTP","CHG%","OI","LOT SIZE","ACTIONS"].map(h => (
                     <th key={h} style={{padding:"8px 12px",fontSize:9,letterSpacing:1.5,
                       color:"var(--muted)",textAlign:"left",borderBottom:"1px solid var(--border)"}}>{h}</th>
                   ))}
@@ -318,6 +325,23 @@ export default function OptionsPage() {
                     <td style={{padding:"10px 12px", fontWeight:700}}>₹{w.strike}</td>
                     <td style={{padding:"10px 12px", color:"var(--muted)", fontSize:11}}>
                       {new Date(w.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}
+                    </td>
+                    <td style={{padding:"10px 12px", fontWeight:700,
+                      color: (optLive?.[w.security_id]?.ltp ?? 0) > 0 ? "var(--green)" : "var(--muted)"}}>
+                      {optLive?.[w.security_id]?.ltp ? `₹${optLive[w.security_id].ltp}` : "—"}
+                    </td>
+                    <td style={{padding:"10px 12px",
+                      color: (optLive?.[w.security_id]?.change_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)"}}>
+                      {optLive?.[w.security_id]?.change_pct != null
+                        ? `${optLive[w.security_id].change_pct >= 0 ? "+" : ""}${optLive[w.security_id].change_pct}%`
+                        : "—"}
+                    </td>
+                    <td style={{padding:"10px 12px", color:"var(--muted)", fontSize:11}}>
+                      {optLive?.[w.security_id]?.oi
+                        ? (optLive[w.security_id].oi >= 1e6
+                          ? `${(optLive[w.security_id].oi/1e6).toFixed(1)}M`
+                          : `${(optLive[w.security_id].oi/1e3).toFixed(0)}K`)
+                        : "—"}
                     </td>
                     <td style={{padding:"10px 12px"}}>{w.lot_size}</td>
                     <td style={{padding:"10px 12px"}}>

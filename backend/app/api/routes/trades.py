@@ -108,3 +108,43 @@ async def trade_summary(
         "winners":       len(winners),
         "losers":        len(losers),
     }
+
+
+@router.get("/weekly-pnl")
+async def weekly_pnl(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return last 7 days P&L for the dashboard chart."""
+    from datetime import date, timedelta
+    from sqlalchemy import text
+
+    result = await db.execute(
+        text("""
+            SELECT
+                DATE(closed_at AT TIME ZONE 'Asia/Kolkata') as day,
+                COALESCE(SUM(pnl), 0) as pnl
+            FROM trades
+            WHERE user_id = :uid
+              AND status = 'CLOSED'
+              AND closed_at >= NOW() - INTERVAL '7 days'
+            GROUP BY DATE(closed_at AT TIME ZONE 'Asia/Kolkata')
+            ORDER BY day ASC
+        """),
+        {"uid": str(current_user.id)}
+    )
+    rows = result.mappings().all()
+
+    # Build 7-day series with zeros for missing days
+    today = date.today()
+    days = [(today - timedelta(days=i)) for i in range(6, -1, -1)]
+    pnl_map = {str(r["day"]): float(r["pnl"]) for r in rows}
+
+    return [
+        {
+            "day":  d.strftime("%a"),
+            "date": str(d),
+            "pnl":  pnl_map.get(str(d), 0),
+        }
+        for d in days
+    ]

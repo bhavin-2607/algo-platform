@@ -1017,3 +1017,52 @@ async def place_manual_order(
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Order failed: {str(e)}")
+
+
+@router.get("/orderbook")
+async def get_orderbook(
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch today's orders from Dhan broker API."""
+    import httpx
+    from app.core.config import settings
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://api.dhan.co/v2/orders",
+            headers={
+                "access-token": settings.DHAN_ACCESS_TOKEN,
+                "client-id":    settings.DHAN_CLIENT_ID,
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+    data = resp.json()
+
+    if isinstance(data, list):
+        orders = data
+    elif isinstance(data, dict):
+        orders = data.get("data", data.get("orders", []))
+    else:
+        orders = []
+
+    return [
+        {
+            "order_id":        o.get("orderId"),
+            "symbol":          o.get("tradingSymbol") or o.get("securityId"),
+            "exchange":        o.get("exchangeSegment"),
+            "transaction_type":o.get("transactionType"),
+            "order_type":      o.get("orderType"),
+            "product_type":    o.get("productType"),
+            "quantity":        o.get("quantity"),
+            "price":           o.get("price"),
+            "trigger_price":   o.get("triggerPrice"),
+            "status":          o.get("orderStatus"),
+            "created_at":      o.get("createTime"),
+            "updated_at":      o.get("updateTime"),
+            "filled_qty":      o.get("filledQty"),
+            "avg_price":       o.get("averageTradedPrice"),
+            "remarks":         o.get("omsErrorDescription") or o.get("remarks", ""),
+        }
+        for o in orders
+    ]

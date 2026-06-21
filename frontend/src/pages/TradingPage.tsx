@@ -11,6 +11,11 @@ const BROKER_OPTIONS = [
 ];
 
 export default function TradingPage() {
+  const { data: orderbook, isLoading: obLoading } = useQuery({
+    queryKey: ["orderbook"],
+    queryFn: () => api.get("/terminal/orderbook").then(r => r.data),
+    refetchInterval: 10000,
+  });
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
