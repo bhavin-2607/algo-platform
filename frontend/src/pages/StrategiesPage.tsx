@@ -26,6 +26,8 @@ interface RuntimeState {
 }
 
 export default function StrategiesPage() {
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === "admin";
   const qc = useQueryClient();
 
   const { data: myStrategies, isLoading } = useQuery({
@@ -92,7 +94,7 @@ export default function StrategiesPage() {
       )}
 
       {/* Available strategies to assign */}
-      {availableStrategies && availableStrategies.length > 0 && (
+      {availableStrategies && availableStrategies.length > 0 && isAdmin && (
         <div className="card" style={{marginBottom:16}}>
           <div className="card-header">
             <span className="card-title">AVAILABLE STRATEGIES</span>

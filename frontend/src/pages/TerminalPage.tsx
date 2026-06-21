@@ -201,7 +201,7 @@ export default function TerminalPage() {
   const [showAdd,    setShowAdd]    = useState(false);
   const [formulaRow, setFormulaRow] = useState<{id:string,symbol:string}|null>(null);
   const [showColumns, setShowColumns] = useState(false);
-  const [orderPanel,  setOrderPanel]  = useState(null);
+  const [orderPanel,  setOrderPanel]  = useState<{symbol:string,security_id:string,segment:string,prefillSide?:string,prefillPrice?:number}|null>(null);
   const wsRef = useRef<WebSocket|null>(null);
 
   // ── Watchlist (persisted to DB) ─────────────────────────────────────────────
@@ -287,6 +287,27 @@ export default function TerminalPage() {
     .filter((c:any) => c.is_visible)
     .sort((a:any, b:any) => a.col_order - b.col_order);
   const customCols  = (allCols ?? []).filter((c:any) => c.col_type === "custom" && c.is_visible);
+
+  // Live strategy signals — refreshed every 5s
+  const { data: liveSignals } = useQuery({
+    queryKey: ["live-signals"],
+    queryFn: () => api.get("/strategies/live-signals").then(r => r.data),
+    refetchInterval: 5000,
+    enabled: watchlist.length > 0,
+  });
+
+  // Group signals by symbol → strategy
+  const signalMap: Record<string, Record<string, any>> = {};
+  (liveSignals ?? []).forEach((s: any) => {
+    if (!signalMap[s.symbol]) signalMap[s.symbol] = {};
+    signalMap[s.symbol][s.strategy_name] = s;
+  });
+
+  // Unique strategy names for column headers
+  const strategyNames: string[] = [...new Set(
+    (liveSignals ?? []).map((s: any) => s.strategy_name)
+  )] as string[];
+
 
   const hideColMutation = useMutation({
     mutationFn: ({id, visible}: any) =>
@@ -411,6 +432,8 @@ export default function TerminalPage() {
           segment={orderPanel.segment}
           ltp={liveData[orderPanel.symbol]?.ltp ?? null}
           onClose={() => setOrderPanel(null)}
+          prefillSide={orderPanel.prefillSide}
+          prefillPrice={orderPanel.prefillPrice}
         />
       )}
 
@@ -422,9 +445,126 @@ export default function TerminalPage() {
         }} />
       )}
       {/* ── Terminal Table ──────────────────────────────────────────────────── */}
-      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
+      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
 
-            {/* ── Bottom Summary ───────────────────────────────────────────────────── */}
+      
+      {/* ── Strategy Signal Table ──────────────────────────────────────────── */}
+      {strategyNames.length > 0 && (
+        <div style={{marginTop:16}}>
+          <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)",marginBottom:8,padding:"0 4px"}}>
+            STRATEGY SIGNALS
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,fontFamily:"var(--font)"}}>
+              <thead>
+                <tr style={{background:"var(--surface)",borderBottom:"2px solid var(--border)"}}>
+                  <th style={{padding:"8px 10px",fontSize:9,letterSpacing:1.5,color:"var(--muted)",
+                    borderRight:"1px solid var(--border)",minWidth:140,textAlign:"left"}}>#  SYMBOL</th>
+                  {strategyNames.map((name:string) => (
+                    <th key={"sh-"+name} style={{
+                      padding:"8px 12px",fontSize:9,letterSpacing:1.2,textAlign:"left",
+                      color:"rgba(0,255,136,0.9)",whiteSpace:"nowrap",
+                      borderRight:"1px solid var(--border)",minWidth:200,
+                    }}>
+                      <div>{name.toUpperCase()}</div>
+                      <div style={{fontSize:8,color:"var(--muted)",fontWeight:400,marginTop:2}}>SIGNAL · ENTRY · SL · TARGET</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {watchlist.map((sym:string, idx:number) => (
+                  <tr key={"strat-"+sym} style={{
+                    borderBottom:"1px solid var(--border)",
+                  }}
+                    onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,0.02)")}
+                    onMouseLeave={e=>(e.currentTarget.style.background="transparent")}
+                  >
+                    <td style={{padding:"10px 10px",borderRight:"1px solid var(--border)"}}>
+                      <div style={{fontSize:10,color:"var(--muted)",marginBottom:2}}>{idx+1}</div>
+                      <div style={{fontWeight:700,color:"var(--green)",fontSize:12}}>{sym}</div>
+                    </td>
+                    {strategyNames.map((stratName:string) => {
+                      const sig  = signalMap[sym]?.[stratName];
+                      const dir  = sig?.direction || "HOLD";
+                      const inst = instrMap[sym] || SECURITY_IDS[sym];
+                      return (
+                        <td key={"sc-"+stratName} style={{
+                          padding:"10px 12px",
+                          borderRight:"1px solid var(--border)",
+                          minWidth:200,
+                        }}>
+                          {sig ? (
+                            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                              {/* Signal + Entry */}
+                              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                <span className={`badge ${dir==="BUY"?"badge-green":dir==="SELL"?"badge-red":"badge-gray"}`}
+                                  style={{minWidth:48,textAlign:"center",fontSize:11}}>
+                                  {dir}
+                                </span>
+                                {sig.price && (
+                                  <span style={{fontSize:13,fontWeight:700}}>
+                                    ₹{Number(sig.price).toLocaleString()}
+                                  </span>
+                                )}
+                              </div>
+                              {/* SL + Target */}
+                              {(sig.sl || sig.target) && (
+                                <div style={{display:"flex",gap:12,fontSize:11}}>
+                                  {sig.sl && (
+                                    <span style={{color:"var(--red)"}}>
+                                      SL ₹{Number(sig.sl).toFixed(0)}
+                                    </span>
+                                  )}
+                                  {sig.target && (
+                                    <span style={{color:"var(--green)"}}>
+                                      T ₹{Number(sig.target).toFixed(0)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {/* Reason */}
+                              {sig.reason && (
+                                <div style={{fontSize:9,color:"var(--muted)",lineHeight:1.4}}>
+                                  {sig.reason}
+                                </div>
+                              )}
+                              {/* Action button */}
+                              {dir !== "HOLD" && inst && (
+                                <button
+                                  onClick={()=>setOrderPanel({
+                                    symbol:sym,...inst,
+                                    prefillSide:dir,
+                                    prefillPrice:sig.price||0,
+                                  })}
+                                  style={{
+                                    padding:"5px 14px",fontSize:11,cursor:"pointer",
+                                    fontWeight:700,fontFamily:"var(--font)",width:"fit-content",
+                                    background:dir==="BUY"?"rgba(0,255,136,0.15)":"rgba(255,68,102,0.15)",
+                                    border:`1px solid ${dir==="BUY"?"rgba(0,255,136,0.5)":"rgba(255,68,102,0.5)"}`,
+                                    color:dir==="BUY"?"var(--green)":"var(--red)",
+                                  }}>
+                                  {dir} ORDER →
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{color:"var(--muted)",fontSize:11}}>
+                              <span className="badge badge-gray">HOLD</span>
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bottom Summary ───────────────────────────────────────────────────── */}
       {watchlist.length > 0 && (
         <div style={{display:"flex", gap:0, marginTop:16,
           border:"1px solid var(--border)", background:"var(--surface)"}}>
@@ -1004,13 +1144,15 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
 function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
-  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol, onOrder, instrMap }: {
+  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol, onOrder, instrMap, signalMap, strategyNames }: {
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
   onFormulaRow:(id:string,sym:string)=>void; onDeleteCol:(id:string)=>void;
   onOrder:(sym:string,inst:{security_id:string,segment:string})=>void;
   instrMap: Record<string,{security_id:string,segment:string}>;
+  signalMap: Record<string,Record<string,any>>;
+  strategyNames: string[];
 }) {
   if (watchlist.length === 0) return (
     <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
@@ -1184,16 +1326,17 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
 }
 
 // ── Order Panel (BUY/SELL) ────────────────────────────────────────────────────
-function OrderPanel({ symbol, securityId, segment, ltp, onClose }: {
+function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, prefillPrice }: {
   symbol: string; securityId: string; segment: string;
   ltp: number | null; onClose: () => void;
+  prefillSide?: string; prefillPrice?: number;
 }) {
   const qc = useQueryClient();
-  const [side,     setSide]     = useState<"BUY"|"SELL">("BUY");
+  const [side,     setSide]     = useState<"BUY"|"SELL">((prefillSide as any) || "BUY");
   const [qty,      setQty]      = useState("1");
   const [orderType,setOrderType]= useState<"MARKET"|"LIMIT">("MARKET");
   const [product,  setProduct]  = useState<"INTRADAY"|"CNC">("INTRADAY");
-  const [price,    setPrice]    = useState("");
+  const [price,    setPrice]    = useState(prefillPrice ? String(prefillPrice) : "");
   const [confirm,  setConfirm]  = useState(false);
 
   const orderMutation = useMutation({

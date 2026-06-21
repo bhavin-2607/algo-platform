@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.core.database import init_db
 from app.api.routes import (
+    options,
     auth,
     users,
     brokers,
@@ -73,6 +74,7 @@ app.include_router(websocket.router, prefix="/api/ws", tags=["WebSocket"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(signals.router, prefix="/api/signals", tags=["CopyTrading"])
 app.include_router(risk.router, prefix="/api/risk", tags=["Risk"])
+app.include_router(options.router, prefix="/api/options", tags=["Options"])
 app.include_router(market.router, prefix="/api/market", tags=["Market"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
 app.include_router(formula.router, prefix="/api/formula", tags=["Formula"])

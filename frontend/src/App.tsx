@@ -6,6 +6,7 @@ import LoginPage       from "@/pages/LoginPage";
 import RegisterPage    from "@/pages/RegisterPage";
 import DashboardPage   from "@/pages/DashboardPage";
 import TradingPage     from "@/pages/TradingPage";
+import OptionsPage    from "@/pages/OptionsPage";
 import StrategiesPage  from "@/pages/StrategiesPage";
 import SettingsPage    from "@/pages/SettingsPage";
 import CopyTradingPage from "@/pages/CopyTradingPage";
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/dashboard"    element={<Protected><DashboardPage /></Protected>} />
           <Route path="/terminal"     element={<Protected><TerminalPage /></Protected>} />
           <Route path="/trading"      element={<Protected><TradingPage /></Protected>} />
+          <Route path="/options" element={<Protected><OptionsPage /></Protected>} />
           <Route path="/strategies"   element={<Protected><StrategiesPage /></Protected>} />
           <Route path="/formula"      element={<Protected><FormulaPage /></Protected>} />
           <Route path="/copy-trading" element={<Protected><CopyTradingPage /></Protected>} />

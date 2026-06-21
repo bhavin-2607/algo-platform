@@ -120,6 +120,8 @@ async def assign_strategy(
     db: AsyncSession = Depends(get_db),
 ):
     """Assign a strategy to the user with a specific broker account."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
     # Verify broker account belongs to user
     ba = await db.execute(
         select(BrokerAccount).where(
@@ -222,7 +224,11 @@ async def remove_strategy(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove a strategy assignment."""
+    """Remove a strategy assignment. Admin only."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
     usm = await _get_usm(map_id, current_user.id, db)
     if usm.status == StrategyStatus.active:
         raise HTTPException(status_code=400, detail="Stop the strategy before removing")
@@ -272,3 +278,145 @@ async def _get_usm(map_id: UUID, user_id, db: AsyncSession) -> UserStrategyMap:
     if not usm:
         raise HTTPException(status_code=404, detail="Strategy assignment not found")
     return usm
+
+
+@router.get("/all-assignments")
+async def get_all_assignments(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin only — list all strategy assignments across all users."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from sqlalchemy import select
+    from app.models.strategy import UserStrategyMap, Strategy
+    from app.models.user import User as UserModel
+    from app.models.broker import BrokerAccount
+
+    result = await db.execute(
+        select(UserStrategyMap, Strategy, UserModel, BrokerAccount)
+        .join(Strategy,      Strategy.id      == UserStrategyMap.strategy_id)
+        .join(UserModel,     UserModel.id     == UserStrategyMap.user_id)
+        .join(BrokerAccount, BrokerAccount.id == UserStrategyMap.broker_account_id)
+        .order_by(UserStrategyMap.created_at.desc())
+    )
+    rows = result.all()
+
+    return [
+        {
+            "id":            str(usm.id),
+            "user_id":       str(usm.user_id),
+            "username":      user.username,
+            "strategy_name": strat.name,
+            "broker":        f"{broker.broker.value} ({'PAPER' if broker.paper_trading else 'LIVE'})",
+            "status":        usm.status,
+            "paper_trading": usm.paper_trading,
+        }
+        for usm, strat, user, broker in rows
+    ]
+
+
+@router.get("/live-signals")
+async def get_live_signals(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Evaluate all assigned strategies against current tick data.
+    Returns signal per strategy per symbol for the terminal.
+    """
+    from sqlalchemy import select
+    from app.models.strategy import UserStrategyMap, Strategy
+    from app.core.config import settings
+    from app.strategy.registry import get_strategy_class
+    import pandas as pd, httpx, os
+    from datetime import datetime
+    import pytz
+
+    # Get user's assigned strategies
+    result = await db.execute(
+        select(UserStrategyMap, Strategy)
+        .join(Strategy, Strategy.id == UserStrategyMap.strategy_id)
+        .where(
+            UserStrategyMap.user_id == current_user.id,
+            UserStrategyMap.status.in_(["stopped", "active", "paused"]),
+        )
+    )
+    assignments = result.all()
+    if not assignments:
+        return []
+
+    # Get current watchlist symbols + live ticks from Redis/MarketPoller
+    from app.models.watchlist import UserWatchlist
+    wl_result = await db.execute(
+        select(UserWatchlist).where(UserWatchlist.user_id == current_user.id)
+    )
+    watchlist = wl_result.scalars().all()
+    if not watchlist:
+        return []
+
+    # Get live tick data from market poller
+    from app.market.market_poller import get_poller
+    poller    = get_poller()
+    # _last_data is a list of tick dicts — convert to symbol-keyed dict
+    _raw      = getattr(poller, '_last_data', []) or []
+    live_data = {t["symbol"]: t for t in _raw if "symbol" in t}
+
+    signals = []
+    IST     = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(IST)
+
+    for usm, strategy in assignments:
+        try:
+            StrategyClass = get_strategy_class(strategy.engine_class)
+            engine        = StrategyClass(usm.params or strategy.default_params or {})
+
+            for wl in watchlist:
+                sym  = wl.symbol
+                tick = live_data.get(sym, {})
+                if not tick:
+                    continue
+
+                ltp   = float(tick.get("ltp",   0) or 0)
+                open_ = float(tick.get("open",  0) or 0)
+                high  = float(tick.get("high",  0) or 0)
+                low   = float(tick.get("low",   0) or 0)
+                close = float(tick.get("close", 0) or 0)
+
+                if not ltp:
+                    continue
+
+                # Build minimal OHLCV dataframe for strategy
+                df = pd.DataFrame([{
+                    "open":   open_,
+                    "high":   high,
+                    "low":    low,
+                    "close":  close,
+                    "volume": int(tick.get("volume", 0) or 0),
+                    "datetime": now_ist,
+                }])
+
+                try:
+                    signal = engine.generate_signal(df, ltp=ltp)
+                except TypeError:
+                    signal = engine.generate_signal(df)
+
+                signals.append({
+                    "assignment_id":  str(usm.id),
+                    "strategy_id":    str(strategy.id),
+                    "strategy_name":  strategy.name,
+                    "engine_class":   strategy.engine_class,
+                    "symbol":         sym,
+                    "direction":      signal.direction if signal else "HOLD",
+                    "price":          signal.price     if signal else ltp,
+                    "sl":             signal.sl        if signal else None,
+                    "target":         signal.target    if signal else None,
+                    "reason":         signal.reason    if signal else "",
+                    "paper_trading":  usm.paper_trading,
+                })
+        except Exception as e:
+            logger.warning(f"Signal eval error for {strategy.name}: {e}")
+            continue
+
+    return signals
