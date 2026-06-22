@@ -245,27 +245,32 @@ async def get_options_live(
         resp = await client.post(
             "https://api.dhan.co/v2/marketfeed/quote",
             headers=_dhan_headers(),
-            json={"securities": securities},
+            json=securities,
             timeout=10,
         )
     data = resp.json()
+    logger.info(f"Options live raw response: {str(data)[:500]}")
 
-    # Map security_id → quote
     result_map = {}
-    if data.get("status") == "success" or "data" in data:
-        raw = data.get("data", {}).get("NSE_FNO", {})
+    if data.get("status") == "success" and "data" in data:
+        raw = data["data"].get("NSE_FNO", {})
         for sid_str, quote in raw.items():
+            ltp   = quote.get("last_price") or quote.get("ltp") or 0
+            ohlc  = quote.get("ohlc", {})
+            close = ohlc.get("close") or quote.get("close") or 0
+            open_ = ohlc.get("open")  or quote.get("open")  or 0
+            high  = ohlc.get("high")  or quote.get("high")  or 0
+            low   = ohlc.get("low")   or quote.get("low")   or 0
             result_map[sid_str] = {
-                "ltp":        quote.get("last_price"),
-                "open":       quote.get("open"),
-                "high":       quote.get("high"),
-                "low":        quote.get("low"),
-                "close":      quote.get("close"),
-                "volume":     quote.get("volume"),
-                "oi":         quote.get("oi"),
+                "ltp":        ltp,
+                "open":       open_,
+                "high":       high,
+                "low":        low,
+                "close":      close,
+                "volume":     quote.get("volume", 0),
+                "oi":         quote.get("oi", 0),
                 "change_pct": round(
-                    ((quote.get("last_price",0) - quote.get("close",1)) /
-                     max(quote.get("close",1), 0.01)) * 100, 2
-                ) if quote.get("close") else 0,
+                    ((ltp - close) / max(close, 0.01)) * 100, 2
+                ) if close else 0,
             }
     return result_map
