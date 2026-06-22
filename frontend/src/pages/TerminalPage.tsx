@@ -401,7 +401,7 @@ export default function TerminalPage() {
             <button className="exit-btn" style={{fontSize:11, padding:"6px 14px",
               color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
               onClick={() => setShowColumns(true)}>
-              🔧 COLUMNS
+              ⚙ COLUMNS
             </button>
           )}
           <button className="connect-btn" style={{fontSize:11, padding:"6px 14px"}}
@@ -719,7 +719,7 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
         <div style={{display:"flex", justifyContent:"space-between", marginBottom:20}}>
           <div>
             <div style={{fontSize:14, fontWeight:700, color:"var(--green)"}}>
-              🔒 FORMULA CONFIG
+              ƒ FORMULA CONFIG
             </div>
             <div style={{fontSize:11, color:"var(--muted)"}}>
               {symbol} — Admin only · Hidden from users
@@ -903,11 +903,25 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
   }
 
   const EXAMPLES = [
-    { name:"TREND",  formula:'=IF((C4+D4+E4)/3>K4,"DOWN","UP")',          colors:'{"UP":"green","DOWN":"red"}' },
-    { name:"HCG",    formula:"=ROUND(C4-E4,2)",                            colors:'{"positive":"green","negative":"red"}' },
-    { name:"OCG",    formula:"=ROUND(B4-E4,2)",                            colors:'{"positive":"green","negative":"red"}' },
-    { name:"LCG",    formula:"=ROUND(E4-D4,2)",                            colors:'{"positive":"green","negative":"red"}' },
-    { name:"KD",     formula:"=ROUND((close-low)/(high-low)*100,2)",             colors:'{}' },
+    { name:"TREND",  formula:'=IF((high+low+close)/3>ltp,"DOWN","UP")', colors:'{"UP":"green","DOWN":"red"}' },
+    { name:"HCG",    formula:"=(high+close)/2",                            colors:'{}' },
+    { name:"OCG",    formula:"=(open+close)/2",                            colors:'{}' },
+    { name:"LCG",    formula:"=(low+close)/2",                             colors:'{}' },
+    { name:"KD",     formula:"=-(ltp-low)/(low-high)*100",                 colors:'{}' },
+    { name:"GANN",   formula:"=(high+low)/2",                              colors:'{}' },
+    { name:"SIGNAL", formula:'=IF(ltp>open,"BUY","SELL")',                 colors:'{"BUY":"green","SELL":"red"}' },
+    { name:"SSIG",   formula:'=IFERROR(IF(AND(open>close,ltp>open),"BUY",IF(AND(open<close,ltp<open),"SELL","")),"")' , colors:'{"BUY":"green","SELL":"red"}' },
+    { name:"ENTRY",  formula:'=IF(AND(open=0,high=0,low=0)," ",IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0),IF(signal="SELL",ROUND(((SQRT(open)-0.015)^2),0)," ")))', colors:'{}' },
+    { name:"SL",     formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)-(ROUND(((SQRT(open)+0.015)^2),0)*0.5%),ROUND(((SQRT(open)-0.015)^2),0)+(ROUND(((SQRT(open)-0.015)^2),0)*0.5%))', colors:'{}' },
+    { name:"T11.8",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.118%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.118%))', colors:'{}' },
+    { name:"T23.8",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.238%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.238%))', colors:'{}' },
+    { name:"T38.2",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.382%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.382%))', colors:'{}' },
+    { name:"T50",    formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.5%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.5%))',   colors:'{}' },
+    { name:"T61.8",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.618%))', colors:'{}' },
+    { name:"T78.6",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.786%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.786%))', colors:'{}' },
+    { name:"T100",   formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*1%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*1%))',     colors:'{}' },
+    { name:"T1.618", formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*1.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*1.618%))', colors:'{}' },
+    { name:"T2.618", formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*2.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*2.618%))', colors:'{}' },
   ];
 
   return (
@@ -927,7 +941,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
         }}>
           <div>
             <div style={{fontSize:14, fontWeight:700, color:"var(--green)"}}>
-              🔒 FORMULA COLUMNS
+              ƒ FORMULA COLUMNS
             </div>
             <div style={{fontSize:11, color:"var(--muted)"}}>
               Admin only — users see calculated values, never the formula
@@ -1112,7 +1126,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
                       style={{background:"transparent",border:"none",
                         color:col.is_visible?"var(--green)":"var(--muted)",
                         cursor:"pointer",fontSize:11,padding:0}}>
-                      {col.is_visible ? "👁" : "🚫"}
+                      {col.is_visible ? "●" : "○"}
                     </button>
                     <button
                       onClick={() => { if(confirm(`Remove "${col.name}" column?`)) deleteMutation.mutate(col.id); }}
@@ -1199,12 +1213,19 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
             const pnl   = trow?.pnl ?? null;
             const tick  = { ...live, ltp: ltp ?? 0 };
 
-            // Pre-evaluate formula cols for cross-refs
+            // Pre-evaluate formula cols in order, passing accumulated results for cross-refs
             const colValues: Record<string,any> = {};
-            visibleCols.forEach((c:any) => {
+            // Sort by col_order to ensure SIGNAL evaluated before ENTRY/SL/T-levels
+            const sortedCols = [...visibleCols].sort((a:any,b:any) => (a.col_order??0)-(b.col_order??0));
+            sortedCols.forEach((c:any) => {
               if ((c.col_type==="custom"||c.col_type==="formula") && c.formula) {
-                const v = evalExcelFormula(c.formula, tick);
-                if (v != null) colValues[c.name] = v;
+                // Pass accumulated colValues so cross-references (signal→entry) work
+                const v = evalExcelFormula(c.formula, tick, colValues);
+                if (v != null && v !== "") {
+                  colValues[c.name] = v;
+                  // Also store lowercase key for case-insensitive refs
+                  colValues[c.name.toLowerCase()] = v;
+                }
               }
             });
 
@@ -1309,7 +1330,7 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
                         style={{padding:"2px 5px",fontSize:10,cursor:"pointer",
                           background:"rgba(255,208,96,0.1)",border:"1px solid rgba(255,208,96,0.3)",
                           color:"var(--yellow)",fontFamily:"var(--font)"}}
-                        title="Set strategy formula">🔒</button>
+                        title="Set strategy formula">ƒ</button>
                     )}
                     <button onClick={()=>onRemoveSymbol(sym)}
                       style={{padding:"2px 5px",fontSize:11,background:"transparent",

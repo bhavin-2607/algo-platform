@@ -26,6 +26,7 @@ def _dhan_headers():
         "access-token": settings.DHAN_ACCESS_TOKEN,
         "client-id":    settings.DHAN_CLIENT_ID,
         "Content-Type": "application/json",
+        "Accept":       "application/json",
     }
 
 # ── Expiry List ───────────────────────────────────────────────────────────────
@@ -238,6 +239,7 @@ async def get_options_live(
 
     # Build securities dict for Dhan quote API
     securities = {"NSE_FNO": [int(r["security_id"]) for r in rows]}
+    logger.info(f"Options live request: {securities}")
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
