@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, JSON, Enum
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, JSON, Enum, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -25,6 +25,10 @@ class Strategy(Base):
     name = Column(String, nullable=False)
     description = Column(String)
     engine_class = Column(String, nullable=False)   # server-side only
+    version = Column(String, nullable=False, default="1")
+    live_enabled = Column(Boolean, default=True)
+    warmup_bars = Column(Integer, default=1)
+    max_positions = Column(Integer, default=1)
     default_params = Column(JSON, default={})
     is_available = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -41,6 +45,7 @@ class UserStrategyMap(Base):
     strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"))
     broker_account_id = Column(UUID(as_uuid=True), ForeignKey("broker_accounts.id"))
     params = Column(JSON, default={})
+    engine_version = Column(String, nullable=True)
     status = Column(Enum(StrategyStatus), default=StrategyStatus.stopped)
     paper_trading = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

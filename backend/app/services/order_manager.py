@@ -61,17 +61,20 @@ class OrderManager:
         target_price = None
         sl_price     = None
 
-        if target_pct:
-            if direction == "BUY":
-                target_price = round(entry_price * (1 + target_pct / 100), 2)
-            else:
-                target_price = round(entry_price * (1 - target_pct / 100), 2)
-
-        if sl_pct:
-            if direction == "BUY":
-                sl_price = round(entry_price * (1 - sl_pct / 100), 2)
-            else:
-                sl_price = round(entry_price * (1 + sl_pct / 100), 2)
+        if target_pct or sl_pct:
+            from app.strategy.exits import protective_prices
+            sl_price, target_price = protective_prices(
+                direction,
+                entry_price,
+                sl_pct=float(sl_pct or 0),
+                target_pct=float(target_pct or 0),
+                sl=None if not sl_pct else None,
+                target=None if not target_pct else None,
+            )
+            if not target_pct:
+                target_price = None
+            if not sl_pct:
+                sl_price = None
 
         pos = ManagedPosition(
             strategy_id       = strategy_id,
@@ -111,19 +114,14 @@ class OrderManager:
 
         # ── Update peak price & trail SL ─────────────────────────────────────
         if pos.trailing_sl and pos.trail_pct:
-            if pos.direction == "BUY":
-                if ltp > (pos.peak_price or pos.entry_price):
-                    pos.peak_price = ltp
-                    new_sl = round(ltp * (1 - pos.trail_pct / 100), 2)
-                    if pos.sl_price is None or new_sl > pos.sl_price:
-                        pos.sl_price = new_sl
-                        logger.info(f"↑ Trailing SL updated: {pos.symbol} SL=₹{new_sl}")
-            else:  # SELL
-                if ltp < (pos.peak_price or pos.entry_price):
-                    pos.peak_price = ltp
-                    new_sl = round(ltp * (1 + pos.trail_pct / 100), 2)
-                    if pos.sl_price is None or new_sl < pos.sl_price:
-                        pos.sl_price = new_sl
+            from app.strategy.exits import trail_stop
+            peak, new_sl = trail_stop(
+                pos.direction, ltp, pos.peak_price, pos.sl_price, float(pos.trail_pct)
+            )
+            pos.peak_price = peak
+            if new_sl is not None:
+                pos.sl_price = new_sl
+                logger.info(f"↑ Trailing SL updated: {pos.symbol} SL=₹{new_sl}")
 
         # ── Check target ──────────────────────────────────────────────────────
         if pos.target_price:

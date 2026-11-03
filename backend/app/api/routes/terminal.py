@@ -252,6 +252,20 @@ async def start_terminal(
         )
     )
     paper_rows = result.scalars().all()
+    live_rows = await db.execute(
+        select(TerminalRow).where(
+            TerminalRow.owner_id == current_user.id,
+            TerminalRow.is_active == True,
+            TerminalRow.trade_mode == "REAL",
+        )
+    )
+    if live_rows.scalars().first():
+        from app.core.trading_mode import LiveTradingError, assert_live_allowed, require_not_killed
+        try:
+            assert_live_allowed()
+            await require_not_killed()
+        except LiveTradingError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.message)
     for row in paper_rows:
         from app.worker.tasks import start_simulated_feed
         start_simulated_feed.delay(
@@ -914,6 +928,8 @@ async def place_manual_order(
                 logger.warning(f"NSE lookup failed: {e}")
 
         adapter = get_broker_adapter(account)
+        from app.core.trading_mode import assert_feed_fresh
+        await assert_feed_fresh(get_redis())
         # Dhan adapter uses order.symbol as securityId
         order = OrderRequest(
             symbol        = security_id,

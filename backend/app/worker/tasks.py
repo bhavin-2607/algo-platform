@@ -14,17 +14,36 @@ def _run(coro_factory):
     Run an async coroutine factory with a fresh event loop each time.
     Pass a zero-arg async function (lambda/def), NOT an already-created coroutine,
     so the coroutine is created INSIDE the new loop.
+
+    The shared Redis client and DB engine are closed with that loop. The next
+    task creates new ones. Reusing them across loops raises "Event loop is closed".
     """
     import asyncio
+    from app.core.redis_client import close_redis, reset_redis
+
+    async def _shutdown():
+        await close_redis()
+        try:
+            from app.core.database import engine
+            await engine.dispose()
+        except Exception:
+            pass
+
+    reset_redis()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coro_factory())
     finally:
         try:
+            loop.run_until_complete(_shutdown())
+        except Exception:
+            reset_redis()
+        try:
             loop.close()
         except Exception:
             pass
+        asyncio.set_event_loop(None)
 
 
 # ── Strategy executor ─────────────────────────────────────────────────────────
@@ -72,6 +91,14 @@ def start_dhan_feed(instruments: list):
 def start_simulated_feed(exchange: str, token: str, base_price: float = 2800.0):
     """Publish synthetic ticks to Redis every second (paper trading / dev)."""
     import time
+    from app.core.trading_mode import LiveTradingError, assert_synthetic_allowed
+
+    try:
+        assert_synthetic_allowed()
+    except LiveTradingError as exc:
+        logger.error(str(exc))
+        return
+
     from app.market.data_service import SimulatedMarketData
     sim = SimulatedMarketData()
     sim.subscribe(exchange=exchange, token=token, base_price=base_price)
@@ -108,6 +135,7 @@ def reset_daily_risk():
         from app.core.redis_client import get_redis
         redis = get_redis()
         keys = await redis.keys("strategy:state:*")
+        keys += await redis.keys("risk:state:*")
         for key in keys:
             raw = await redis.get(key)
             if raw:
@@ -118,8 +146,67 @@ def reset_daily_risk():
                 except Exception:
                     pass
         logger.info(f"Daily risk reset for {len(keys)} strategies")
+        from app.core.audit import write_audit
+        await write_audit("daily_risk_reset", f"Reset {len(keys)} risk state keys")
 
     _run(_reset)
+
+
+@celery_app.task(name="tasks.feed_watchdog")
+def feed_watchdog():
+    """During the cash session, pause new live orders when quotes stop arriving."""
+
+    async def _check():
+        import time
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from app.core.alerts import raise_alert
+        from app.core.config import settings
+        from app.core.redis_client import FEED_HEARTBEAT_KEY, FEED_STALE_KEY, get_redis
+
+        if not settings.LIVE_TRADING_ENABLED:
+            return
+
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        market_open = (
+            now.weekday() < 5
+            and (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
+            and (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
+        )
+        redis = get_redis()
+        if not market_open:
+            await redis.delete(FEED_STALE_KEY)
+            return
+
+        raw = await redis.get(FEED_HEARTBEAT_KEY)
+        age = None if not raw else time.time() - float(raw)
+        limit = float(settings.FEED_STALE_SEC)
+        fresh = age is not None and age <= limit
+        if fresh:
+            await redis.delete(FEED_STALE_KEY)
+            return
+
+        # An idle worker has no quotes. That is not a failed feed, and it must
+        # not pause manual orders. Pause only while a live session is running.
+        running = False
+        for pattern in ("strategy:running:*", "formula:running:*", "terminal:running:*"):
+            async for _key in redis.scan_iter(match=pattern, count=20):
+                running = True
+                break
+            if running:
+                break
+        if not running:
+            await redis.delete(FEED_STALE_KEY)
+            return
+
+        detail = "no quotes yet" if age is None else f"last quote {int(age)}s ago"
+        already = await redis.get(FEED_STALE_KEY)
+        await redis.set(FEED_STALE_KEY, detail, ex=180)
+        if not already:
+            await raise_alert("FEED", f"Live feed stale: {detail}. New orders paused.")
+
+    _run(_check)
 
 
 # ── Formula strategy executor ─────────────────────────────────────────────────

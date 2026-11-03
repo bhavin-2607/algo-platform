@@ -23,6 +23,28 @@ def get_redis() -> aioredis.Redis:
     return _pool
 
 
+def reset_redis() -> None:
+    """Drop the cached client. The next get_redis() binds to the current loop."""
+    global _pool
+    _pool = None
+
+
+async def close_redis() -> None:
+    """Close the pooled client before its event loop is closed."""
+    global _pool
+    client = _pool
+    _pool = None
+    if client is None:
+        return
+    try:
+        await client.aclose()
+    except Exception:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+
 # ── Pub/Sub channel helpers ───────────────────────────────────────────────────
 
 def tick_channel(exchange: str, token: str) -> str:
@@ -53,6 +75,10 @@ def risk_state_key(map_id: str) -> str:
 
 # Global emergency stop for all live trading
 LIVE_KILL_KEY = "trading:live_kill"
+
+# Unix timestamp of the last real broker quote. Watchdog sets FEED_STALE_KEY.
+FEED_HEARTBEAT_KEY = "feed:heartbeat"
+FEED_STALE_KEY = "feed:stale"
 
 
 def order_intent_key(client_order_id: str) -> str:

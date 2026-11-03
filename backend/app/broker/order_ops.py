@@ -49,6 +49,14 @@ async def place_once(redis, adapter: BaseBrokerAdapter, order: OrderRequest, cli
     Returns ok=True only when the broker reports FILLED.
     A second caller with the same id gets status DUPLICATE and does not place.
     """
+    from app.core.trading_mode import LiveTradingError, assert_feed_fresh
+
+    try:
+        await assert_feed_fresh(redis)
+    except LiveTradingError as exc:
+        logger.error("place_once blocked: %s", exc.message)
+        return {"ok": False, "status": "FEED_STALE", "fill_price": None, "broker_order_id": None}
+
     if not await claim_order_intent(redis, client_order_id):
         return {"ok": False, "status": "DUPLICATE", "fill_price": None, "broker_order_id": None}
 

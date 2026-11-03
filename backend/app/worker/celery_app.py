@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from celery import Celery
 from celery.schedules import crontab
 from app.core.config import settings
@@ -28,6 +30,10 @@ celery_app.conf.update(
         "refresh-instrument-csv": {
             "task":     "tasks.refresh_instrument_csv",
             "schedule": crontab(hour=8, minute=0),
+        },
+        "feed-watchdog": {
+            "task":     "tasks.feed_watchdog",
+            "schedule": timedelta(seconds=60),
         },
     },
 )

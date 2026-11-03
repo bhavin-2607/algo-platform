@@ -40,6 +40,12 @@ async def get_candles(
     bars:      int = Query(200, le=500),
     current_user: User = Depends(get_current_user),
 ):
+    from app.core.trading_mode import synthetic_blocked
+    if synthetic_blocked():
+        raise HTTPException(
+            status_code=409,
+            detail="Synthetic candles are disabled while live trading is enabled.",
+        )
     symbol = symbol.upper()
     info   = INSTRUMENTS.get(symbol, {"base": 1000, "name": symbol, "sector": "Unknown"})
     candles = _generate_candles(info["base"], bars, int(timeframe))
@@ -119,6 +125,12 @@ async def get_quote(
     symbol: str,
     current_user: User = Depends(get_current_user),
 ):
+    from app.core.trading_mode import synthetic_blocked
+    if synthetic_blocked():
+        raise HTTPException(
+            status_code=409,
+            detail="Synthetic quotes are disabled while live trading is enabled.",
+        )
     symbol = symbol.upper()
     info   = INSTRUMENTS.get(symbol, {"base": 1000, "name": symbol, "sector": "Unknown"})
     base   = info["base"]
@@ -144,6 +156,12 @@ async def get_quote(
 @router.get("/ticker")
 async def get_ticker(current_user: User = Depends(get_current_user)):
     """Returns live ticker data for all instruments — used by the top ticker bar."""
+    from app.core.trading_mode import synthetic_blocked
+    if synthetic_blocked():
+        raise HTTPException(
+            status_code=409,
+            detail="Synthetic ticker is disabled while live trading is enabled. Use /api/market/ticker live quotes.",
+        )
     tickers = []
     for sym, info in INSTRUMENTS.items():
         base = info["base"]
@@ -324,6 +342,12 @@ def _parse_ohlc(raw: dict, symbol: str) -> dict:
 
 
 def _sim_quote(symbol: str) -> dict:
+    from app.core.trading_mode import synthetic_blocked
+    if synthetic_blocked():
+        raise HTTPException(
+            status_code=409,
+            detail=f"No live quote for {symbol}. Synthetic prices are disabled while live trading is enabled.",
+        )
     info = INSTRUMENTS.get(symbol, {"base": 1000})
     base = info["base"]
     chg  = random.uniform(-0.015, 0.015)
@@ -442,6 +466,13 @@ async def get_ticker(current_user: User = Depends(get_current_user)):
                 return ticker
         except Exception as e:
             logger.warning(f"Dhan ticker failed: {e}")
+
+    from app.core.trading_mode import synthetic_blocked
+    if synthetic_blocked():
+        raise HTTPException(
+            status_code=409,
+            detail="Dhan ticker is unavailable and synthetic prices are disabled while live trading is enabled.",
+        )
 
     return [
         {"symbol":"NIFTY50",  "ltp":round(24800*(1+random.uniform(-0.01,0.01)),2),

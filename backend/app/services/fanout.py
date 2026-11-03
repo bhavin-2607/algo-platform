@@ -116,6 +116,10 @@ async def _execute_for_follower(
 
     try:
         adapter = get_broker_adapter(broker_account)
+        if not broker_account.paper_trading:
+            from app.core.redis_client import get_redis
+            from app.core.trading_mode import assert_feed_fresh
+            await assert_feed_fresh(get_redis())
         order_resp = await adapter.place_order(OrderRequest(
             symbol     = signal.symbol,
             exchange   = signal.exchange,

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     DHAN_CLIENT_ID:    str = ""
     DHAN_ACCESS_TOKEN: str = ""
 
+    # Operator alerts (optional). Empty values keep alerts in logs and Redis only.
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID:   str = ""
+    FEED_STALE_SEC:     int = 90
+
     # ── Shoonya (legacy — optional, not shown in UI) ──────────────────────────
     SHOONYA_USER_ID:     str = ""
     SHOONYA_PASSWORD:    str = ""

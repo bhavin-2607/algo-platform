@@ -25,6 +25,36 @@ class LiveTradingError(Exception):
         self.status_code = status_code
 
 
+def synthetic_blocked() -> bool:
+    """True when made-up prices must not be served or published."""
+    return bool(settings.LIVE_TRADING_ENABLED)
+
+
+def assert_synthetic_allowed() -> None:
+    if synthetic_blocked():
+        raise LiveTradingError(
+            "Synthetic market data is disabled while LIVE_TRADING_ENABLED=true.",
+            status_code=409,
+        )
+
+
+async def assert_feed_fresh(redis) -> None:
+    """Block new live entries when the feed watchdog has marked the book stale.
+
+    Exits and kill-switch flattens do not call this, so a dead feed can still be closed.
+    """
+    if not settings.LIVE_TRADING_ENABLED:
+        return
+    from app.core.redis_client import FEED_STALE_KEY
+
+    raw = await redis.get(FEED_STALE_KEY)
+    if raw:
+        raise LiveTradingError(
+            f"Live feed is stale ({raw}). New orders are paused until quotes resume.",
+            status_code=409,
+        )
+
+
 def assert_live_allowed() -> None:
     """Raise LiveTradingError unless live trading is explicitly enabled and Dhan is configured."""
     if not settings.LIVE_TRADING_ENABLED:
@@ -70,6 +100,11 @@ async def set_live_kill(reason: str = "manual") -> dict:
         stopped += 1
 
     logger.error(f"LIVE KILL activated: {reason} (stopped {stopped} running keys)")
+    from app.core.alerts import raise_alert
+    from app.core.audit import write_audit
+
+    await raise_alert("KILL", f"Live kill activated: {reason}")
+    await write_audit("live_kill", reason, actor=reason)
     return {**payload, "stopped_running_keys": stopped}
 
 
@@ -77,6 +112,9 @@ async def clear_live_kill() -> None:
     redis = get_redis()
     await redis.delete(LIVE_KILL_KEY)
     logger.warning("LIVE KILL cleared — live starts/orders allowed again (if LIVE_TRADING_ENABLED)")
+    from app.core.audit import write_audit
+
+    await write_audit("live_kill_cleared", "Global live kill switch cleared")
 
 
 async def require_not_killed() -> None:

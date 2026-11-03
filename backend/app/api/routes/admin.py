@@ -177,6 +177,10 @@ async def list_all_strategies(
             "engine_class":  s.engine_class,
             "default_params":s.default_params,
             "is_available":  s.is_available,
+            "version":       s.version,
+            "live_enabled":  s.live_enabled,
+            "warmup_bars":   s.warmup_bars,
+            "max_positions": s.max_positions,
         }
         for s in strats
     ]
@@ -188,16 +192,36 @@ async def create_strategy(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    """Admin only: add a strategy. It cannot be used live until enable-live."""
+    from app.strategy.registry import get_strategy_class
+    try:
+        cls = get_strategy_class(payload.engine_class)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     s = Strategy(
         name           = payload.name,
         description    = payload.description,
         engine_class   = payload.engine_class,
         default_params = payload.default_params,
         is_available   = True,
+        version        = cls.version,
+        live_enabled   = False,
+        warmup_bars    = cls.warmup_bars,
+        max_positions  = cls.max_positions,
     )
     db.add(s)
     await db.commit()
-    return {"id": str(s.id), "name": s.name}
+    return {"id": str(s.id), "name": s.name, "version": s.version, "live_enabled": False}
+
+
+@router.post("/strategies/{strategy_id}/enable-live")
+async def enable_strategy_live(
+    strategy_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.api.routes.strategies import enable_live_strategy
+    return await enable_live_strategy(strategy_id, admin, db)
 
 
 @router.patch("/strategies/{strategy_id}/toggle")
@@ -212,6 +236,13 @@ async def toggle_strategy(
     s.is_available = not s.is_available
     await db.commit()
     return {"is_available": s.is_available}
+
+
+@router.post("/strategy-plugins/reload")
+async def reload_strategy_plugins(admin: User = Depends(require_admin)):
+    from app.strategy.registry import list_registered, refresh_plugins
+    errors = refresh_plugins()
+    return {"engines": list_registered(), "errors": errors}
 
 
 # ── Assign strategy to user ───────────────────────────────────────────────────
@@ -230,11 +261,20 @@ async def admin_assign_strategy(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    strat = await db.get(Strategy, payload.strategy_id)
+    if not strat or not strat.is_available:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    from app.api.routes.strategies import _live_block
+    reason = _live_block(strat, payload.paper_trading, payload.params, None, require_params=False)
+    if reason:
+        raise HTTPException(status_code=403, detail=reason)
+
     usm = UserStrategyMap(
         user_id           = payload.user_id,
         strategy_id       = payload.strategy_id,
         broker_account_id = payload.broker_account_id,
         params            = payload.params,
+        engine_version    = strat.version,
         paper_trading     = payload.paper_trading,
         status            = StrategyStatus.stopped,
     )

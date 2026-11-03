@@ -86,4 +86,7 @@ app.include_router(settings_router, prefix="/api")
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "live_trading_enabled": settings.LIVE_TRADING_ENABLED,
+    }

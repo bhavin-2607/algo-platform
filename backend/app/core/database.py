@@ -13,6 +13,21 @@ class Base(DeclarativeBase):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.exec_driver_sql(
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS version VARCHAR DEFAULT '1'"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS live_enabled BOOLEAN DEFAULT TRUE"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS warmup_bars INTEGER DEFAULT 1"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS max_positions INTEGER DEFAULT 1"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE user_strategy_map ADD COLUMN IF NOT EXISTS engine_version VARCHAR"
+        )
 
 
 async def get_db():

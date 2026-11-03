@@ -157,11 +157,15 @@ class FormulaEvaluator:
         }
 
         try:
-            result = eval(self._compiled, {"__builtins__": {}}, ns)  # noqa: S307
+            from app.strategy.safe_expr import FormulaError, evaluate_expression
+
+            result = evaluate_expression(self._compiled, ns)
             # Handle NaN results (not enough data for indicator)
             if isinstance(result, float) and np.isnan(result):
                 return None
             return bool(result)
+        except FormulaError:
+            raise
         except Exception as e:
             logger.warning(f"Formula eval error [{self.raw!r}]: {e}")
             return None
@@ -175,13 +179,8 @@ def validate_formula(expression: str) -> tuple[bool, str]:
     if not expression or not expression.strip():
         return False, "Expression cannot be empty"
 
-    # Basic safety check — no imports, exec, open, etc.
-    banned = ["import", "exec", "eval", "open", "os.", "sys.", "__"]
-    for b in banned:
-        if b in expression.lower():
-            return False, f"Forbidden keyword: {b}"
-
-    # Try to compile with a dummy DataFrame
+    # Try to compile with a dummy DataFrame. The evaluator rejects
+    # anything outside the indicator allow-list.
     dummy = pd.DataFrame({
         "open":   [100.0] * 30,
         "high":   [101.0] * 30,
@@ -195,3 +194,105 @@ def validate_formula(expression: str) -> tuple[bool, str]:
         return True, ""
     except Exception as e:
         return False, str(e)
+
+
+def preview_formula(expression: str, df: pd.DataFrame, sample: int = 12) -> dict:
+    """Evaluate a formula on each closed bar of a real candle frame."""
+    ok, err = validate_formula(expression)
+    if not ok:
+        return {
+            "valid": False,
+            "error": err,
+            "last": None,
+            "true_bars": 0,
+            "false_bars": 0,
+            "skipped_bars": 0,
+            "samples": [],
+        }
+
+    evaluator = FormulaEvaluator(expression)
+    true_n = false_n = skip_n = 0
+    samples = []
+    start = max(2, len(df) - 80)
+    for i in range(start, len(df) + 1):
+        window = df.iloc[:i]
+        try:
+            result = evaluator.evaluate(window)
+        except Exception as exc:
+            return {
+                "valid": False,
+                "error": str(exc),
+                "last": None,
+                "true_bars": true_n,
+                "false_bars": false_n,
+                "skipped_bars": skip_n,
+                "samples": samples[-sample:],
+            }
+        if result is True:
+            true_n += 1
+        elif result is False:
+            false_n += 1
+        else:
+            skip_n += 1
+        if i > len(df) - sample:
+            samples.append({"time": str(window.index[-1]), "result": result})
+    return {
+        "valid": True,
+        "error": "",
+        "last": samples[-1]["result"] if samples else None,
+        "true_bars": true_n,
+        "false_bars": false_n,
+        "skipped_bars": skip_n,
+        "samples": samples,
+    }
+
+
+def preview_formula(expression: str, df: pd.DataFrame, sample: int = 12) -> dict:
+    """Evaluate a formula on each closed bar of a real candle frame."""
+    ok, err = validate_formula(expression)
+    if not ok:
+        return {
+            "valid": False,
+            "error": err,
+            "last": None,
+            "true_bars": 0,
+            "false_bars": 0,
+            "skipped_bars": 0,
+            "samples": [],
+        }
+
+    evaluator = FormulaEvaluator(expression)
+    true_n = false_n = skip_n = 0
+    samples = []
+    start = max(2, len(df) - 80)
+    for i in range(start, len(df) + 1):
+        window = df.iloc[:i]
+        try:
+            result = evaluator.evaluate(window)
+        except Exception as exc:
+            return {
+                "valid": False,
+                "error": str(exc),
+                "last": None,
+                "true_bars": true_n,
+                "false_bars": false_n,
+                "skipped_bars": skip_n,
+                "samples": samples[-sample:],
+            }
+        if result is True:
+            true_n += 1
+        elif result is False:
+            false_n += 1
+        else:
+            skip_n += 1
+        if i > len(df) - sample:
+            samples.append({"time": str(window.index[-1]), "result": result})
+    return {
+        "valid": True,
+        "error": "",
+        "last": samples[-1]["result"] if samples else None,
+        "true_bars": true_n,
+        "false_bars": false_n,
+        "skipped_bars": skip_n,
+        "samples": samples,
+    }

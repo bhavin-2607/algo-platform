@@ -32,28 +32,22 @@ from app.strategy.recovery import (
     load_open_trades,
     reconcile_open_trades,
 )
+from app.strategy.exits import protective_prices
 from app.strategy.registry import get_strategy_class
 
 logger = logging.getLogger(__name__)
 
 
 def _protective_prices(signal, price: float, params: dict) -> tuple[float, float]:
-    """Stop and target from the signal, or from sl_pct / target_pct around price."""
-    sl_pct = float((params or {}).get("sl_pct", 0.5))
-    target_pct = float((params or {}).get("target_pct", 1.0))
-    if signal.sl is not None:
-        sl_price = float(signal.sl)
-    elif signal.direction == "BUY":
-        sl_price = round(price * (1 - sl_pct / 100), 2)
-    else:
-        sl_price = round(price * (1 + sl_pct / 100), 2)
-    if signal.target is not None:
-        target_price = float(signal.target)
-    elif signal.direction == "BUY":
-        target_price = round(price * (1 + target_pct / 100), 2)
-    else:
-        target_price = round(price * (1 - target_pct / 100), 2)
-    return sl_price, target_price
+    """Stop and target from the shared exit helper."""
+    return protective_prices(
+        signal.direction,
+        price,
+        sl_pct=float((params or {}).get("sl_pct", 0.5)),
+        target_pct=float((params or {}).get("target_pct", 1.0)),
+        sl=signal.sl,
+        target=signal.target,
+    )
 
 
 class StrategyExecutor:
@@ -232,6 +226,9 @@ class StrategyExecutor:
                 await self.db.commit()
 
                 try:
+                    if not usm.paper_trading:
+                        from app.core.trading_mode import assert_feed_fresh
+                        await assert_feed_fresh(redis)
                     order_resp = await adapter.place_order(OrderRequest(
                         symbol          = signal.symbol,
                         exchange        = signal.exchange,

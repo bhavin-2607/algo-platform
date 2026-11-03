@@ -222,6 +222,10 @@ class DhanLiveFeed:
             })
 
             self._redis.publish(channel, payload)
+            try:
+                self._redis.set("feed:heartbeat", str(time.time()), ex=3600)
+            except Exception:
+                pass
 
         except Exception as e:
             logger.error(f"DhanLiveFeed tick error: {e} | data={data}")

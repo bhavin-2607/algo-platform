@@ -225,6 +225,9 @@ function FormulaForm({ brokers, initial, onSaved, onCancel }: any) {
   });
 
   const [validating, setValidating] = useState<Record<string,string>>({});
+  const [saveError, setSaveError] = useState("");
+  const [preview, setPreview] = useState<any>(null);
+  const [previewing, setPreviewing] = useState(false);
   const set = (k:string) => (e:any) => setForm(f=>({...f,[k]:e.target?.value??e}));
 
   async function validateField(field: string, expr: string) {
@@ -260,9 +263,45 @@ function FormulaForm({ brokers, initial, onSaved, onCancel }: any) {
         ? api.put(`/formula/${initial.id}`, payload)
         : api.post("/formula", payload);
     },
-    onSuccess: () => { toast.success(initial?"Strategy updated":"Strategy created"); onSaved(); },
-    onError: (e:any) => toast.error(e.response?.data?.detail || "Save failed"),
+    onSuccess: () => { toast.success(initial?"Strategy updated":"Strategy created"); setSaveError(""); onSaved(); },
+    onError: (e:any) => {
+      const detail = e.response?.data?.detail;
+      const message = typeof detail === "string" ? detail : "Save failed";
+      setSaveError(message);
+      const match = typeof detail === "string" ? detail.match(/Invalid formula \[(\w+)\]: (.*)/) : null;
+      if (match) setValidating(v => ({...v, [match[1]]: "✗ " + match[2]}));
+      toast.error(message);
+    },
   });
+
+  async function previewEntry() {
+    if (!form.entry_long) {
+      setValidating(v => ({...v, entry_long: "✗ Expression cannot be empty"}));
+      return;
+    }
+    setPreviewing(true);
+    setPreview(null);
+    try {
+      const res = await api.post("/formula/preview", {
+        expression: form.entry_long,
+        symbol: form.symbol,
+        exchange: form.exchange,
+        timeframe_minutes: parseInt(String(form.timeframe_minutes)) || 5,
+        bars: 120,
+      });
+      setPreview(res.data);
+      if (!res.data.valid) {
+        setValidating(v => ({...v, entry_long: "✗ " + (res.data.error || "invalid")}));
+      } else {
+        setValidating(v => ({...v, entry_long: "✓"}));
+      }
+    } catch (e: any) {
+      const detail = e.response?.data?.detail || "Preview failed";
+      setPreview({ valid: false, error: detail, samples: [] });
+    } finally {
+      setPreviewing(false);
+    }
+  }
 
   return (
     <div className="card" style={{marginBottom:20}}>
@@ -331,6 +370,28 @@ function FormulaForm({ brokers, initial, onSaved, onCancel }: any) {
             onBlur={()=>validateField("exit_short",form.exit_short)}
             placeholder="e.g. ma(9) > ma(21)" color="muted" />
         </div>
+        <div style={{display:"flex",gap:12,alignItems:"center",marginTop:8}}>
+          <button type="button" onClick={previewEntry} disabled={previewing} style={{
+            padding:"8px 14px",fontFamily:"var(--font)",fontSize:11,cursor:"pointer",
+            background:"transparent",border:"1px solid var(--border)",color:"var(--green)",
+          }}>
+            {previewing ? "LOADING CANDLES..." : "PREVIEW ENTRY ON DHAN HISTORY"}
+          </button>
+        </div>
+        {preview && (
+          <div style={{marginTop:10,padding:12,border:"1px solid var(--border)",fontSize:12}}>
+            {preview.valid === false ? (
+              <div style={{color:"var(--red)"}}>{preview.error || "Invalid formula"}</div>
+            ) : (
+              <>
+                <div>Last bar: <b>{String(preview.last)}</b> · true {preview.true_bars} · false {preview.false_bars} · not enough data {preview.skipped_bars}</div>
+                <div style={{color:"var(--muted)",marginTop:6}}>
+                  {(preview.samples || []).slice(-6).map((s: any) => `${s.time} ${String(s.result)}`).join("  ·  ")}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Risk settings */}
         <div style={{fontSize:10,letterSpacing:2,color:"var(--green)",margin:"16px 0 8px"}}>RISK PER TRADE</div>
@@ -401,7 +462,10 @@ function FormulaForm({ brokers, initial, onSaved, onCancel }: any) {
           </div>
         </div>
 
-        <div style={{display:"flex",gap:12,marginTop:16,paddingBottom:8}}>
+        <div style={{display:"flex",gap:12,marginTop:16,paddingBottom:8,flexWrap:"wrap"}}>
+          {saveError && (
+            <div style={{flexBasis:"100%",color:"var(--red)",fontSize:12}}>{saveError}</div>
+          )}
           <button className={`auth-btn${saveMutation.isPending?" loading":""}`}
             onClick={()=>saveMutation.mutate()} disabled={saveMutation.isPending}
             style={{maxWidth:240}}>

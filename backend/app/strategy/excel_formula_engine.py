@@ -70,9 +70,10 @@ class ExcelFormulaEngine:
             formula = formula[1:]
 
         try:
+            from app.strategy.safe_expr import evaluate_expression
+
             py_expr = self._to_python(formula, tick)
-            result  = eval(py_expr, {"__builtins__": {}}, self._safe_ns(tick))
-            # Round floats to 2 decimals
+            result = evaluate_expression(py_expr, self._safe_ns(tick))
             if isinstance(result, float):
                 return round(result, 2)
             return result
@@ -93,14 +94,19 @@ class ExcelFormulaEngine:
             "change_pct": 1.5, "bp1": 102.5, "sp1": 103.0, "atp": 101.5,
         }
         try:
-            result = self.evaluate(formula, dummy_tick)
+            from app.strategy.safe_expr import evaluate_expression
+
+            py_expr = self._to_python(formula, dummy_tick)
+            result = evaluate_expression(py_expr, self._safe_ns(dummy_tick))
             return True, f"OK — sample result: {result}"
         except Exception as e:
             return False, str(e)
 
     def _to_python(self, formula: str, tick: dict) -> str:
         """Convert Excel formula to Python expression."""
-        expr = formula
+        expr = formula.strip()
+        if expr.startswith("="):
+            expr = expr[1:]
 
         # Replace named field references first (e.g. high, low, close, ltp)
         named_fields = [
@@ -132,7 +138,7 @@ class ExcelFormulaEngine:
         expr = re.sub(r'\bABS\s*\(',     'abs(',      expr, flags=re.IGNORECASE)
         expr = re.sub(r'\bROUND\s*\(',   '_ROUND(',   expr, flags=re.IGNORECASE)
         expr = re.sub(r'\bIFERROR\s*\(', '_IFERROR(', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'\bSQRT\s*\(',    'math.sqrt(', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'\bSQRT\s*\(',    'sqrt(', expr, flags=re.IGNORECASE)
         expr = re.sub(r'\bPOWER\s*\(',   '_POW(',     expr, flags=re.IGNORECASE)
 
         # Excel string comparison: "DOWN" → 'DOWN'
@@ -153,7 +159,7 @@ class ExcelFormulaEngine:
     def _safe_ns(self, tick: dict) -> dict:
         """Safe namespace for eval."""
         return {
-            "math": math,
+            "sqrt":   math.sqrt,
             # Excel helper functions
             "_IF":    lambda cond, t, f: t if cond else f,
             "_AND":   lambda *args: all(args),

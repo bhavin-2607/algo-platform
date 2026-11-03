@@ -24,6 +24,11 @@ class BaseStrategy(ABC):
     serialised or returned via any API endpoint.
     """
 
+    engine_id: str = ""
+    version: str = "1"
+    warmup_bars: int = 1
+    max_positions: int = 1
+
     def __init__(self, params: dict):
         self.params = params
 

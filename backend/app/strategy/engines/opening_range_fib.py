@@ -41,6 +41,10 @@ FIB_LEVELS = [
 
 
 class OpeningRangeFibonacci(BaseStrategy):
+    engine_id = "opening_range_fibonacci"
+    version = "1"
+    warmup_bars = 1
+    max_positions = 1
     """
     Opening Range with Fibonacci targets.
     Translates dad's Pine Script exactly into Python.

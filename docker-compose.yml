@@ -40,6 +40,20 @@ services:
     volumes:
       - ./strategy:/app/strategy
 
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.worker
+    container_name: algo_beat
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.worker.celery_app beat --loglevel=info
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - algo_net
+
   postgres:
     image: postgres:16-alpine
     container_name: algo_postgres
@@ -79,30 +93,9 @@ services:
     networks:
       - algo_net
 
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: algo_prometheus
-    restart: unless-stopped
-    volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    networks:
-      - algo_net
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: algo_grafana
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
-    volumes:
-      - grafana_data:/var/lib/grafana
-    networks:
-      - algo_net
-
 volumes:
   postgres_data:
   redis_data:
-  grafana_data:
 
 networks:
   algo_net:

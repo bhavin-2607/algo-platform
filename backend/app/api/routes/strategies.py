@@ -132,11 +132,19 @@ async def assign_strategy(
     if not ba.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Broker account not found")
 
+    strat = await db.get(Strategy, payload.strategy_id)
+    if not strat or not strat.is_available:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    reason = _live_block(strat, payload.paper_trading, payload.params, None, require_params=False)
+    if reason:
+        raise HTTPException(status_code=403, detail=reason)
+
     usm = UserStrategyMap(
         user_id           = current_user.id,
         strategy_id       = payload.strategy_id,
         broker_account_id = payload.broker_account_id,
         params            = payload.params,
+        engine_version    = strat.version,
         paper_trading     = payload.paper_trading,
         status            = StrategyStatus.stopped,
     )
@@ -170,6 +178,28 @@ async def start_strategy(
             await require_not_killed()
         except LiveTradingError as e:
             raise HTTPException(status_code=e.status_code, detail=e.message)
+
+    strat = await db.get(Strategy, usm.strategy_id)
+    reason = _live_block(strat, usm.paper_trading, usm.params or {}, usm.engine_version, require_params=True)
+    if reason:
+        raise HTTPException(status_code=403, detail=reason)
+    if not usm.paper_trading and strat is not None:
+        from app.strategy.backtest_runner import backtest_block_reason
+        from app.models.backtest import BacktestRun
+        latest = await db.execute(
+            select(BacktestRun)
+            .where(
+                BacktestRun.engine_class == strat.engine_class,
+                BacktestRun.version == (strat.version or "1"),
+                BacktestRun.symbol == symbol.upper(),
+            )
+            .order_by(BacktestRun.created_at.desc())
+            .limit(1)
+        )
+        row = latest.scalar_one_or_none()
+        blocked = backtest_block_reason(None if row is None else bool(row.passed))
+        if blocked:
+            raise HTTPException(status_code=403, detail=blocked)
 
     usm.status = StrategyStatus.active
     await db.commit()
@@ -254,20 +284,80 @@ async def create_strategy(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Admin only: add a new strategy to the catalogue."""
+    """Admin only: add a new strategy to the catalogue. Live stays off until enable-live."""
+    from app.strategy.registry import get_strategy_class
+    try:
+        cls = get_strategy_class(payload.engine_class)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     s = Strategy(
         name          = payload.name,
         description   = payload.description,
         engine_class  = payload.engine_class,
         default_params= payload.default_params,
+        version       = cls.version,
+        live_enabled  = False,
+        warmup_bars   = cls.warmup_bars,
+        max_positions = cls.max_positions,
     )
     db.add(s)
     await db.commit()
     await db.refresh(s)
-    return {"id": str(s.id), "name": s.name}
+    return {"id": str(s.id), "name": s.name, "version": s.version, "live_enabled": False}
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+@router.post("/admin/{strategy_id}/enable-live")
+async def enable_live_strategy(
+    strategy_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: allow this catalogue version to be assigned and started live."""
+    from app.strategy.registry import get_strategy_class
+
+    strat = await db.get(Strategy, strategy_id)
+    if not strat:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    try:
+        cls = get_strategy_class(strat.engine_class)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if cls.version != (strat.version or "1"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Loaded engine is version {cls.version}; catalogue row is {strat.version}",
+        )
+    strat.live_enabled = True
+    strat.version = cls.version
+    await db.commit()
+    return {"id": str(strat.id), "version": strat.version, "live_enabled": True}
+
+
+def _live_block(strat: Strategy, paper: bool, params: dict, pinned: str | None, require_params: bool) -> str | None:
+    from app.strategy.exits import live_start_block_reason
+    from app.strategy.registry import get_strategy_class
+
+    if strat is None:
+        return "Strategy not found"
+    try:
+        cls = get_strategy_class(strat.engine_class)
+    except ValueError as exc:
+        return str(exc)
+    params_ok = True
+    if require_params:
+        try:
+            params_ok = bool(cls(params).validate_params())
+        except Exception:
+            params_ok = False
+    return live_start_block_reason(
+        paper=paper,
+        live_enabled=bool(strat.live_enabled),
+        catalogue_version=strat.version or cls.version,
+        code_version=cls.version,
+        pinned_version=pinned,
+        params_ok=params_ok,
+    )
+
 
 async def _get_usm(map_id: UUID, user_id, db: AsyncSession) -> UserStrategyMap:
     result = await db.execute(

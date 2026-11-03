@@ -188,6 +188,12 @@ class MarketPoller:
                         if ticks:
                             self._last_data = ticks
                             backoff = self._interval
+                            try:
+                                from app.core.redis_client import FEED_HEARTBEAT_KEY, get_redis
+                                import time as _time
+                                await get_redis().set(FEED_HEARTBEAT_KEY, str(_time.time()), ex=3600)
+                            except Exception as exc:
+                                logger.debug(f"Feed heartbeat write failed: {exc}")
 
                             async with self._lock:
                                 dead = []

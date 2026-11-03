@@ -23,13 +23,19 @@ def get_broker_adapter(account: BrokerAccount) -> BaseBrokerAdapter:
 
     # ── Dhan (primary) ────────────────────────────────────────────────────────
     if broker == BrokerName.dhan:
-        missing = [k for k in ["DHAN_CLIENT_ID", "DHAN_ACCESS_TOKEN"]
-                   if not getattr(settings, k, None)]
-        if missing:
-            raise ValueError(f"Missing Dhan credentials in .env: {', '.join(missing)}")
+        client_id = account.client_id or settings.DHAN_CLIENT_ID
+        access_token = settings.DHAN_ACCESS_TOKEN
+        if account.encrypted_access_token:
+            from app.core.security import decrypt_broker_token
+            try:
+                access_token = decrypt_broker_token(account.encrypted_access_token)
+            except Exception as exc:
+                raise ValueError(f"Could not decrypt this account's Dhan token: {exc}") from exc
+        if not client_id or not access_token:
+            raise ValueError("Missing Dhan client id or access token for this account")
         return DhanAdapter(
-            client_id    = settings.DHAN_CLIENT_ID,
-            access_token = settings.DHAN_ACCESS_TOKEN,
+            client_id    = client_id,
+            access_token = access_token,
         )
 
     # ── Shoonya (legacy — not shown in UI, kept for existing DB rows) ─────────

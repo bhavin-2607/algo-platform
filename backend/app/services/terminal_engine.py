@@ -252,8 +252,13 @@ class TerminalEngine:
             row.entry_price    = fill_price
             row.entry_order_id = result["broker_order_id"]
             row.peak_price     = fill_price
-            row.current_sl     = round(fill_price * (1 - (row.sl_pct or 1) / 100), 2)
-            row.current_target = round(fill_price * (1 + (row.target_pct or 2) / 100), 2)
+            from app.strategy.exits import protective_prices
+            row.current_sl, row.current_target = protective_prices(
+                direction,
+                fill_price,
+                sl_pct=float(row.sl_pct or 1),
+                target_pct=float(row.target_pct or 2),
+            )
             await self.db.commit()
             logger.info(
                 f"  [{row.symbol}] Entry: {direction} @ ₹{fill_price} "
@@ -321,8 +326,8 @@ def _check_exit_levels(row: TerminalRow, ltp: float) -> tuple[bool, str]:
 def _update_trail(row: TerminalRow, ltp: float):
     if not row.trail_pct:
         return
-    if ltp > (row.peak_price or row.entry_price or ltp):
-        row.peak_price = ltp
-        new_sl = round(ltp * (1 - row.trail_pct / 100), 2)
-        if row.current_sl is None or new_sl > row.current_sl:
-            row.current_sl = new_sl
+    from app.strategy.exits import trail_stop
+    peak, new_sl = trail_stop("BUY", ltp, row.peak_price or row.entry_price, row.current_sl, float(row.trail_pct))
+    row.peak_price = peak
+    if new_sl is not None:
+        row.current_sl = new_sl

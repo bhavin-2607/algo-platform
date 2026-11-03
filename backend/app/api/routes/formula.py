@@ -186,8 +186,22 @@ async def start_formula_strategy(
     db: AsyncSession = Depends(get_db),
 ):
     strat = await _get_strat(strategy_id, current_user.id, db)
+    if not strat.paper_trading:
+        from app.core.trading_mode import LiveTradingError, assert_live_allowed, require_not_killed
+        try:
+            assert_live_allowed()
+            await require_not_killed()
+        except LiveTradingError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.message)
     strat.is_active = True
     await db.commit()
+
+    from app.core.audit import write_audit
+    await write_audit(
+        "formula_start",
+        f"{strat.id} paper={strat.paper_trading}",
+        actor=str(current_user.id),
+    )
 
     # Start simulated feed if paper trading
     if strat.paper_trading:
@@ -226,6 +240,48 @@ async def validate_formula_endpoint(
     expr = body.get("expression", "")
     ok, err = validate_formula(expr)
     return {"valid": ok, "error": err}
+
+
+class FormulaPreviewRequest(BaseModel):
+    expression: str
+    symbol: str = "RELIANCE"
+    exchange: str = "NSE"
+    timeframe_minutes: int = 5
+    bars: int = 120
+
+
+@router.post("/preview")
+async def preview_formula_endpoint(
+    body: FormulaPreviewRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Show how a formula reads on recent Dhan candles. Invalid formulas never hit the broker."""
+    ok, err = validate_formula(body.expression)
+    if not ok:
+        return {"valid": False, "error": err, "samples": [], "true_bars": 0, "false_bars": 0, "skipped_bars": 0, "last": None}
+
+    import asyncio
+    import pandas as pd
+    from app.market.history import fetch_intraday_candles
+    from app.strategy.formula_engine import preview_formula
+
+    try:
+        candles = await asyncio.to_thread(
+            fetch_intraday_candles,
+            body.symbol,
+            body.exchange,
+            body.timeframe_minutes,
+            min(body.bars, 300),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Historical candles unavailable: {exc}")
+
+    frame = pd.DataFrame(candles)
+    frame["datetime"] = pd.to_datetime(frame["time"], unit="s")
+    frame = frame.set_index("datetime")[["open", "high", "low", "close", "volume"]]
+    return preview_formula(body.expression, frame)
 
 
 # ── Managed Positions ─────────────────────────────────────────────────────────

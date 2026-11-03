@@ -8,6 +8,10 @@ from app.strategy.base import BaseStrategy, Signal
 
 
 class MovingAverageCrossover(BaseStrategy):
+    engine_id = "moving_average_crossover"
+    version = "1"
+    warmup_bars = 22
+    max_positions = 1
     """
     Generates a BUY signal when fast MA crosses above slow MA,
     and a SELL signal when it crosses below.

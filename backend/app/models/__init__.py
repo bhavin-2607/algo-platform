@@ -7,6 +7,8 @@ from app.models.risk import RiskSettings, RiskEvent
 from app.models.formula import FormulaStrategy, ManagedPosition, PositionStatus
 from app.models.terminal import TerminalRow, TerminalRowStatus
 from app.models.watchlist import UserWatchlist
+from app.models.audit import AuditEvent
+from app.models.backtest import BacktestRun
 
 __all__ = [
     "User", "UserRole",
@@ -18,5 +20,7 @@ __all__ = [
     "FormulaStrategy", "ManagedPosition", "PositionStatus",
     "TerminalRow", "TerminalRowStatus",
     "UserWatchlist",
+    "AuditEvent",
+    "BacktestRun",
 ]
 from app.models.terminal_column import TerminalColumn

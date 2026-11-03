@@ -311,7 +311,9 @@ class TerminalFormulaEngine:
                 "ema": lambda p: float(closes.ewm(span=int(p), adjust=False).mean().iloc[-1]),
                 "abs": abs, "round": round, "min": min, "max": max,
             }
-            return round(float(eval(expr, {"__builtins__": {}}, ns)), 2)
+            from app.strategy.safe_expr import evaluate_expression
+
+            return round(float(evaluate_expression(expr, ns)), 2)
         except Exception as e:
             logger.warning(f"Price expr error [{expr}]: {e}")
             return None
