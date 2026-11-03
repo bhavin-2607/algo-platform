@@ -66,10 +66,12 @@ async def place_once(redis, adapter: BaseBrokerAdapter, order: OrderRequest, cli
     except Exception as e:
         await release_order_intent(redis, client_order_id)
         logger.error(f"place_once error: {e}")
+        await _alert_order_reject(str(e))
         return {"ok": False, "status": "FAILED", "fill_price": None, "broker_order_id": None}
 
     if not resp.broker_order_id or resp.status == "FAILED":
         await release_order_intent(redis, client_order_id)
+        await _alert_order_reject(getattr(resp, "message", None) or "broker rejected the order")
         return {
             "ok": False,
             "status": "FAILED",
@@ -80,6 +82,8 @@ async def place_once(redis, adapter: BaseBrokerAdapter, order: OrderRequest, cli
     await commit_order_intent(redis, client_order_id, resp.broker_order_id)
     fill = await wait_for_fill(adapter, resp.broker_order_id)
     if fill["status"] != "FILLED":
+        if fill["status"] == "REJECTED":
+            await _alert_order_reject(f"order {resp.broker_order_id} rejected")
         return {
             "ok": False,
             "status": fill["status"],
@@ -92,6 +96,17 @@ async def place_once(redis, adapter: BaseBrokerAdapter, order: OrderRequest, cli
         "fill_price": fill["fill_price"],
         "broker_order_id": resp.broker_order_id,
     }
+
+
+async def _alert_order_reject(message: str) -> None:
+    from app.core.config import settings
+    if not settings.LIVE_TRADING_ENABLED:
+        return
+    try:
+        from app.core.alerts import raise_alert
+        await raise_alert("ORDER", message)
+    except Exception:
+        logger.warning("Order reject alert failed")
 
 
 async def commit_order_intent(

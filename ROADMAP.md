@@ -11,7 +11,7 @@ Goal: make custom formulas and custom strategies safe enough for live capital, w
 - [x] **Phase 2.3 / 6.1** — formula preview on Dhan candles (`POST /api/formula/preview`) and the save error shown on the formula form
 - [x] **Phase 5.1, 5.3 (override), 5.4, 5.6** — Celery beat in Compose, per-account Dhan token overrides `.env`, feed watchdog pauses new entries only while a session is running, `audit_events` for kill, formula start, and the daily risk reset
 - [x] **Phase 5.2 (revised)** — boot still uses `create_all`. Alembic is only for a later change that `create_all` cannot express. Do not run Alembic inside Uvicorn startup (it reconfigured logging and hid "startup complete").
-- [ ] **Phase 5.5** — Linux server edition only. Prometheus and Grafana live in `docker-compose.server.yml`. One alert rule for feed-stale, kill switch, and order rejects is still open. Standalone Linux, Windows, and Mac do not run that stack.
+- [x] **Phase 5.5** — Linux server edition only. Prometheus rules in `monitoring/prometheus/alerts.yml` fire on a stale feed, the kill switch, and live order rejects. Standalone Linux, Windows, and Mac do not run that stack.
 - [x] **Phase 3** — plugin load from `strategy/`, version on the catalogue and the assignment, admin enable-live before a live start, shared stop/target/trail helper
 - [ ] **Go-live proof runs** — not done. Code cannot check these off.
 
@@ -45,7 +45,7 @@ Goal: make custom formulas and custom strategies safe enough for live capital, w
 
 ---
 
-## Phase 2 — Safe custom formulas — preview still open
+## Phase 2 — Safe custom formulas — done
 
 **Outcome:** Users can write formulas without crashing or escaping the engine.
 
@@ -101,7 +101,7 @@ A run passes only when it closes at least one trade and net P&L after costs is z
 | 5.2 | Schema changes | Boot uses `create_all`. Alembic revision `0001_audit_events` exists and is run by hand, not from Uvicorn |
 | 5.3 | Per-account Dhan token | An encrypted token on the broker account overrides `.env`. Accounts without one still use the shared token |
 | 5.4 | Feed watchdog | Pauses new live entries only while a strategy, formula, or terminal session is running and quotes have stopped. Exits still flatten |
-| 5.5 | Server-edition alert rule | Open, and not part of standalone. Prometheus and Grafana start only with `docker compose -f docker-compose.yml -f docker-compose.server.yml up`. The rule for feed-stale, kill switch, and order rejects is still to be added there |
+| 5.5 | Server-edition alert rule | Done. `alerts.yml` is mounted only by `docker-compose.server.yml`. Prometheus UI is on port 9090. Feed stale, kill switch, and live order rejects are scraped from the API `/metrics` |
 | 5.6 | Audit log | Done for kill, kill-clear, formula start, and the daily risk reset |
 
 ---
@@ -113,8 +113,8 @@ A run passes only when it closes at least one trade and net P&L after costs is z
 | # | Item | Status |
 |---|------|--------|
 | 6.1 | Formula preview on Dhan history, with the save error shown on the form | Done |
-| 6.2 | Paper comparison of the registered engines from their backtest reports | Open |
-| 6.3 | Short notes: add a strategy, write a formula, go-live checks | Open |
+| 6.2 | Paper comparison of the registered engines from their backtest reports | Done. `GET /api/backtest/compare` and the Guide page use the latest stored run per engine. They do not call Dhan |
+| 6.3 | Short notes: add a strategy, write a formula, go-live checks | Done. The Guide page holds the three notes |
 
 Out of this pass: a paper leaderboard, extra options helpers, and a sweep of orphan pages.
 
@@ -127,10 +127,14 @@ Out of this pass: a paper leaderboard, extra options helpers, and a sweep of orp
 
 ## Order of remaining work
 
+The build items are done. What is left has to be run by hand on a machine whose public IPv4 is whitelisted at Dhan:
+
 ```
-1. Phase 6.2 and 6.3   paper comparison and the three short notes
-2. Go-live proof runs below, by hand
-3. Phase 5.5           server edition only: one alert rule
+Go-live proof runs
+  paper session on bar closes for each engine and formula you will use
+  fill confirmation observed against Dhan
+  kill switch used once and confirmed to flatten
+  restart during an open position, then confirm the position and the risk counters
 ```
 
 ---

@@ -151,6 +151,69 @@ async def run_backtest_route(
     )
 
 
+@router.get("/compare")
+async def compare_backtests(
+    symbol: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Latest stored backtest per registered engine for one symbol. Does not call Dhan."""
+    from app.strategy.registry import refresh_plugins
+
+    refresh_plugins()
+    symbol = symbol.upper()
+    engines = []
+    seen = set()
+    for engine_id, cls in STRATEGY_REGISTRY.items():
+        version = str(getattr(cls, "version", "1"))
+        seen.add(engine_id)
+        row = await _latest_run(db, engine_id, version, symbol)
+        engines.append(_compare_row(engine_id, version, symbol, row))
+
+    extra = await db.execute(
+        select(BacktestRun.engine_class, BacktestRun.version)
+        .where(BacktestRun.symbol == symbol)
+        .distinct()
+    )
+    for engine_class, version in extra.all():
+        if engine_class in seen:
+            continue
+        seen.add(engine_class)
+        row = await _latest_run(db, engine_class, version, symbol)
+        engines.append(_compare_row(engine_class, version, symbol, row))
+
+    engines.sort(key=lambda item: (item["total_pnl"] is None, -(item["total_pnl"] or 0)))
+    return {"symbol": symbol, "engines": engines}
+
+
+async def _latest_run(db: AsyncSession, engine_class: str, version: str, symbol: str):
+    result = await db.execute(
+        select(BacktestRun)
+        .where(
+            BacktestRun.engine_class == engine_class,
+            BacktestRun.version == version,
+            BacktestRun.symbol == symbol,
+        )
+        .order_by(BacktestRun.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _compare_row(engine_class: str, version: str, symbol: str, row) -> dict:
+    return {
+        "engine_class": engine_class,
+        "version": version,
+        "symbol": symbol,
+        "has_run": row is not None,
+        "passed": None if row is None else row.passed,
+        "total_pnl": None if row is None else row.total_pnl,
+        "max_drawdown": None if row is None else row.max_drawdown,
+        "trade_count": None if row is None else row.trade_count,
+        "created_at": None if row is None or row.created_at is None else row.created_at.isoformat(),
+    }
+
+
 @router.get("/latest")
 async def latest_backtest(
     engine_class: str,

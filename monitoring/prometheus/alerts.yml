@@ -1,0 +1,26 @@
+groups:
+  - name: algo_ops
+    rules:
+      - alert: FeedStale
+        expr: algo_feed_stale == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Live feed is stale and new entries are paused
+
+      - alert: LiveKill
+        expr: algo_live_kill == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Live kill switch is on
+
+      - alert: OrderRejects
+        expr: increase(algo_order_rejects_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: A live order was rejected in the last 15 minutes

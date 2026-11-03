@@ -13,6 +13,7 @@ import CopyTradingPage from "@/pages/CopyTradingPage";
 import RiskPage        from "@/pages/RiskPage";
 import TerminalPage    from "@/pages/TerminalPage";
 import FormulaPage     from "@/pages/FormulaPage";
+import GuidePage       from "@/pages/GuidePage";
 import AdminPage       from "@/pages/AdminPage";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/options" element={<Protected><OptionsPage /></Protected>} />
           <Route path="/strategies"   element={<Protected><StrategiesPage /></Protected>} />
           <Route path="/formula"      element={<Protected><FormulaPage /></Protected>} />
+          <Route path="/guide"        element={<Protected><GuidePage /></Protected>} />
           <Route path="/copy-trading" element={<Protected><CopyTradingPage /></Protected>} />
           <Route path="/risk"         element={<Protected><RiskPage /></Protected>} />
           <Route path="/settings"     element={<Protected><SettingsPage /></Protected>} />

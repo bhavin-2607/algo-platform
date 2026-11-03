@@ -27,16 +27,25 @@ def resolve_security(symbol: str, exchange: str) -> dict:
         raise FileNotFoundError("Instrument file is missing")
     df = pd.read_csv(
         path,
-        usecols=["EXCH_ID", "SECURITY_ID", "SYMBOL_NAME", "SERIES", "INSTRUMENT"],
+        usecols=["EXCH_ID", "SECURITY_ID", "SYMBOL_NAME", "UNDERLYING_SYMBOL", "SERIES", "INSTRUMENT"],
         low_memory=False,
     )
     sym = symbol.upper().strip()
     exch = exchange.upper().strip()
     exch = {"NSE_EQ": "NSE", "BSE_EQ": "BSE"}.get(exch, exch)
     frame = df[df["EXCH_ID"] == exch]
-    exact = frame[frame["SYMBOL_NAME"].astype(str).str.upper() == sym]
+    names = frame["SYMBOL_NAME"].astype(str).str.upper()
+    exact = frame[names == sym]
     eq = exact[exact["SERIES"] == "EQ"]
     row = eq.iloc[0] if not eq.empty else (exact.iloc[0] if not exact.empty else None)
+    if row is None:
+        # Dhan's equity master stores the trading symbol on UNDERLYING_SYMBOL
+        # and the company name on SYMBOL_NAME ("RELIANCE" vs "RELIANCE INDUSTRIES LTD").
+        underlying = frame["UNDERLYING_SYMBOL"].astype(str).str.upper()
+        cash = frame[(underlying == sym) & (frame["INSTRUMENT"].astype(str).str.upper() == "EQUITY")]
+        cash_eq = cash[cash["SERIES"] == "EQ"]
+        picked = cash_eq if not cash_eq.empty else cash
+        row = picked.iloc[0] if not picked.empty else None
     if row is None:
         raise LookupError(f"No instrument for {exch}:{sym}")
     instrument = str(row["INSTRUMENT"]).upper()

@@ -9,6 +9,7 @@ const NAV = [
   { path:"/options",    label:"OPTIONS",    icon:"◈" },
     { path:"/strategies",   label:"STRATEGIES",   icon:"⟳" },
   { path:"/formula",      label:"FORMULA",      icon:"ƒ" },
+  { path:"/guide",        label:"GUIDE",        icon:"≡" },
   { path:"/copy-trading", label:"COPY TRADING", icon:"⇉" },
   { path:"/risk",         label:"RISK MGMT",    icon:"⚠" },
   { path:"/settings",     label:"SETTINGS",     icon:"⚙" },

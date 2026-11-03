@@ -243,6 +243,9 @@ class StrategyExecutor:
                     apply_order_result(trade, "REJECTED")
                     await self.db.commit()
                     logger.error(f"Order place error: {e}")
+                    if not usm.paper_trading:
+                        from app.core.alerts import raise_alert
+                        await raise_alert("ORDER", str(e))
                     await self._publish_status(redis, "order_rejected", risk)
                     continue
 
@@ -253,6 +256,9 @@ class StrategyExecutor:
                     logger.error(
                         f"Order place failed: status={order_resp.status} msg={order_resp.message}"
                     )
+                    if not usm.paper_trading:
+                        from app.core.alerts import raise_alert
+                        await raise_alert("ORDER", order_resp.message or "broker rejected the order")
                     await self._publish_status(redis, "order_rejected", risk)
                     continue
 

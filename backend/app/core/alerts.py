@@ -25,6 +25,7 @@ async def raise_alert(kind: str, message: str) -> None:
         redis = get_redis()
         await redis.lpush(ALERTS_KEY, payload)
         await redis.ltrim(ALERTS_KEY, 0, 99)
+        await redis.incr(f"metrics:alert:{kind}")
     except Exception as exc:
         logger.warning("Alert redis write failed: %s", exc)
 

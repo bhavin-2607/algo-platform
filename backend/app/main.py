@@ -6,6 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.ops_metrics import register_ops_metrics
 from app.api.routes import (
     options,
     auth,
@@ -63,6 +64,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_ops_metrics()
 Instrumentator().instrument(app).expose(app)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
