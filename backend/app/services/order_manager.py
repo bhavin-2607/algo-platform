@@ -20,7 +20,9 @@ from sqlalchemy import select
 
 from app.broker.factory import get_broker_adapter
 from app.broker.base import OrderRequest
+from app.broker.order_ops import place_once
 from app.core.redis_client import get_redis
+from app.strategy.recovery import flatten_client_order_id
 from app.models.formula import ManagedPosition, PositionStatus
 from app.models.broker import BrokerAccount
 
@@ -155,31 +157,46 @@ class OrderManager:
         reason: str,
         status: PositionStatus,
     ) -> ManagedPosition:
-        # Place exit order via broker
+        # Place exit order via broker. Stay open until the fill is confirmed.
         ba = await self.db.get(BrokerAccount, pos.broker_account_id)
-        if ba:
+        if not ba:
+            logger.error(f"Exit skipped for {pos.symbol}: no broker account")
+            return pos
+        try:
             adapter = get_broker_adapter(ba)
-            exit_direction = "SELL" if pos.direction == "BUY" else "BUY"
-            try:
-                resp = await adapter.place_order(OrderRequest(
-                    symbol     = pos.symbol,
-                    exchange   = pos.exchange,
-                    direction  = exit_direction,
-                    quantity   = pos.quantity,
-                    order_type = "MARKET",
-                    price      = ltp,
-                ))
-                pos.exit_order_id = resp.broker_order_id
-            except Exception as e:
-                logger.error(f"Exit order failed for {pos.symbol}: {e}")
+        except Exception as e:
+            logger.error(f"Exit adapter unavailable for {pos.symbol}: {e}")
+            return pos
+
+        exit_direction = "SELL" if pos.direction == "BUY" else "BUY"
+        redis = get_redis()
+        result = await place_once(
+            redis,
+            adapter,
+            OrderRequest(
+                symbol     = pos.symbol,
+                exchange   = pos.exchange,
+                direction  = exit_direction,
+                quantity   = pos.quantity,
+                order_type = "MARKET",
+                price      = ltp,
+            ),
+            flatten_client_order_id(str(pos.id)),
+        )
+        if not result["ok"]:
+            logger.error(f"Exit not filled for {pos.symbol}: {result['status']}")
+            return pos
+
+        exit_price = float(result["fill_price"] or ltp)
+        pos.exit_order_id = result["broker_order_id"]
 
         # Calculate P&L
         if pos.direction == "BUY":
-            pnl = (ltp - pos.entry_price) * pos.quantity
+            pnl = (exit_price - pos.entry_price) * pos.quantity
         else:
-            pnl = (pos.entry_price - ltp) * pos.quantity
+            pnl = (pos.entry_price - exit_price) * pos.quantity
 
-        pos.exit_price  = ltp
+        pos.exit_price  = exit_price
         pos.pnl         = round(pnl, 2)
         pos.status      = status
         pos.exit_reason = reason
@@ -189,7 +206,7 @@ class OrderManager:
 
         emoji = "✅" if pnl >= 0 else "❌"
         logger.info(
-            f"{emoji} Position closed: {pos.symbol} @ ₹{ltp} | "
+            f"{emoji} Position closed: {pos.symbol} @ ₹{exit_price} | "
             f"Reason={reason} PnL=₹{pnl:.2f}"
         )
 
@@ -199,9 +216,9 @@ class OrderManager:
             "position_id": str(pos.id),
             "symbol":      pos.symbol,
             "pnl":         round(pnl, 2),
-            "status":      status,
+            "status":      status.value if hasattr(status, "value") else status,
             "reason":      reason,
-            "exit_price":  ltp,
+            "exit_price":  exit_price,
         }))
 
         return pos

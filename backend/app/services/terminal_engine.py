@@ -24,8 +24,10 @@ from sqlalchemy import select
 
 from app.broker.factory import get_broker_adapter
 from app.broker.base import OrderRequest
+from app.broker.order_ops import client_order_id_for, place_once
 from app.core.redis_client import get_redis
-from app.market.candle_builder import build_ohlcv, record_tick
+from app.market.candle_builder import build_ohlcv_closed, latest_closed_bar_ts, record_tick
+from app.strategy.recovery import flatten_client_order_id
 from app.models.terminal import TerminalRow, TerminalRowStatus
 from app.models.broker import BrokerAccount
 from app.strategy.formula_engine import FormulaEvaluator
@@ -95,17 +97,21 @@ class TerminalEngine:
         ba = await self.db.get(BrokerAccount, row.broker_account_id) if row.broker_account_id else None
         adapter = get_broker_adapter(ba) if ba else None
 
-        in_position = row.status == TerminalRowStatus.active
-        tick_count  = 0
+        in_position = row.status == TerminalRowStatus.active and bool(row.entry_price)
+        if in_position:
+            logger.info(f"  Row [{row.symbol}]: restored open position @ ₹{row.entry_price}")
 
         logger.info(f"  Row [{row.symbol}]: watching tick channel {tick_ch}")
+        last_bar_ts = None
+        last_ltp = row.last_ltp
+        flatten = False
 
         try:
             async for message in pubsub.listen():
                 # Check global stop or row-level stop
                 still_running = await redis.get(TERMINAL_RUN_KEY.format(user_id=self.user_id))
-                row_active = await redis.get(f"terminal:row:active:{row.id}")
                 if self._stop or not still_running:
+                    flatten = True
                     break
 
                 if message["type"] != "message":
@@ -119,9 +125,9 @@ class TerminalEngine:
                 ltp = float(tick.get("ltp", 0))
                 if ltp == 0:
                     continue
+                last_ltp = ltp
 
                 record_tick(row.exchange, row.token or row.symbol, tick)
-                tick_count += 1
 
                 # ── Build live state for this row ─────────────────────────────
                 live = {
@@ -159,31 +165,34 @@ class TerminalEngine:
                 if in_position and row.entry_price:
                     exited, reason = _check_exit_levels(row, ltp)
                     if exited:
-                        await self._close_position(row, ltp, reason, redis, adapter)
-                        in_position = False
+                        closed = await self._close_position(row, ltp, reason, redis, adapter)
+                        if closed:
+                            in_position = False
                         continue
 
                     # Update trailing SL
                     if row.trailing_sl and row.trail_pct:
                         _update_trail(row, ltp)
 
-                # ── Evaluate signals every 10 ticks ──────────────────────────
-                if tick_count % 10 != 0:
-                    continue
-
-                df = build_ohlcv(
+                # ── Evaluate signals on each new closed bar ─────────────────
+                df = build_ohlcv_closed(
                     row.exchange, row.token or row.symbol,
-                    timeframe_minutes=5
+                    timeframe_minutes=5,
                 )
-                if df.empty or len(df) < 5:
+                bar_ts = latest_closed_bar_ts(df)
+                if bar_ts is None or df.empty or len(df) < 5:
                     continue
+                if last_bar_ts is not None and bar_ts == last_bar_ts:
+                    continue
+                last_bar_ts = bar_ts
 
                 # Exit signal
                 if in_position and exit_ev:
                     if exit_ev.evaluate(df, ltp):
-                        await self._close_position(row, ltp, "EXIT_SIGNAL", redis, adapter)
-                        in_position = False
-                        row.last_signal = "EXIT"
+                        closed = await self._close_position(row, ltp, "EXIT_SIGNAL", redis, adapter)
+                        if closed:
+                            in_position = False
+                            row.last_signal = "EXIT"
                         continue
 
                 # Entry signal
@@ -194,8 +203,10 @@ class TerminalEngine:
                         row.last_signal = "BUY"
 
                         if row.auto_execute and adapter:
-                            await self._open_position(row, ltp, direction, redis, adapter)
-                            in_position = True
+                            opened = await self._open_position(
+                                row, ltp, direction, redis, adapter, bar_ts
+                            )
+                            in_position = opened
                         else:
                             # Manual approval mode — publish pending signal
                             row.status = TerminalRowStatus.entry_pending
@@ -206,47 +217,72 @@ class TerminalEngine:
                     else:
                         row.last_signal = "—"
 
-                # Persist row state to DB periodically (every 100 ticks)
-                if tick_count % 100 == 0:
-                    row.last_ltp    = ltp
-                    row.updated_at  = datetime.utcnow()
-                    await self.db.commit()
+                row.last_ltp = ltp
+                row.updated_at = datetime.utcnow()
+                await self.db.commit()
 
         except asyncio.CancelledError:
-            pass
+            flatten = True
         except Exception as e:
             logger.error(f"Row [{row.symbol}] error: {e}", exc_info=True)
         finally:
+            if flatten and in_position and adapter and row.entry_price:
+                await self._close_position(
+                    row, last_ltp or row.entry_price, "STOP", redis, adapter
+                )
             await pubsub.unsubscribe(tick_ch)
 
-    async def _open_position(self, row: TerminalRow, ltp: float, direction: str, redis, adapter):
+    async def _open_position(self, row: TerminalRow, ltp: float, direction: str, redis, adapter, bar_ts) -> bool:
         try:
-            resp = await adapter.place_order(OrderRequest(
-                symbol=row.symbol, exchange=row.exchange,
-                direction=direction, quantity=row.quantity,
-                order_type=row.order_type, price=ltp,
-            ))
+            result = await place_once(
+                redis,
+                adapter,
+                OrderRequest(
+                    symbol=row.symbol, exchange=row.exchange,
+                    direction=direction, quantity=row.quantity,
+                    order_type=row.order_type, price=ltp,
+                ),
+                client_order_id_for(str(row.id), bar_ts, row.symbol, direction),
+            )
+            if not result["ok"]:
+                logger.error(f"  [{row.symbol}] Entry not filled: {result['status']}")
+                return False
+            fill_price = float(result["fill_price"] or ltp)
             row.status         = TerminalRowStatus.active
-            row.entry_price    = ltp
-            row.entry_order_id = resp.broker_order_id
-            row.peak_price     = ltp
-            row.current_sl     = round(ltp * (1 - (row.sl_pct or 1) / 100), 2)
-            row.current_target = round(ltp * (1 + (row.target_pct or 2) / 100), 2)
+            row.entry_price    = fill_price
+            row.entry_order_id = result["broker_order_id"]
+            row.peak_price     = fill_price
+            row.current_sl     = round(fill_price * (1 - (row.sl_pct or 1) / 100), 2)
+            row.current_target = round(fill_price * (1 + (row.target_pct or 2) / 100), 2)
             await self.db.commit()
-            logger.info(f"  [{row.symbol}] Entry: {direction} @ ₹{ltp} | T={row.current_target} SL={row.current_sl}")
+            logger.info(
+                f"  [{row.symbol}] Entry: {direction} @ ₹{fill_price} "
+                f"| T={row.current_target} SL={row.current_sl}"
+            )
+            return True
         except Exception as e:
             logger.error(f"  [{row.symbol}] Entry order failed: {e}")
+            return False
 
-    async def _close_position(self, row: TerminalRow, ltp: float, reason: str, redis, adapter):
+    async def _close_position(self, row: TerminalRow, ltp: float, reason: str, redis, adapter) -> bool:
         try:
-            exit_dir = "SELL" if row.entry_price else "BUY"
-            if adapter:
-                await adapter.place_order(OrderRequest(
+            if not adapter or not row.entry_price:
+                return False
+            result = await place_once(
+                redis,
+                adapter,
+                OrderRequest(
                     symbol=row.symbol, exchange=row.exchange,
-                    direction=exit_dir, quantity=row.quantity,
+                    direction="SELL", quantity=row.quantity,
                     order_type="MARKET", price=ltp,
-                ))
-            pnl = _calc_pnl(row, ltp)
+                ),
+                flatten_client_order_id(f"{row.id}:{row.entry_order_id or 'exit'}"),
+            )
+            if not result["ok"]:
+                logger.error(f"  [{row.symbol}] Exit not filled: {result['status']}")
+                return False
+            exit_price = float(result["fill_price"] or ltp)
+            pnl = _calc_pnl(row, exit_price)
             row.status       = TerminalRowStatus.watching
             row.pnl          = pnl
             row.entry_price  = None
@@ -256,9 +292,11 @@ class TerminalEngine:
             row.peak_price   = None
             row.last_signal  = "EXIT"
             await self.db.commit()
-            logger.info(f"  [{row.symbol}] Exit: {reason} @ ₹{ltp} | PnL=₹{pnl}")
+            logger.info(f"  [{row.symbol}] Exit: {reason} @ ₹{exit_price} | PnL=₹{pnl}")
+            return True
         except Exception as e:
             logger.error(f"  [{row.symbol}] Exit order failed: {e}")
+            return False
 
     def stop(self):
         self._stop = True

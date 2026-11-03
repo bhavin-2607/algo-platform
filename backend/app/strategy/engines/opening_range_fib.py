@@ -170,6 +170,14 @@ class OpeningRangeFibonacci(BaseStrategy):
         self._in_position = True
         logger.info(f"[{self.symbol}] Order filled @ ₹{fill_price}")
 
+    def restore_position(self, direction: str, quantity: int) -> None:
+        if not quantity:
+            return
+        self._in_position = True
+        self._signal_fired = True
+        self._direction = direction
+        self._last_date = datetime.now(IST).strftime("%Y-%m-%d")
+
     def get_levels(self, day_open: float | None = None) -> dict:
         """
         Returns all computed levels for display in the terminal.

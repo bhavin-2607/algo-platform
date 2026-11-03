@@ -45,17 +45,17 @@ class DhanAuthManager:
     def renew_token(self) -> dict | None:
         """
         Renew current active token for 24 more hours.
-        POST /v2/RenewToken — no TOTP needed.
+        GET /v2/RenewToken — no body and no TOTP.
         NOTE: Only works if current token is still ACTIVE (not expired).
         If token is expired, this will fail — use generate_token_totp instead.
         """
         try:
-            resp = requests.post(
+            resp = requests.get(
                 f"{DHAN_API_URL}/RenewToken",
                 headers={
                     "access-token": self.access_token,
-                    "client-id":    self.client_id,   # correct header per Dhan docs
-                    "Content-Type": "application/json",
+                    "dhanClientId": self.client_id,
+                    "Accept":       "application/json",
                 },
                 timeout=10,
             )
@@ -238,40 +238,26 @@ class DhanAuthManager:
         settings.DHAN_ACCESS_TOKEN = new_token
         self.access_token          = new_token
 
-        # Persist to .env
-        import os
-        env_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "..", ".env"
-        )
-        env_path = os.path.abspath(env_path)
-
-        if not os.path.exists(env_path):
-            # Try backend .env
-            env_path = os.path.join(
-                os.path.dirname(__file__), "..", "..", ".env"
-            )
-            env_path = os.path.abspath(env_path)
+        from app.core.env_files import existing_env_files
 
         try:
-            if os.path.exists(env_path):
-                with open(env_path, "r") as f:
-                    lines = f.readlines()
-
+            paths = existing_env_files()
+            if not paths:
+                logger.error("No .env file found to persist the Dhan token")
+                return
+            for env_path in paths:
+                lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
                 updated = []
-                found   = False
+                found = False
                 for line in lines:
                     if line.startswith("DHAN_ACCESS_TOKEN="):
                         updated.append(f"DHAN_ACCESS_TOKEN={new_token}\n")
                         found = True
                     else:
                         updated.append(line)
-
                 if not found:
                     updated.append(f"\nDHAN_ACCESS_TOKEN={new_token}\n")
-
-                with open(env_path, "w") as f:
-                    f.writelines(updated)
-
+                env_path.write_text("".join(updated), encoding="utf-8")
                 logger.info(f"Token persisted to {env_path}")
         except Exception as e:
             logger.error(f"Failed to persist token: {e}")

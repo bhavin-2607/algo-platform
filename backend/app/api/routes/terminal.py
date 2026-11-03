@@ -867,11 +867,18 @@ async def place_manual_order(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Place a manual BUY/SELL order via Dhan."""
+    """Place a manual BUY/SELL order via Dhan (live only — gated)."""
     from app.broker.factory import get_broker_adapter
     from app.broker.base import OrderRequest
     from app.models.broker import BrokerAccount, BrokerName
+    from app.core.trading_mode import LiveTradingError, assert_live_allowed, require_not_killed
     from sqlalchemy import select
+
+    try:
+        assert_live_allowed()
+        await require_not_killed()
+    except LiveTradingError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
     result = await db.execute(
         select(BrokerAccount).where(
@@ -906,11 +913,11 @@ async def place_manual_order(
             except Exception as e:
                 logger.warning(f"NSE lookup failed: {e}")
 
-        adapter  = get_broker_adapter(account)
-        order    = OrderRequest(
-            symbol        = body.symbol,
+        adapter = get_broker_adapter(account)
+        # Dhan adapter uses order.symbol as securityId
+        order = OrderRequest(
+            symbol        = security_id,
             exchange      = exchange,
-            security_id   = security_id,
             direction     = body.transaction_type.upper(),
             quantity      = body.quantity,
             order_type    = body.order_type.upper(),
@@ -930,93 +937,38 @@ async def place_manual_order(
         }
     except HTTPException:
         raise
+    except LiveTradingError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Order failed: {str(e)}")
 
 
-class ManualOrderRequest(BaseModel):
-    symbol:           str
-    security_id:      str
-    exchange_segment: str   = "NSE_EQ"
-    transaction_type: str
-    quantity:         int
-    order_type:       str   = "MARKET"
-    product_type:     str   = "INTRADAY"
-    price:            float = 0.0
-    trigger_price:    float = 0.0
+async def _dhan_get(path: str):
+    """GET a Dhan v2 path. Uses the same IPv4 requests path as order placement."""
+    import asyncio
+    import requests
+    from app.core.config import settings
 
-
-@router.post("/order")
-async def place_manual_order(
-    body: ManualOrderRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Place a manual BUY/SELL order via Dhan."""
-    from app.broker.factory import get_broker_adapter
-    from app.broker.base import OrderRequest
-    from app.models.broker import BrokerAccount, BrokerName
-    from sqlalchemy import select
-
-    result = await db.execute(
-        select(BrokerAccount).where(
-            BrokerAccount.user_id       == current_user.id,
-            BrokerAccount.broker        == BrokerName.dhan,
-            BrokerAccount.paper_trading == False,
-            BrokerAccount.is_active     == True,
+    def _fetch():
+        return requests.get(
+            f"https://api.dhan.co/v2{path}",
+            headers={
+                "access-token": settings.DHAN_ACCESS_TOKEN,
+                "dhanClientId": settings.DHAN_CLIENT_ID,
+                "Accept":       "application/json",
+            },
+            timeout=20,
         )
-    )
-    account = result.scalar_one_or_none()
-    if not account:
-        raise HTTPException(status_code=400, detail="No active Dhan live account")
 
     try:
-        # If BSE segment, look up NSE equivalent for Dhan compatibility
-        security_id = body.security_id
-        exchange    = body.exchange_segment
-        if exchange == "BSE_EQ":
-            try:
-                import pandas as pd, os
-                csv_path = os.path.join(os.path.dirname(__file__),
-                    "../../market/instruments.csv")
-                df = pd.read_csv(csv_path, header=None, low_memory=False)
-                # Find NSE row matching same ISIN
-                bse_row = df[df.iloc[:,2].astype(str) == str(security_id)]
-                if not bse_row.empty:
-                    isin = bse_row.iloc[0, 3]
-                    nse_row = df[(df.iloc[:,0] == "NSE") & (df.iloc[:,3] == isin)]
-                    if not nse_row.empty:
-                        security_id = str(nse_row.iloc[0, 2])
-                        exchange    = "NSE_EQ"
-            except Exception as e:
-                logger.warning(f"NSE lookup failed: {e}")
-
-        adapter  = get_broker_adapter(account)
-        order    = OrderRequest(
-            symbol        = body.symbol,
-            exchange      = exchange,
-            security_id   = security_id,
-            direction     = body.transaction_type.upper(),
-            quantity      = body.quantity,
-            order_type    = body.order_type.upper(),
-            product       = body.product_type.upper(),
-            price         = body.price if body.order_type == "LIMIT" else 0,
-            trigger_price = body.trigger_price,
-        )
-        response = await adapter.place_order(order)
-        if response.status == "FAILED":
-            raise HTTPException(status_code=502, detail=response.message)
-        return {
-            "status":           "placed",
-            "order_id":         response.broker_order_id,
-            "symbol":           body.symbol,
-            "transaction_type": body.transaction_type,
-            "quantity":         body.quantity,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Order failed: {str(e)}")
+        resp = await asyncio.to_thread(_fetch)
+    except requests.RequestException as e:
+        logger.warning(f"Dhan {path} unreachable: {e.__class__.__name__}")
+        raise HTTPException(status_code=502, detail=f"Dhan did not respond ({e.__class__.__name__})")
+    try:
+        return resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="Dhan returned a non-JSON response")
 
 
 @router.get("/orderbook")
@@ -1024,20 +976,7 @@ async def get_orderbook(
     current_user: User = Depends(get_current_user),
 ):
     """Fetch today's orders from Dhan broker API."""
-    import httpx
-    from app.core.config import settings
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://api.dhan.co/v2/orders",
-            headers={
-                "access-token": settings.DHAN_ACCESS_TOKEN,
-                "client-id":    settings.DHAN_CLIENT_ID,
-                "Content-Type": "application/json",
-            },
-            timeout=10,
-        )
-    data = resp.json()
+    data = await _dhan_get("/orders")
 
     if isinstance(data, list):
         orders = data
@@ -1065,4 +1004,31 @@ async def get_orderbook(
             "remarks":         o.get("omsErrorDescription") or o.get("remarks", ""),
         }
         for o in orders
+        if isinstance(o, dict)
+    ]
+
+
+@router.get("/positions")
+async def get_dhan_positions(
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch today's positions from Dhan. A flattened trade comes back with netQty 0."""
+    data = await _dhan_get("/positions")
+    rows = data if isinstance(data, list) else (data.get("data") or []) if isinstance(data, dict) else []
+    return [
+        {
+            "symbol":        p.get("tradingSymbol") or p.get("securityId"),
+            "exchange":      p.get("exchangeSegment"),
+            "product_type":  p.get("productType"),
+            "net_qty":       p.get("netQty"),
+            "position_type": p.get("positionType"),
+            "buy_qty":       p.get("dayBuyQty") or p.get("buyQty"),
+            "sell_qty":      p.get("daySellQty") or p.get("sellQty"),
+            "buy_avg":       p.get("buyAvg"),
+            "sell_avg":      p.get("sellAvg"),
+            "unrealized":    p.get("unrealizedProfit"),
+            "realized":      p.get("realizedProfit"),
+        }
+        for p in rows
+        if isinstance(p, dict)
     ]

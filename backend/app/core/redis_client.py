@@ -44,3 +44,17 @@ def strategy_running_key(map_id: str) -> str:
 def strategy_state_key(map_id: str) -> str:
     """JSON blob of current strategy runtime state (position, params, etc.)"""
     return f"strategy:state:{map_id}"
+
+
+def risk_state_key(map_id: str) -> str:
+    """Persisted RiskManager counters (daily PnL, consecutive losses, kill)."""
+    return f"risk:state:{map_id}"
+
+
+# Global emergency stop for all live trading
+LIVE_KILL_KEY = "trading:live_kill"
+
+
+def order_intent_key(client_order_id: str) -> str:
+    """Claim key so one client_order_id can place at most one broker order."""
+    return f"order:intent:{client_order_id}"

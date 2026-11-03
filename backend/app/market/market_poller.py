@@ -129,7 +129,7 @@ class MarketPoller:
         """Background task: poll Dhan and broadcast to all clients."""
         backoff = self._interval
 
-        async with httpx.AsyncClient(timeout=4) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             while True:
                 try:
                     securities, sym_index = self._build_securities()

@@ -43,3 +43,7 @@ class BaseStrategy(ABC):
     def validate_params(self) -> bool:
         """Override to validate strategy-specific params."""
         return True
+
+    def restore_position(self, direction: str, quantity: int) -> None:
+        """Rebuild in-memory position after a restart. Default: no open position."""
+        return

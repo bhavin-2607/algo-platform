@@ -16,6 +16,11 @@ export default function TradingPage() {
     queryFn: () => api.get("/terminal/orderbook").then(r => r.data),
     refetchInterval: 10000,
   });
+  const { data: positions, isLoading: posLoading } = useQuery({
+    queryKey: ["dhan-positions"],
+    queryFn: () => api.get("/terminal/positions").then(r => r.data),
+    refetchInterval: 10000,
+  });
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
@@ -77,10 +82,69 @@ export default function TradingPage() {
 
       {/* ── ORDER BOOK TAB ───────────────────────────────────────────────────── */}
       {tab === "orders" && (
-        <div className="card">
-          <div className="card-header"><span className="card-title">ORDER BOOK</span></div>
-          <div className="empty-state">No orders today.</div>
-        </div>
+        <>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-header"><span className="card-title">ORDER BOOK</span></div>
+            {obLoading ? (
+              <div className="empty-state">Loading orders…</div>
+            ) : !orderbook?.length ? (
+              <div className="empty-state">No orders today.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      {["SYMBOL","SIDE","QTY","STATUS","AVG ₹","TIME","ORDER ID"].map(h => <th key={h}>{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderbook.map((o: any) => (
+                      <tr key={o.order_id}>
+                        <td className="symbol">{o.symbol}</td>
+                        <td>{o.transaction_type}</td>
+                        <td>{o.filled_qty || o.quantity}</td>
+                        <td>{o.status}</td>
+                        <td>{o.avg_price ?? o.price ?? "—"}</td>
+                        <td>{o.created_at || "—"}</td>
+                        <td>{o.order_id}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-header"><span className="card-title">POSITIONS</span></div>
+            {posLoading ? (
+              <div className="empty-state">Loading positions…</div>
+            ) : !positions?.length ? (
+              <div className="empty-state">No positions today.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      {["SYMBOL","NET QTY","TYPE","BUY","SELL","REALIZED"].map(h => <th key={h}>{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.map((p: any) => (
+                      <tr key={`${p.symbol}-${p.product_type}`}>
+                        <td className="symbol">{p.symbol}</td>
+                        <td>{p.net_qty}</td>
+                        <td>{p.position_type}</td>
+                        <td>{p.buy_qty} @ {p.buy_avg ?? "—"}</td>
+                        <td>{p.sell_qty} @ {p.sell_avg ?? "—"}</td>
+                        <td>{p.realized ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </Layout>
   );

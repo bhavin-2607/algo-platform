@@ -13,6 +13,7 @@ class OrderRequest:
     price: Optional[float] = None
     trigger_price: Optional[float] = None
     product: str = "MIS"  # MIS, CNC, NRML
+    client_order_id: Optional[str] = None  # stable id for idempotent placement
 
 
 @dataclass

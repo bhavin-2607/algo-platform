@@ -8,12 +8,16 @@ from app.broker.base import BaseBrokerAdapter
 from app.broker.paper import PaperTradingAdapter
 from app.broker.dhan import DhanAdapter
 from app.core.config import settings
+from app.core.trading_mode import assert_live_allowed
 from app.models.broker import BrokerAccount, BrokerName
 
 
 def get_broker_adapter(account: BrokerAccount) -> BaseBrokerAdapter:
     if account.paper_trading:
         return PaperTradingAdapter()
+
+    # Any non-paper adapter requires explicit live enable + credentials
+    assert_live_allowed()
 
     broker = account.broker
 

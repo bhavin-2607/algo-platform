@@ -86,9 +86,13 @@ def stop_strategy(user_strategy_map_id: str):
     """Delete the running key so the executor loop exits cleanly."""
 
     async def _stop():
+        from app.core.database import AsyncSessionLocal
         from app.core.redis_client import get_redis, strategy_running_key
+        from app.strategy.recovery import flatten_map
         redis = get_redis()
         await redis.delete(strategy_running_key(user_strategy_map_id))
+        async with AsyncSessionLocal() as db:
+            await flatten_map(db, redis, user_strategy_map_id, reason="STOP")
 
     _run(_stop)
 

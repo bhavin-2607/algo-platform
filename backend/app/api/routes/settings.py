@@ -39,30 +39,28 @@ class BrokerCredentials(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _update_env(key: str, value: str):
-    """Update a key in .env file."""
-    import os
-    # Try common .env locations
-    for env_path in [
-        "/home/groot/Algo/algo-platform/.env",
-        "/home/groot/Algo/algo-platform/backend/.env",
-    ]:
-        if os.path.exists(env_path):
-            with open(env_path, "r") as f:
-                lines = f.readlines()
-            updated = []
-            found   = False
-            for line in lines:
-                if line.startswith(f"{key}="):
-                    updated.append(f"{key}={value}\n")
-                    found = True
-                else:
-                    updated.append(line)
-            if not found:
-                updated.append(f"\n{key}={value}\n")
-            with open(env_path, "w") as f:
-                f.writelines(updated)
-            return True
-    return False
+    """Update a key in every project .env that exists (repo root and backend/)."""
+    from app.core.env_files import existing_env_files
+
+    paths = existing_env_files()
+    if not paths:
+        return False
+    for env_path in paths:
+        with env_path.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+        updated = []
+        found = False
+        for line in lines:
+            if line.startswith(f"{key}="):
+                updated.append(f"{key}={value}\n")
+                found = True
+            else:
+                updated.append(line)
+        if not found:
+            updated.append(f"\n{key}={value}\n")
+        with env_path.open("w", encoding="utf-8") as f:
+            f.writelines(updated)
+    return True
 
 
 def _require_admin(user: User):

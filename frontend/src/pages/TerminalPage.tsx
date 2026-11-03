@@ -428,7 +428,7 @@ export default function TerminalPage() {
       {orderPanel && (
         <OrderPanel
           symbol={orderPanel.symbol}
-          securityId={orderPanel.securityId}
+          securityId={orderPanel.security_id}
           segment={orderPanel.segment}
           ltp={liveData[orderPanel.symbol]?.ltp ?? null}
           onClose={() => setOrderPanel(null)}

@@ -158,28 +158,30 @@ async def start_strategy(
     if usm.status == StrategyStatus.active:
         raise HTTPException(status_code=400, detail="Strategy is already running")
 
-    usm.status = StrategyStatus.active
-    await db.commit()
-
     symbol   = usm.params.get("symbol", "RELIANCE")
     exchange = usm.params.get("exchange", "NSE")
     token    = usm.params.get("token", "2885")
 
+    if not usm.paper_trading:
+        # Live path — hard gates before mutating state or enqueueing work
+        from app.core.trading_mode import LiveTradingError, assert_live_allowed, require_not_killed
+        try:
+            assert_live_allowed()
+            await require_not_killed()
+        except LiveTradingError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.message)
+
+    usm.status = StrategyStatus.active
+    await db.commit()
+
     if usm.paper_trading:
-        # Paper trading — use simulated feed
+        # Paper trading — simulated feed only (never used for live)
         from app.worker.tasks import start_simulated_feed
         price = float(usm.params.get("base_price", 2800.0))
         start_simulated_feed.delay(exchange=exchange, token=token, base_price=price)
         logger.info(f"Paper trading: simulated feed started for {symbol}")
     else:
-        # Live trading — use Dhan real-time feed
         from app.worker.tasks import start_dhan_feed
-        from app.core.config import settings
-        if not settings.DHAN_CLIENT_ID or not settings.DHAN_ACCESS_TOKEN:
-            raise HTTPException(
-                status_code=400,
-                detail="DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN not set in .env"
-            )
         start_dhan_feed.delay(instruments=[{
             "exchange":    exchange,
             "security_id": token,

@@ -107,9 +107,13 @@ class DhanAdapter(BaseBrokerAdapter):
         POST https://api.dhan.co/v2/RenewToken
         """
         try:
-            resp = requests.post(
+            resp = requests.get(
                 f"{DHAN_BASE_URL}/RenewToken",
-                headers=self._headers(),
+                headers={
+                    "access-token": self._access_token,
+                    "dhanClientId": self._client_id,
+                    "Accept":       "application/json",
+                },
                 timeout=10,
             )
             data = resp.json()
@@ -151,7 +155,7 @@ class DhanAdapter(BaseBrokerAdapter):
                 "price":             float(order.price or 0),
                 "triggerPrice":      float(order.trigger_price or 0),
                 "afterMarketOrder":  False,
-                "correlationId":     "algo-platform",
+                "correlationId":     (order.client_order_id or "algo-platform")[:30],
             }
 
             resp_raw = _req.post(
@@ -167,12 +171,21 @@ class DhanAdapter(BaseBrokerAdapter):
             resp = resp_raw.json()
             logger.info(f"Dhan place_order response: {resp}")
 
-            if resp and resp.get("status") == "success":
-                order_id = str(resp.get("data", {}).get("orderId", ""))
-                logger.info(f"Dhan order placed: {order_id}")
-                return OrderResponse(broker_order_id=order_id, status="OPEN")
+            # v2 returns the order itself: {orderId, orderStatus: TRANSIT|PENDING|TRADED}
+            data = resp.get("data") if isinstance(resp, dict) and isinstance(resp.get("data"), dict) else {}
+            order_id = ""
+            order_status = ""
+            if isinstance(resp, dict) and not resp.get("errorCode"):
+                order_id = str(resp.get("orderId") or data.get("orderId") or "")
+                order_status = str(resp.get("orderStatus") or data.get("orderStatus") or "")
+            if order_id:
+                logger.info(f"Dhan order placed: {order_id} status={order_status or 'TRANSIT'}")
+                return OrderResponse(
+                    broker_order_id=order_id,
+                    status=order_status or "TRANSIT",
+                )
 
-            msg = resp.get("remarks", str(resp)) if resp else "No response"
+            msg = resp.get("remarks", str(resp)) if isinstance(resp, dict) else str(resp or "No response")
             logger.error(f"Dhan place_order failed: {msg}")
             return OrderResponse(broker_order_id="", status="FAILED", message=msg)
 
@@ -191,13 +204,29 @@ class DhanAdapter(BaseBrokerAdapter):
 
     # ── Account data ──────────────────────────────────────────────────────────
 
+    def _get_list(self, path: str) -> list:
+        """Dhan v2 returns a raw JSON list for orders and positions."""
+        resp = requests.get(
+            f"{DHAN_BASE_URL}{path}",
+            headers={
+                "access-token": self._access_token,
+                "dhanClientId": self._client_id,
+                "Accept": "application/json",
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and data.get("status") == "success":
+            inner = data.get("data") or []
+            return inner if isinstance(inner, list) else []
+        logger.error(f"Dhan {path} failed: {data if isinstance(data, dict) else resp.status_code}")
+        return []
+
     async def get_positions(self) -> list:
         try:
-            dhan = self._get_sdk()
-            resp = dhan.get_positions()
-            if resp and resp.get("status") == "success":
-                return resp.get("data", []) or []
-            return []
+            return self._get_list("/positions")
         except Exception as e:
             logger.error(f"Dhan get_positions error: {e}")
             return []
@@ -226,11 +255,7 @@ class DhanAdapter(BaseBrokerAdapter):
 
     async def get_order_book(self) -> list:
         try:
-            dhan = self._get_sdk()
-            resp = dhan.get_order_list()
-            if resp and resp.get("status") == "success":
-                return resp.get("data", []) or []
-            return []
+            return self._get_list("/orders")
         except Exception as e:
             logger.error(f"Dhan get_order_book error: {e}")
             return []

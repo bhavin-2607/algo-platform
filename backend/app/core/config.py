@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────────────────────────────────────
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
 
+    # ── Live trading safety ───────────────────────────────────────────────────
+    # Live orders require explicit enable + valid Dhan credentials.
+    LIVE_TRADING_ENABLED: bool = False
+    ORDER_FILL_TIMEOUT_SEC: int = 30
+    ORDER_FILL_POLL_INTERVAL_SEC: float = 0.5
+
     # ── Dhan (primary broker) ─────────────────────────────────────────────────
     DHAN_PIN:         str = ""
     DHAN_TOTP_SECRET: str = ""

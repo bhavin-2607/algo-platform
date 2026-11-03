@@ -14,6 +14,15 @@ class PaperTradingAdapter(BaseBrokerAdapter):
         return True
 
     async def place_order(self, order: OrderRequest) -> OrderResponse:
+        if order.client_order_id:
+            for existing_id, existing in self._orders.items():
+                if existing.get("client_order_id") == order.client_order_id:
+                    return OrderResponse(
+                        broker_order_id=existing_id,
+                        status=existing.get("status", "COMPLETE"),
+                        message="duplicate",
+                    )
+
         order_id = str(uuid.uuid4())
         assumed_price = order.price or 0.0  # caller should pass LTP for market orders
         value = assumed_price * order.quantity
@@ -26,6 +35,7 @@ class PaperTradingAdapter(BaseBrokerAdapter):
             "quantity": order.quantity,
             "price": assumed_price,
             "status": "COMPLETE",
+            "client_order_id": order.client_order_id,
             "timestamp": datetime.utcnow().isoformat(),
         }
 

@@ -25,12 +25,24 @@ export default function DashboardPage() {
     queryFn: () => api.get("/trades?limit=5").then(r => r.data),
   });
 
+  const { data: brokerOrders } = useQuery({
+    queryKey: ["orderbook"],
+    queryFn: () => api.get("/terminal/orderbook").then(r => r.data),
+    refetchInterval: 15_000,
+  });
+
+  const { data: brokerPositions } = useQuery({
+    queryKey: ["dhan-positions"],
+    queryFn: () => api.get("/terminal/positions").then(r => r.data),
+    refetchInterval: 15_000,
+  });
+
   const { data: brokers } = useQuery({
     queryKey: ["brokers"],
     queryFn: () => brokerApi.list().then(r => r.data),
   });
 
-  const openPositions = trades?.filter((t: any) => t.status === "OPEN") ?? [];
+  const openPositions = (brokerPositions ?? []).filter((p: any) => Number(p.net_qty) !== 0);
 
   return (
     <Layout>
@@ -102,6 +114,37 @@ export default function DashboardPage() {
             </AreaChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 24 }}>
+        <div className="card-header">
+          <span className="card-title">LIVE BROKER</span>
+          <span className="card-badge">{openPositions.length} open</span>
+        </div>
+        {!brokerOrders?.length && !brokerPositions?.length ? (
+          <div className="empty-state">No Dhan orders today.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  {["SYMBOL","SIDE","QTY","STATUS","ORDER ID"].map(h => <th key={h}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {(brokerOrders ?? []).map((o: any) => (
+                  <tr key={o.order_id}>
+                    <td className="symbol">{o.symbol}</td>
+                    <td>{o.transaction_type}</td>
+                    <td>{o.filled_qty || o.quantity}</td>
+                    <td>{o.status}</td>
+                    <td>{o.order_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Recent trades from real API */}

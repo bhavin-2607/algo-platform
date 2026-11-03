@@ -72,3 +72,6 @@ class MovingAverageCrossover(BaseStrategy):
             self._position = 1
         elif signal.direction == "SELL":
             self._position = 0
+
+    def restore_position(self, direction: str, quantity: int) -> None:
+        self._position = 1 if direction == "BUY" and quantity else 0

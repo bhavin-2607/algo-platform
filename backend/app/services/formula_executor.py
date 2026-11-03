@@ -18,8 +18,9 @@ from sqlalchemy import select
 
 from app.broker.factory import get_broker_adapter
 from app.broker.base import OrderRequest
-from app.core.redis_client import get_redis, strategy_running_key
-from app.market.candle_builder import build_ohlcv, record_tick
+from app.broker.order_ops import client_order_id_for, place_once
+from app.core.redis_client import get_redis
+from app.market.candle_builder import build_ohlcv_closed, latest_closed_bar_ts, record_tick
 from app.models.formula import FormulaStrategy, ManagedPosition, PositionStatus
 from app.models.broker import BrokerAccount
 from app.services.order_manager import OrderManager
@@ -54,7 +55,22 @@ class FormulaStrategyExecutor:
         exit_short_ev  = FormulaEvaluator(strat.exit_short)  if strat.exit_short  else None
 
         order_mgr = OrderManager(self.db)
-        position: ManagedPosition | None = None
+        open_rows = await self.db.execute(
+            select(ManagedPosition).where(
+                ManagedPosition.strategy_id == strat.id,
+                ManagedPosition.status == PositionStatus.open,
+            ).order_by(ManagedPosition.created_at.desc())
+        )
+        position = open_rows.scalars().first()
+        if position:
+            logger.info(f"Restored open {position.direction} {position.symbol} @ ₹{position.entry_price}")
+
+        ba = await self.db.get(BrokerAccount, strat.broker_account_id) if strat.broker_account_id else None
+        try:
+            adapter = get_broker_adapter(ba) if ba else None
+        except Exception as e:
+            logger.error(f"Broker adapter unavailable for formula {self.strategy_id}: {e}")
+            return
 
         # Mark running
         await redis.set(run_key, "1", ex=86400)
@@ -64,12 +80,15 @@ class FormulaStrategyExecutor:
         pubsub  = redis.pubsub()
         await pubsub.subscribe(tick_ch)
 
-        tick_count = 0
+        last_bar_ts = None
+        last_ltp = None
+        flatten = False
 
         try:
             async for message in pubsub.listen():
                 # Check stop signal
                 if self._stop or not await redis.get(run_key):
+                    flatten = True
                     break
                 if message["type"] != "message":
                     continue
@@ -80,83 +99,90 @@ class FormulaStrategyExecutor:
                     continue
 
                 ltp = float(tick.get("ltp", 0))
+                last_ltp = ltp or last_ltp
                 record_tick(strat.exchange, strat.token, tick)
-                tick_count += 1
 
-                # ── Update open position (T/SL/Trail) ────────────────────────
+                # ── Update open position (T/SL/Trail) on every tick ───────────
                 if position and position.status == PositionStatus.open:
                     position = await order_mgr.update_position(position, ltp)
                     if position.status != PositionStatus.open:
                         position = None  # closed by T/SL
 
-                # ── Evaluate signals every N ticks ────────────────────────────
-                eval_every = strat.timeframe_minutes * 10
-                if tick_count % eval_every != 0:
+                # ── Evaluate only when a new closed bar appears ───────────────
+                df = build_ohlcv_closed(
+                    strat.exchange, strat.token,
+                    timeframe_minutes=strat.timeframe_minutes or 5,
+                )
+                bar_ts = latest_closed_bar_ts(df)
+                if bar_ts is None or df.empty or len(df) < 5:
                     continue
-
-                df = build_ohlcv(strat.exchange, strat.token,
-                                 timeframe_minutes=strat.timeframe_minutes)
-                if df.empty or len(df) < 5:
+                if last_bar_ts is not None and bar_ts == last_bar_ts:
                     continue
+                last_bar_ts = bar_ts
 
                 # ── Exit existing position? ───────────────────────────────────
                 if position and position.status == PositionStatus.open:
                     ev = exit_long_ev if position.direction == "BUY" else exit_short_ev
                     if ev and ev.evaluate(df, ltp):
                         position = await order_mgr.manual_exit(position, ltp)
-                        position = None
-                    continue  # don't enter new position same tick
+                        if position.status != PositionStatus.open:
+                            position = None
+                    continue  # don't enter a new position on the same bar
 
-                # ── Entry conditions ──────────────────────────────────────────
-                ba = await self.db.get(BrokerAccount, strat.broker_account_id)
-                if not ba:
+                if not adapter:
                     continue
-                adapter = get_broker_adapter(ba)
 
                 if entry_long_ev and entry_long_ev.evaluate(df, ltp):
-                    resp = await adapter.place_order(OrderRequest(
-                        symbol=strat.symbol, exchange=strat.exchange,
-                        direction="BUY", quantity=strat.quantity,
-                        order_type=strat.order_type, price=ltp,
-                    ))
-                    position = await order_mgr.open_position(
-                        user_id=strat.user_id,
-                        broker_account_id=strat.broker_account_id,
-                        symbol=strat.symbol, exchange=strat.exchange,
-                        direction="BUY", quantity=strat.quantity,
-                        entry_price=ltp, entry_order_id=resp.broker_order_id,
-                        target_pct=strat.target_pct, sl_pct=strat.sl_pct,
-                        trailing_sl=strat.trailing_sl, trail_pct=strat.trail_pct,
-                        strategy_id=strat.id, is_paper=strat.paper_trading,
+                    position = await self._enter(
+                        redis, adapter, order_mgr, strat, "BUY", ltp, bar_ts
                     )
-                    logger.info(f"📡 BUY entry: {strat.symbol} @ ₹{ltp}")
-
                 elif entry_short_ev and entry_short_ev.evaluate(df, ltp):
-                    resp = await adapter.place_order(OrderRequest(
-                        symbol=strat.symbol, exchange=strat.exchange,
-                        direction="SELL", quantity=strat.quantity,
-                        order_type=strat.order_type, price=ltp,
-                    ))
-                    position = await order_mgr.open_position(
-                        user_id=strat.user_id,
-                        broker_account_id=strat.broker_account_id,
-                        symbol=strat.symbol, exchange=strat.exchange,
-                        direction="SELL", quantity=strat.quantity,
-                        entry_price=ltp, entry_order_id=resp.broker_order_id,
-                        target_pct=strat.target_pct, sl_pct=strat.sl_pct,
-                        trailing_sl=strat.trailing_sl, trail_pct=strat.trail_pct,
-                        strategy_id=strat.id, is_paper=strat.paper_trading,
+                    position = await self._enter(
+                        redis, adapter, order_mgr, strat, "SELL", ltp, bar_ts
                     )
-                    logger.info(f"📡 SELL entry: {strat.symbol} @ ₹{ltp}")
 
         except asyncio.CancelledError:
-            pass
+            flatten = True
         except Exception as e:
             logger.error(f"Formula executor error: {e}", exc_info=True)
         finally:
+            if flatten and position and position.status == PositionStatus.open:
+                try:
+                    await order_mgr.manual_exit(position, last_ltp or position.entry_price)
+                except Exception as e:
+                    logger.error(f"Formula flatten failed: {e}")
             await pubsub.unsubscribe(tick_ch)
             await redis.delete(run_key)
             logger.info(f"⏹ Formula executor stopped: {strat.name}")
+
+    async def _enter(self, redis, adapter, order_mgr, strat, direction: str, ltp: float, bar_ts):
+        client_order_id = client_order_id_for(str(strat.id), bar_ts, strat.symbol, direction)
+        result = await place_once(
+            redis,
+            adapter,
+            OrderRequest(
+                symbol=strat.symbol, exchange=strat.exchange,
+                direction=direction, quantity=strat.quantity,
+                order_type=strat.order_type, price=ltp,
+            ),
+            client_order_id,
+        )
+        if not result["ok"]:
+            logger.error(f"Formula entry not filled: {strat.symbol} {direction} {result['status']}")
+            return None
+        fill_price = float(result["fill_price"] or ltp)
+        position = await order_mgr.open_position(
+            user_id=strat.user_id,
+            broker_account_id=strat.broker_account_id,
+            symbol=strat.symbol, exchange=strat.exchange,
+            direction=direction, quantity=strat.quantity,
+            entry_price=fill_price, entry_order_id=result["broker_order_id"],
+            target_pct=strat.target_pct, sl_pct=strat.sl_pct,
+            trailing_sl=strat.trailing_sl, trail_pct=strat.trail_pct,
+            strategy_id=strat.id, is_paper=strat.paper_trading,
+        )
+        logger.info(f"📡 {direction} entry: {strat.symbol} @ ₹{fill_price}")
+        return position
 
     def stop(self):
         self._stop = True

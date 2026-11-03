@@ -46,6 +46,58 @@ class RiskSettingsResponse(RiskSettingsSchema):
         from_attributes = True
 
 
+class LiveKillRequest(BaseModel):
+    reason: str = "manual"
+
+
+# ── Global live kill (must be registered before /{map_id} routes) ─────────────
+
+@router.get("/live-kill")
+async def get_live_kill_status(
+    current_user: User = Depends(require_admin),
+):
+    """Admin: status of the global live-trading kill switch."""
+    from app.core.trading_mode import get_live_kill_info
+    from app.core.config import settings
+
+    info = await get_live_kill_info()
+    return {
+        "active": info is not None,
+        "info": info,
+        "live_trading_enabled": settings.LIVE_TRADING_ENABLED,
+    }
+
+
+@router.post("/live-kill")
+async def activate_live_kill(
+    payload: LiveKillRequest = LiveKillRequest(),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin emergency stop for all live trading.
+    Blocks new live starts/orders, clears strategy:running:* keys,
+    and flattens open trades.
+    """
+    from app.core.trading_mode import set_live_kill
+    from app.strategy.recovery import flatten_all_open
+
+    result = await set_live_kill(reason=payload.reason or f"admin:{current_user.id}")
+    result["flattened"] = await flatten_all_open(db, get_redis(), reason="KILL")
+    return {"status": "live_killed", **result}
+
+
+@router.delete("/live-kill")
+async def deactivate_live_kill(
+    current_user: User = Depends(require_admin),
+):
+    """Admin: clear global live kill so live trading can resume (if LIVE_TRADING_ENABLED)."""
+    from app.core.trading_mode import clear_live_kill
+
+    await clear_live_kill()
+    return {"status": "cleared", "message": "Global live kill switch cleared"}
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/{map_id}")
