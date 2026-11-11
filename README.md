@@ -13,24 +13,46 @@ Leave `LIVE_TRADING_ENABLED=false` until you have run a paper session, seen a re
 
 ## Standalone
 
-Docker, from the repo root:
+A new Windows PC or Mac does not need Python, Node, Postgres, or Redis installed first. The launcher installs Docker Desktop and starts the app. The site is http://localhost. API docs (development only): http://localhost/api/docs.
+
+Windows, from the repo root, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-windows.ps1
+```
+
+If Windows asks for a restart (WSL or Docker Desktop), restart the PC and run that same command again.
+
+Mac, from the repo root:
+
+```bash
+./scripts/start-macos.sh
+```
+
+The first time the database has no users, the script prints an admin username and password once. That password is not written into `.env`. Sign in with it, then change it from Settings. Public registration stays closed.
+
+Linux, when Docker is already installed:
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
-The UI and API are served by nginx at http://localhost. API docs (development only): http://localhost/api/docs.
+Then create the first admin from the backend container:
 
-Native:
+```bash
+docker compose exec -e FIRST_ADMIN_PASSWORD='choose-a-password' backend python -m app.scripts.create_admin
+```
 
-| Machine | Command |
-|---|---|
-| Linux | `./start.sh` (tmux: API, Celery worker, beat, Vite) |
-| Windows | `scripts/start-windows.ps1 -Docker` or `-Native` (Celery `--pool=solo`) |
-| Mac | `scripts/start-macos.sh docker` or `native` (Celery prefork) |
+Native mode installs the versions this repo is built for, then starts the API, worker, beat, and Vite on the machine. Python stays on 3.12, the same as the Docker image and the pinned requirements. Node is 22, which Vite 5 accepts. Postgres is 16, the same major version as Compose. Redis uses the Redis 7 protocol that the Python client and Celery are written for. Celery on Windows uses the solo pool. On Mac it uses the normal prefork pool.
 
-Start native processes from `backend/` so settings load `backend/.env`. On Mac and Windows the native scripts copy `.env.example` and point Postgres and Redis at localhost.
+| Machine | Command | What it installs |
+|---|---|---|
+| Linux | `./start.sh` | Nothing. Python, Node, Postgres, and Redis must already be running. |
+| Windows | `powershell -ExecutionPolicy Bypass -File .\scripts\start-windows.ps1 -Native` | Python 3.12, Node.js 22, PostgreSQL 16, and Memurai (Redis 7 protocol; Windows has no current Redis build) |
+| Mac | `./scripts/start-macos.sh native` | Python 3.12, Node 22, PostgreSQL 16, and Redis through Homebrew |
+
+The native scripts create `backend/.env` when it is missing, point Postgres and Redis at localhost, create the database role, and print the first admin password once. Start later native processes from `backend/` so settings load that file.
 
 ## Linux server
 

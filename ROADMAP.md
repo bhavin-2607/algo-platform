@@ -127,7 +127,7 @@ Out of this pass: a paper leaderboard, extra options helpers, and a sweep of orp
 
 ## Order of remaining work
 
-The build items are done. What is left has to be run by hand on a machine whose public IPv4 is whitelisted at Dhan:
+The build items are done. What is left has to be run by hand on a machine whose public IPv4 is whitelisted at Dhan. The step-by-step run is [GO-LIVE.md](GO-LIVE.md). Each device uses its own `.env` and its own Dhan account. Do not copy a token or a past fill from another machine.
 
 ```
 Go-live proof runs
@@ -153,4 +153,4 @@ Code items are checked. Proof runs stay open until they are actually run.
 - [x] Beat jobs scheduled (token renew and 09:15 risk reset)
 - [x] Alerts for a stale feed and the kill switch (log, Redis, Telegram when configured)
 
-Leave `LIVE_TRADING_ENABLED=false` until the unchecked proof runs are done, the Windows or Pi public IPv4 is whitelisted at Dhan, and that machine has its own access token.
+Leave `LIVE_TRADING_ENABLED=false` until the unchecked proof runs are done, the Windows or Pi public IPv4 is whitelisted at Dhan, and that machine has its own access token. Follow [GO-LIVE.md](GO-LIVE.md). Check a proof box only after that proof passes on this device.

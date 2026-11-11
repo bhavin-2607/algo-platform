@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useAuthStore } from "@/store/auth";
+import { wsBase } from "@/utils/ws";
 
 type Status = "connecting" | "connected" | "disconnected";
 
@@ -12,8 +13,7 @@ export function useWebSocket<T = unknown>(path: string) {
   useEffect(() => {
     if (!token) return;
 
-    const wsBase = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000";
-    const url = `${wsBase}/api/ws/${path}?token=${token}`;
+    const url = `${wsBase()}/api/ws/${path}?token=${token}`;
 
     setStatus("connecting");
     const ws = new WebSocket(url);

@@ -10,6 +10,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
+import { wsBase } from "@/utils/ws";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 
@@ -139,8 +140,7 @@ export default function TerminalPage() {
   // ── WebSocket live feed ────────────────────────────────────────────────────
   useEffect(() => {
     if (!accessToken) return;
-    const wsBase = (import.meta.env.VITE_WS_URL ?? "ws://localhost:8000").replace(/^http/, "ws");
-    const url    = `${wsBase}/api/ws/market?token=${accessToken}&symbols=ALL`;
+    const url    = `${wsBase()}/api/ws/market?token=${accessToken}&symbols=ALL`;
 
     function connect() {
       setWsStatus("connecting");

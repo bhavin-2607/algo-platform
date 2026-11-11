@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { strategyApi, api } from "@/utils/api";
+import { wsBase } from "@/utils/ws";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 
@@ -105,8 +106,7 @@ function StrategyCard({ strategy: s, onStart, onStop, starting, stopping }: {
   // Live status WebSocket
   useEffect(() => {
     if (s.status !== "active") return;
-    const wsBase = (import.meta.env.VITE_WS_URL ?? "ws://localhost:8000").replace("http","ws");
-    const url = `${wsBase}/api/ws/strategy/${s.id}?token=${accessToken}`;
+    const url = `${wsBase()}/api/ws/strategy/${s.id}?token=${accessToken}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.onmessage = (e) => {
