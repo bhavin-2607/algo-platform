@@ -14,6 +14,14 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
+function New-ServicePassword {
+    # Windows complexity is upper, lower, and a digit. No quotes or symbols: the Postgres installer splits on those.
+    $upper = -join ((65..90) | Get-Random -Count 4 | ForEach-Object { [char]$_ })
+    $lower = -join ((97..122) | Get-Random -Count 8 | ForEach-Object { [char]$_ })
+    $digit = -join ((0..9) | Get-Random -Count 4 | ForEach-Object { [string]$_ })
+    return "$upper$lower$digit"
+}
+
 function New-Secret([int]$HexChars) {
     $chars = @()
     for ($i = 0; $i -lt $HexChars; $i++) {
@@ -148,7 +156,8 @@ function Ensure-NativeTools {
     $python = Find-Python312
     if (-not $python) {
         Write-Host "Installing Python 3.12."
-        Install-Winget "Python.Python.3.12"
+        winget install python3.12 --accept-package-agreements --accept-source-agreements
+        Update-SessionPath
         $python = Find-Python312
     }
     if (-not $python) {
@@ -175,8 +184,8 @@ function Ensure-NativeTools {
     $superPassword = $null
     if (-not (Test-Port 5432)) {
         Write-Host "Installing PostgreSQL 16."
-        $superPassword = New-Secret 24
-        winget install -e --id PostgreSQL.PostgreSQL.16 --accept-package-agreements --accept-source-agreements --disable-interactivity --override "--mode unattended --unattendedmodeui none --superpassword $superPassword --serverport 5432"
+        $superPassword = New-ServicePassword
+        winget install -e --id PostgreSQL.PostgreSQL.16 --accept-package-agreements --accept-source-agreements --disable-interactivity --override "--mode unattended --unattendedmodeui none --superpassword $superPassword --servicepassword $superPassword --servicename postgresql-x64-16 --serverport 5432"
         if ($LASTEXITCODE -ne 0) { throw "winget could not install PostgreSQL 16" }
         Update-SessionPath
         $svc = Get-Service -Name "postgresql-x64-16" -ErrorAction SilentlyContinue
