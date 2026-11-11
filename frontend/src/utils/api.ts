@@ -12,17 +12,44 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+let refreshInFlight: Promise<string | null> | null = null;
+
+function refreshAccessToken(): Promise<string | null> {
+  const refresh = useAuthStore.getState().refreshToken;
+  if (!refresh) return Promise.resolve(null);
+  if (!refreshInFlight) {
+    refreshInFlight = axios
+      .post(`${api.defaults.baseURL}/auth/refresh`, { refresh_token: refresh })
+      .then((res) => {
+        const access = res.data?.access_token as string;
+        const nextRefresh = res.data?.refresh_token || refresh;
+        if (!access) return null;
+        useAuthStore.getState().setTokens(access, nextRefresh);
+        return access;
+      })
+      .catch(() => null)
+      .finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
-      // Don't logout for Dhan API errors — only for our own auth failures
-      const url = err.config?.url || '';
-      const isDhanError = url.includes('dhan') || url.includes('market');
-      if (!isDhanError) {
-        useAuthStore.getState().logout();
+  async (err) => {
+    const status = err.response?.status;
+    const url = err.config?.url || "";
+    const isLogin = url.includes("/auth/login") || url.includes("/auth/refresh");
+    if (status === 401 && err.config && !isLogin && !err.config._retry) {
+      err.config._retry = true;
+      const access = await refreshAccessToken();
+      if (access) {
+        err.config.headers.Authorization = `Bearer ${access}`;
+        return api(err.config);
       }
-      window.location.replace("/login");
+      useAuthStore.getState().logout();
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.replace("/login");
+      }
     }
     return Promise.reject(err);
   }

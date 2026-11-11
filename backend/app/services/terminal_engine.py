@@ -253,12 +253,16 @@ class TerminalEngine:
             row.entry_order_id = result["broker_order_id"]
             row.peak_price     = fill_price
             from app.strategy.exits import protective_prices
-            row.current_sl, row.current_target = protective_prices(
+            sl_price, target_price = protective_prices(
                 direction,
                 fill_price,
                 sl_pct=float(row.sl_pct or 1),
                 target_pct=float(row.target_pct or 2),
             )
+            formula_target = _price_from_formula(row.target_formula, fill_price)
+            formula_sl = _price_from_formula(row.sl_formula, fill_price)
+            row.current_sl = formula_sl if formula_sl is not None else sl_price
+            row.current_target = formula_target if formula_target is not None else target_price
             await self.db.commit()
             logger.info(
                 f"  [{row.symbol}] Entry: {direction} @ ₹{fill_price} "
@@ -307,6 +311,17 @@ class TerminalEngine:
         self._stop = True
         for t in self._tasks:
             t.cancel()
+
+
+def _price_from_formula(expr: str | None, entry: float) -> float | None:
+    if not expr or not str(expr).strip():
+        return None
+    from app.strategy.safe_expr import FormulaError, evaluate_expression
+    try:
+        value = evaluate_expression(str(expr), {"entry": entry, "ltp": entry, "close": entry})
+        return round(float(value), 2)
+    except (FormulaError, TypeError, ValueError):
+        return None
 
 
 def _calc_pnl(row: TerminalRow, ltp: float) -> float | None:

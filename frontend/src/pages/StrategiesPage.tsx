@@ -26,8 +26,6 @@ interface RuntimeState {
 }
 
 export default function StrategiesPage() {
-  const { user } = useAuthStore();
-  const isAdmin = user?.role === "admin";
   const qc = useQueryClient();
 
   const { data: myStrategies, isLoading } = useQuery({
@@ -50,32 +48,6 @@ export default function StrategiesPage() {
 
   const activeCount = myStrategies?.filter(s => s.status === "active").length ?? 0;
 
-  const { data: availableStrategies } = useQuery({
-    queryKey: ["available-strategies"],
-    queryFn: () => api.get("/strategies").then(r => r.data),
-  });
-
-  const { data: brokers } = useQuery({
-    queryKey: ["brokers"],
-    queryFn: () => api.get("/brokers").then(r => r.data),
-  });
-  const activeBroker = (brokers ?? []).find((b: any) => b.is_active && b.broker !== "shoonya");
-
-  const [assigningId, setAssigningId] = useState<string|null>(null);
-  const assignMutation = useMutation({
-    mutationFn: (strategyId: string) => api.post("/strategies/assign", {
-      strategy_id: strategyId,
-      broker_account_id: activeBroker?.id,
-      params: availableStrategies?.find((s: any) => s.id === strategyId)?.default_params ?? {},
-    }),
-    onSuccess: () => {
-      toast.success("Strategy assigned!");
-      qc.invalidateQueries({queryKey:["my-strategies"]});
-      setAssigningId(null);
-    },
-    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to assign"),
-  });
-
   return (
     <Layout>
       <div className="page-header">
@@ -91,45 +63,6 @@ export default function StrategiesPage() {
 
       {isLoading && (
         <div style={{ color: "var(--muted)", fontSize: 12, padding: 20 }}>Loading strategies...</div>
-      )}
-
-      {/* Available strategies to assign */}
-      {availableStrategies && availableStrategies.length > 0 && isAdmin && (
-        <div className="card" style={{marginBottom:16}}>
-          <div className="card-header">
-            <span className="card-title">AVAILABLE STRATEGIES</span>
-          </div>
-          {availableStrategies.map((s: any) => {
-            const alreadyAssigned = myStrategies?.some((m: any) => m.strategy_id === s.id || m.name === s.name);
-            return (
-              <div key={s.id} style={{
-                padding:"16px 20px", borderTop:"1px solid var(--border)",
-                display:"flex", alignItems:"center", justifyContent:"space-between",
-              }}>
-                <div>
-                  <div style={{fontWeight:700, fontSize:13}}>{s.name}</div>
-                  <div style={{fontSize:11, color:"var(--muted)", marginTop:4}}>{s.description}</div>
-                </div>
-                {alreadyAssigned ? (
-                  <span className="badge badge-green">✓ ASSIGNED</span>
-                ) : (
-                  <button
-                    className={`connect-btn${assignMutation.isPending && assigningId===s.id?" loading":""}`}
-                    onClick={() => { setAssigningId(s.id); assignMutation.mutate(s.id); }}
-                    disabled={!activeBroker || (assignMutation.isPending && assigningId===s.id)}
-                    style={{fontSize:11}}>
-                    {assignMutation.isPending && assigningId===s.id ? "ASSIGNING..." : "+ ASSIGN"}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          {!activeBroker && (
-            <div style={{padding:"10px 20px", fontSize:11, color:"var(--yellow)"}}>
-              ⚠ Activate a broker in Settings to assign strategies
-            </div>
-          )}
-        </div>
       )}
 
       {!isLoading && (!myStrategies || myStrategies.length === 0) && (
@@ -189,7 +122,7 @@ function StrategyCard({ strategy: s, onStart, onStop, starting, stopping }: {
       <div className="strategy-header">
         <div>
           <span className="strategy-tag">
-            {s.paper_trading ? "PAPER" : "LIVE"} · {s.params?.symbol ?? "—"}
+            {s.paper_trading ? "PAPER" : "LIVE"} · WATCHLIST
           </span>
           <h3 className="strategy-name">{s.strategy_name}</h3>
         </div>
@@ -254,8 +187,7 @@ function EmptyState() {
         <div style={{ fontSize: 32, marginBottom: 12 }}>⟳</div>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>No strategies assigned yet</div>
         <div style={{ fontSize: 12, color: "var(--muted)", maxWidth: 380, margin: "0 auto" }}>
-          Ask your admin to assign a strategy to your account, or use the admin panel to
-          create a strategy entry and assign it.
+          Ask an admin to assign a strategy from the console. It runs on every symbol in the terminal watchlist.
         </div>
       </div>
     </div>

@@ -14,6 +14,10 @@ class LoginRequest(BaseModel):
     mfa_token: Optional[str] = None
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str

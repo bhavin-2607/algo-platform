@@ -56,99 +56,6 @@ interface TerminalRow {
 }
 
 
-// ── Excel Formula Evaluator (frontend) ───────────────────────────────────────
-// Supports: named fields, cell refs, cross-column refs (SIGNAL/ENTRY),
-//           ^ power, % percent, <> not-equal, IF/AND/OR/ROUND/SQRT etc.
-function evalExcelFormula(
-  formula: string,
-  tick: Record<string,any>,
-  colValues?: Record<string,any>
-): string | number | null {
-  if (!formula) return null;
-  let expr = formula.startsWith("=") ? formula.slice(1) : formula;
-
-  // 1. Percentage literals: 0.5% → (0.5/100)
-  expr = expr.replace(/(\d+\.?\d*)\s*%/g, "($1/100)");
-
-  // 2. Cross-column references (SIGNAL, ENTRY, TREND etc.)
-  if (colValues) {
-    Object.entries(colValues).forEach(([colName, colVal]) => {
-      if (colVal != null) {
-        const re = new RegExp("\\b" + colName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "g");
-        const rep = typeof colVal === "string" ? "'" + colVal + "'" : String(colVal);
-        expr = expr.replace(re, rep);
-      }
-    });
-  }
-
-  // 3. Named field references (must come before cell refs)
-  const namedFields: Record<string, string> = {
-    open: "open", high: "high", low: "low", close: "close",
-    vwap: "vwap", atp: "atp",  ltp: "ltp", volume: "volume",
-    oi: "oi", change_pct: "change_pct", bp1: "bp1", sp1: "sp1",
-  };
-  Object.entries(namedFields).forEach(([name, field]) => {
-    const re = new RegExp("\\b" + name + "\\b", "gi");
-    expr = expr.replace(re, String(parseFloat(tick[field] ?? 0) || 0));
-  });
-
-  // 4. Cell references: C4 → high value
-  const cellMap: Record<string, string> = {
-    B: "open", C: "high", D: "low",  E: "close",
-    F: "vwap", G: "bp1",  H: "sp1",  I: "volume",
-    J: "oi",   K: "ltp",  L: "change_pct", M: "atp",
-  };
-  expr = expr.replace(/\b([A-Z]{1,2})\d+\b/g, (_: string, col: string) => {
-    const field = cellMap[col.toUpperCase()];
-    return String(parseFloat(tick[field] ?? 0) || 0);
-  });
-
-  // 5. Operators
-  expr = expr.replace(/<>/g, "!==");
-  expr = expr.replace(/\^/g, "**");
-  // 0.5% → 0.005
-  expr = expr.replace(/(\d+\.?\d*)\s*%/g, (_:string, n:string) => String(parseFloat(n) / 100));
-  // Excel = is equality → JS === (but not <=, >=, !=, ==)
-  expr = expr.replace(/(?<![<>!=])=(?!=)/g, "===");
-
-  // 6. Excel functions → JS helpers
-  expr = expr.replace(/\bIF\s*\(/gi,      "_IF(");
-  expr = expr.replace(/\bAND\s*\(/gi,     "_AND(");
-  expr = expr.replace(/\bOR\s*\(/gi,      "_OR(");
-  expr = expr.replace(/\bAVERAGE\s*\(/gi, "_AVG(");
-  expr = expr.replace(/\bROUND\s*\(/gi,   "_ROUND(");
-  expr = expr.replace(/\bIFERROR\s*\(/gi, "_IFERROR(");
-  expr = expr.replace(/\bSQRT\s*\(/gi,    "Math.sqrt(");
-  expr = expr.replace(/\bPOWER\s*\(/gi,   "_POW(");
-  expr = expr.replace(/\bABS\s*\(/gi,     "Math.abs(");
-  expr = expr.replace(/\bMAX\s*\(/gi,     "Math.max(");
-  expr = expr.replace(/\bMIN\s*\(/gi,     "Math.min(");
-  expr = expr.replace(/\bINT\s*\(/gi,     "Math.trunc(");
-
-  // 7. String literals: "BUY" → 'BUY'
-  expr = expr.replace(/"/g, "'");
-
-  try {
-    const _IF     = (c: any, t: any, f: any) => c ? t : f;
-    const _AND    = (...a: any[]) => a.every(Boolean);
-    const _OR     = (...a: any[]) => a.some(Boolean);
-    const _AVG    = (...a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
-    const _ROUND  = (v: number, d = 0) => { const f = 10 ** d; return Math.round(v * f) / f; };
-    const _POW    = (b: number, e: number) => Math.pow(b, e);
-    const _IFERROR = (v: any, fallback: any = "") => (v == null ? fallback : v);
-    // eslint-disable-next-line no-new-func
-    const result = new Function(
-      "_IF", "_AND", "_OR", "_AVG", "_ROUND", "_POW", "_IFERROR", "Math",
-      `"use strict"; return (${expr});`
-    )(_IF, _AND, _OR, _AVG, _ROUND, _POW, _IFERROR, Math);
-    if (typeof result === "number") return isFinite(result) ? Math.round(result * 100) / 100 : null;
-    if (typeof result === "string") return result.trim() === "" ? null : result.trim();
-    return result;
-  } catch {
-    return null;
-  }
-}
-
 // Get color for a formula column value based on color_rules
 function getColColor(value: any, colorRules: string | null): string {
   if (!colorRules || value == null) return "var(--text)";
@@ -265,7 +172,7 @@ export default function TerminalPage() {
     queryKey: ["live-quotes-fallback"],
     queryFn: async () => {
       if (watchlist.length === 0) return [];
-      const data = await api.get(`/market/live-quotes?symbols=${watchlist.join(",")}`).then(r => r.data);
+      const data = await api.get("/market/live-quotes", { params: { symbols: watchlist.join(",") } }).then(r => r.data);
       if (wsStatus !== "live") {
         const map: Record<string,any> = {};
         data.forEach((q: any) => { map[q.symbol] = q; });
@@ -287,6 +194,26 @@ export default function TerminalPage() {
     .filter((c:any) => c.is_visible)
     .sort((a:any, b:any) => a.col_order - b.col_order);
   const customCols  = (allCols ?? []).filter((c:any) => c.col_type === "custom" && c.is_visible);
+
+  const columnTicks = watchlist.map((sym) => {
+    const q = liveData[sym] ?? {};
+    return {
+      symbol: sym,
+      ltp: q.ltp ?? null,
+      open: q.open ?? null,
+      high: q.high ?? null,
+      low: q.low ?? null,
+      close: q.close ?? null,
+      volume: q.volume ?? null,
+      oi: q.oi ?? null,
+      vwap: q.vwap ?? q.atp ?? null,
+    };
+  });
+  const { data: columnValues } = useQuery({
+    queryKey: ["column-values", JSON.stringify(columnTicks)],
+    queryFn: () => api.post("/terminal/column-values", { ticks: columnTicks }).then(r => r.data.values as Record<string, Record<string, any>>),
+    enabled: watchlist.length > 0,
+  });
 
   // Live strategy signals — refreshed every 5s
   const { data: liveSignals } = useQuery({
@@ -445,7 +372,7 @@ export default function TerminalPage() {
         }} />
       )}
       {/* ── Terminal Table ──────────────────────────────────────────────────── */}
-      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
+      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} columnValues={columnValues ?? {}} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
 
       
       {/* ── Strategy Signal Table ──────────────────────────────────────────── */}
@@ -599,7 +526,7 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
     mutationFn: (inst: any) => api.post("/market/watchlist", {
       symbol:           inst.symbol,
       security_id:      inst.security_id,
-      exchange_segment: inst.segment,
+      exchange_segment: inst.exchange_segment || inst.segment || "NSE_EQ",
     }),
     onSuccess: (_, inst) => { toast.success(`${inst.symbol} added`); onAdded(); },
   });
@@ -623,16 +550,16 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
         <div style={{position:"relative", maxWidth:500, display:"flex", gap:8}}>
           <input className="field-input" value={query}
             onChange={e => setQuery(e.target.value)} autoFocus
-            placeholder="Search symbol or company... e.g. HDFC, Zomato, TCS"
+            placeholder="Search symbol or option... e.g. TCS, BANKNIFTY 61000 CE"
             style={{flex:1}} />
           {loading && <span style={{position:"absolute", right:12, top:"50%",
             transform:"translateY(-50%)", color:"var(--muted)", fontSize:11}}>...</span>}
         </div>
         {results.length > 0 && (
           <div style={{marginTop:6, border:"1px solid var(--border)",
-            background:"var(--surface)", maxHeight:240, overflowY:"auto", maxWidth:500}}>
+            background:"var(--surface)", maxHeight:240, overflowY:"auto", maxWidth:640}}>
             {results.map(inst => (
-              <div key={inst.security_id}
+              <div key={`${inst.exchange_segment}-${inst.security_id}`}
                 style={{padding:"8px 12px", display:"flex", justifyContent:"space-between",
                   alignItems:"center", borderBottom:"1px solid var(--border)", cursor:"pointer"}}
                 onMouseEnter={e => (e.currentTarget.style.background = "var(--green-dim)")}
@@ -678,8 +605,8 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
     onSuccess: (d: any) => setForm({
       entry_formula:  d.entry_formula  ?? "",
       exit_formula:   d.exit_formula   ?? "",
-      target_formula: "",
-      sl_formula:     "",
+      target_formula: d.target_formula ?? "",
+      sl_formula:     d.sl_formula     ?? "",
       trail_pct:      d.trail_pct      ?? "",
       strategy_label: d.strategy_label ?? "",
     }),
@@ -694,6 +621,8 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
     mutationFn: () => api.put(`/terminal/rows/${rowId}/formula`, {
       entry_formula:  form.entry_formula  || null,
       exit_formula:   form.exit_formula   || null,
+      target_formula: form.target_formula || null,
+      sl_formula:     form.sl_formula     || null,
       trail_pct:      form.trail_pct      ? parseFloat(form.trail_pct) : null,
       strategy_label: form.strategy_label || null,
     }),
@@ -783,6 +712,18 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
               placeholder="e.g. ma(9) < ma(21)  (leave blank for T/SL only)" />
           </div>
 
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+            <div className="field">
+              <label className="field-label">TARGET PRICE</label>
+              <input className="field-input" value={form.target_formula}
+                onChange={set("target_formula")} placeholder="entry * 1.02" />
+            </div>
+            <div className="field">
+              <label className="field-label">STOP PRICE</label>
+              <input className="field-input" value={form.sl_formula}
+                onChange={set("sl_formula")} placeholder="entry * 0.99" />
+            </div>
+          </div>
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
             <div className="field">
               <label className="field-label">TRAIL SL %</label>
@@ -902,27 +843,10 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
     setValidMsg(""); setValidOk(null);
   }
 
-  const EXAMPLES = [
-    { name:"TREND",  formula:'=IF((high+low+close)/3>ltp,"DOWN","UP")', colors:'{"UP":"green","DOWN":"red"}' },
-    { name:"HCG",    formula:"=(high+close)/2",                            colors:'{}' },
-    { name:"OCG",    formula:"=(open+close)/2",                            colors:'{}' },
-    { name:"LCG",    formula:"=(low+close)/2",                             colors:'{}' },
-    { name:"KD",     formula:"=-(ltp-low)/(low-high)*100",                 colors:'{}' },
-    { name:"GANN",   formula:"=(high+low)/2",                              colors:'{}' },
-    { name:"SIGNAL", formula:'=IF(ltp>open,"BUY","SELL")',                 colors:'{"BUY":"green","SELL":"red"}' },
-    { name:"SSIG",   formula:'=IFERROR(IF(AND(open>close,ltp>open),"BUY",IF(AND(open<close,ltp<open),"SELL","")),"")' , colors:'{"BUY":"green","SELL":"red"}' },
-    { name:"ENTRY",  formula:'=IF(AND(open=0,high=0,low=0)," ",IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0),IF(signal="SELL",ROUND(((SQRT(open)-0.015)^2),0)," ")))', colors:'{}' },
-    { name:"SL",     formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)-(ROUND(((SQRT(open)+0.015)^2),0)*0.5%),ROUND(((SQRT(open)-0.015)^2),0)+(ROUND(((SQRT(open)-0.015)^2),0)*0.5%))', colors:'{}' },
-    { name:"T11.8",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.118%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.118%))', colors:'{}' },
-    { name:"T23.8",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.238%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.238%))', colors:'{}' },
-    { name:"T38.2",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.382%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.382%))', colors:'{}' },
-    { name:"T50",    formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.5%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.5%))',   colors:'{}' },
-    { name:"T61.8",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.618%))', colors:'{}' },
-    { name:"T78.6",  formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.786%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.786%))', colors:'{}' },
-    { name:"T100",   formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*1%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*1%))',     colors:'{}' },
-    { name:"T1.618", formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*1.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*1.618%))', colors:'{}' },
-    { name:"T2.618", formula:'=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*2.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*2.618%))', colors:'{}' },
-  ];
+  const { data: presets } = useQuery({
+    queryKey: ["column-presets"],
+    queryFn: () => api.get("/terminal/column-presets").then(r => r.data as {name:string,formula:string,colors:string}[]),
+  });
 
   return (
     <div style={{
@@ -959,7 +883,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
               QUICK TEMPLATES (click to load)
             </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {EXAMPLES.map(ex => (
+              {(presets ?? []).map(ex => (
                 <button key={ex.name}
                   onClick={() => setForm(f => ({...f, name:ex.name,
                     formula:ex.formula, color_rules:ex.colors}))}
@@ -1157,10 +1081,10 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
 }
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
-function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
+function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
   onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol, onOrder, instrMap, signalMap, strategyNames }: {
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
-  visibleCols: any[]; isAdmin: boolean;
+  visibleCols: any[]; columnValues: Record<string, Record<string, any>>; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
   onFormulaRow:(id:string,sym:string)=>void; onDeleteCol:(id:string)=>void;
   onOrder:(sym:string,inst:{security_id:string,segment:string})=>void;
@@ -1211,30 +1135,13 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, isAdmin,
             const pos   = (chg ?? 0) >= 0;
             const inPos = trow?.status === "active";
             const pnl   = trow?.pnl ?? null;
-            const tick  = { ...live, ltp: ltp ?? 0 };
-
-            // Pre-evaluate formula cols in order, passing accumulated results for cross-refs
-            const colValues: Record<string,any> = {};
-            // Sort by col_order to ensure SIGNAL evaluated before ENTRY/SL/T-levels
-            const sortedCols = [...visibleCols].sort((a:any,b:any) => (a.col_order??0)-(b.col_order??0));
-            sortedCols.forEach((c:any) => {
-              if ((c.col_type==="custom"||c.col_type==="formula") && c.formula) {
-                // Pass accumulated colValues so cross-references (signal→entry) work
-                const v = evalExcelFormula(c.formula, tick, colValues);
-                if (v != null && v !== "") {
-                  colValues[c.name] = v;
-                  // Also store lowercase key for case-insensitive refs
-                  colValues[c.name.toLowerCase()] = v;
-                }
-              }
-            });
 
             function getCellValue(col: any): {color:string, formatted:string} {
               let value: any = null;
               let color = "var(--text)";
 
-              if ((col.col_type==="custom"||col.col_type==="formula") && col.formula) {
-                value = evalExcelFormula(col.formula, tick, colValues);
+              if (col.col_type==="custom"||col.col_type==="formula") {
+                value = columnValues?.[sym]?.[col.name] ?? null;
                 color = getColColor(value, col.color_rules);
               } else {
                 switch(col.col_key) {

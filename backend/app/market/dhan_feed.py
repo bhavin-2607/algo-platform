@@ -22,6 +22,7 @@ RequestCode reference:
 
 We use Quote (17) for strategy evaluation — gives LTP, OHLC, Volume.
 """
+import asyncio
 import json
 import logging
 import threading
@@ -39,14 +40,39 @@ SEGMENT_MAP = {
     "NSE_FNO":  "NFO",
     "BSE_FNO":  "BFO",
     "MCX_COMM": "MCX",
-    "IDX_I":    "NSE",   # indices
+    "IDX_I":    "IDX",
 }
+
+_CODE_TO_EXCHANGE = {
+    0: "IDX",
+    1: "NSE",
+    2: "NFO",
+    4: "BSE",
+    5: "MCX",
+    8: "BFO",
+}
+
+
+def redis_exchange(segment: str | None) -> str:
+    """Name used on tick:{exchange}:{token}. Keeps cash and F&O on different channels."""
+    seg = (segment or "NSE").upper()
+    if seg in ("NSE_FNO", "NFO"):
+        return "NFO"
+    if seg in ("BSE_FNO", "BFO"):
+        return "BFO"
+    if seg in ("BSE_EQ", "BSE"):
+        return "BSE"
+    if seg in ("IDX_I", "IDX"):
+        return "IDX"
+    if seg in ("MCX", "MCX_COMM"):
+        return "MCX"
+    return "NSE"
 
 # Common NSE instrument security IDs
 # Full list: https://dhanhq.co/docs/v2/instruments/
 COMMON_INSTRUMENTS = {
-    "NIFTY50":    {"security_id": "13",    "exchange": "NSE_EQ",  "token": "26000"},
-    "BANKNIFTY":  {"security_id": "25",    "exchange": "NSE_EQ",  "token": "26009"},
+    "NIFTY50":    {"security_id": "13",    "exchange": "IDX_I",   "token": "13"},
+    "BANKNIFTY":  {"security_id": "25",    "exchange": "IDX_I",   "token": "25"},
     "RELIANCE":   {"security_id": "2885",  "exchange": "NSE_EQ",  "token": "2885"},
     "TCS":        {"security_id": "11536", "exchange": "NSE_EQ",  "token": "11536"},
     "INFY":       {"security_id": "1594",  "exchange": "NSE_EQ",  "token": "1594"},
@@ -97,7 +123,7 @@ class DhanLiveFeed:
             logger.warning(f"Unknown symbol: {symbol} — use subscribe() with security_id directly")
             return
         self.subscribe(
-            exchange    = info["exchange"].replace("_EQ","").replace("_FNO",""),
+            exchange    = redis_exchange(info["exchange"]),
             security_id = info["security_id"],
             token       = info["token"],
         )
@@ -141,20 +167,22 @@ class DhanLiveFeed:
 
         retry_count = 0
 
+        async def _listen():
+            feed = marketfeed.MarketFeed(ctx, dhan_instruments, version="v2")
+            await feed.connect()
+            while self._running and feed.ws is not None:
+                response = await feed.ws.recv()
+                if not isinstance(response, (bytes, bytearray)):
+                    continue
+                data = feed.process_data(response)
+                if isinstance(data, dict):
+                    self._on_tick(data, channel_map)
+
         while self._running:
             try:
                 logger.info("Connecting to Dhan live feed...")
-
-                feed = marketfeed.DhanFeed(
-                    dhan_context      = ctx,
-                    instruments       = dhan_instruments,
-                    subscription_code = marketfeed.Quote,
-                    on_ticks          = lambda data: self._on_tick(data, channel_map),
-                )
-
-                feed.run_forever()
-                retry_count = 0   # reset on clean disconnect
-
+                asyncio.run(_listen())
+                retry_count = 0
             except Exception as e:
                 if not self._running:
                     break
@@ -182,7 +210,7 @@ class DhanLiveFeed:
         try:
             exchange_segment = data.get("exchange_segment", "")
             security_id      = str(data.get("security_id", ""))
-            ltp              = float(data.get("LTP", 0))
+            ltp              = float(data.get("LTP") or 0)
 
             if ltp == 0:
                 return
@@ -191,9 +219,8 @@ class DhanLiveFeed:
             key     = (exchange_segment, security_id)
             channel = channel_map.get(key)
             if not channel:
-                # Try to find by security_id only
                 for (seg, sid), ch in channel_map.items():
-                    if sid == security_id:
+                    if str(sid) == security_id:
                         channel = ch
                         break
 
@@ -201,22 +228,29 @@ class DhanLiveFeed:
                 logger.debug(f"No channel for {exchange_segment}:{security_id}")
                 return
 
-            # Normalize exchange name
-            exchange = SEGMENT_MAP.get(exchange_segment, exchange_segment.split("_")[0])
+            if isinstance(exchange_segment, int):
+                exchange = _CODE_TO_EXCHANGE.get(exchange_segment, "NSE")
+            elif isinstance(exchange_segment, str):
+                exchange = SEGMENT_MAP.get(
+                    exchange_segment,
+                    exchange_segment.split("_")[0] if "_" in exchange_segment else exchange_segment,
+                )
+            else:
+                exchange = "NSE"
 
             payload = json.dumps({
                 "exchange":  exchange,
                 "token":     security_id,
                 "ltp":       ltp,
-                "volume":    int(data.get("volume", 0)),
-                "open":      float(data.get("open",  ltp)),
-                "high":      float(data.get("high",  ltp)),
-                "low":       float(data.get("low",   ltp)),
-                "close":     float(data.get("close", ltp)),
-                "atp":       float(data.get("ATP",   ltp)),
-                "ltt":       int(data.get("LTT",     0)),
-                "ltq":       int(data.get("LTQ",     0)),
-                "oi":        int(data.get("OI",      0)),
+                "volume":    int(float(data.get("volume") or 0)),
+                "open":      float(data.get("open") or ltp),
+                "high":      float(data.get("high") or ltp),
+                "low":       float(data.get("low") or ltp),
+                "close":     float(data.get("close") or ltp),
+                "atp":       float(data.get("avg_price") or data.get("ATP") or ltp),
+                "ltt":       0,
+                "ltq":       int(float(data.get("LTQ") or 0)),
+                "oi":        int(float(data.get("OI") or data.get("oi") or 0)),
                 "ts":        str(int(time.time())),
                 "source":    "dhan_live",
             })
@@ -231,15 +265,25 @@ class DhanLiveFeed:
             logger.error(f"DhanLiveFeed tick error: {e} | data={data}")
 
     @staticmethod
-    def _to_dhan_exchange(exchange: str) -> str:
+    def _to_dhan_exchange(exchange: str) -> int:
+        """Dhan websocket exchange code. Unknown values stay on NSE cash."""
         mapping = {
-            "NSE": "NSE_EQ",
-            "BSE": "BSE_EQ",
-            "NFO": "NSE_FNO",
-            "BFO": "BSE_FNO",
-            "MCX": "MCX_COMM",
+            "NSE": 1,
+            "NSE_EQ": 1,
+            "NFO": 2,
+            "NSE_FNO": 2,
+            "NSE_CURRENCY": 3,
+            "BSE": 4,
+            "BSE_EQ": 4,
+            "MCX": 5,
+            "MCX_COMM": 5,
+            "BSE_CURRENCY": 7,
+            "BFO": 8,
+            "BSE_FNO": 8,
+            "IDX": 0,
+            "IDX_I": 0,
         }
-        return mapping.get(exchange.upper(), "NSE_EQ")
+        return mapping.get((exchange or "NSE").upper(), 1)
 
 
 # ── Singleton for use in Celery tasks ────────────────────────────────────────

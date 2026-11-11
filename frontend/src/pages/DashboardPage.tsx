@@ -8,22 +8,38 @@ import { useAuthStore } from "@/store/auth";
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
-  const { data: weeklyPnl } = useQuery({
+  const { data: dhanHistory, isLoading: historyLoading, isError: historyError } = useQuery({
+    queryKey: ["dhan-trade-history"],
+    queryFn: () => api.get("/terminal/trade-history").then(r => r.data),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const dhanConnected = dhanHistory?.connected === true;
+  const showPaper = !historyLoading && !historyError && dhanHistory?.connected === false;
+
+  const { data: weeklyPnlPaper } = useQuery({
     queryKey: ["weekly-pnl"],
     queryFn: () => api.get("/trades/weekly-pnl").then(r => r.data),
     refetchInterval: 30_000,
+    enabled: showPaper,
   });
 
-  const { data: summary } = useQuery({
+  const { data: summaryPaper } = useQuery({
     queryKey: ["trade-summary"],
     queryFn: () => tradesApi.summary().then(r => r.data),
     refetchInterval: 30_000,
+    enabled: showPaper,
   });
 
-  const { data: trades } = useQuery({
+  const { data: paperTrades } = useQuery({
     queryKey: ["recent-trades"],
-    queryFn: () => api.get("/trades?limit=5").then(r => r.data),
+    queryFn: () => api.get("/trades?limit=20&is_paper=true").then(r => r.data),
+    enabled: showPaper,
   });
+
+  const summary = dhanConnected ? dhanHistory.summary : summaryPaper;
+  const weeklyPnl = dhanConnected ? dhanHistory.weekly : weeklyPnlPaper;
+  const trades = dhanConnected ? dhanHistory.trades : paperTrades;
 
   const { data: brokerOrders } = useQuery({
     queryKey: ["orderbook"],
@@ -82,7 +98,7 @@ export default function DashboardPage() {
         <StatCard
           label="BROKER"
           value={brokers?.length ? brokers[0].broker.toUpperCase() : "NONE"}
-          delta={brokers?.length ? (brokers[0].paper_trading ? "Paper mode" : "Live mode") : "Not connected"}
+          delta={dhanConnected ? "Dhan connected" : (brokers?.length ? "Paper — Dhan not connected" : "Not connected")}
           neutral
         />
       </div>
@@ -91,7 +107,7 @@ export default function DashboardPage() {
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="card-header">
           <span className="card-title">WEEKLY P&L</span>
-          <span className="card-badge">PAPER MODE</span>
+          <span className="card-badge">{dhanConnected ? "DHAN LIVE" : "PAPER"}</span>
         </div>
         <div style={{ padding: "8px 0 0" }}>
           <ResponsiveContainer width="100%" height={200}>
@@ -150,13 +166,19 @@ export default function DashboardPage() {
       {/* Recent trades from real API */}
       <div className="card">
         <div className="card-header">
-          <span className="card-title">RECENT TRADES</span>
+          <span className="card-title">{dhanConnected ? "DHAN TRADES" : "PAPER TRADES"}</span>
           <span className="card-badge">{summary?.total_trades ?? 0} total</span>
         </div>
 
         {(!trades || trades.length === 0) ? (
           <div className="empty-state">
-            No trades yet — start a strategy to see trades here.
+            {historyError
+              ? "Dhan trade history did not load."
+              : dhanConnected
+              ? "No Dhan trades in the last 90 days."
+              : historyLoading
+              ? "Loading Dhan trades..."
+              : "Dhan is not connected. Paper trades show here until it is."}
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -223,7 +245,9 @@ export default function DashboardPage() {
                         </span>
                       </td>
                       <td style={{ color: "var(--muted)", fontSize: 10, whiteSpace: "nowrap" }}>
-                        {t.created_at ? new Date(t.created_at).toLocaleTimeString() : "—"}
+                        {(t.closed_at || t.created_at)
+                          ? new Date(t.closed_at || t.created_at).toLocaleString()
+                          : "—"}
                       </td>
                     </tr>
                   );

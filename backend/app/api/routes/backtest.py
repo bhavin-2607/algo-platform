@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import require_admin
 from app.models.backtest import BacktestRun
 from app.models.user import User
 from app.strategy.backtest_runner import FormulaStrategy, run_backtest
@@ -56,14 +56,14 @@ class BacktestResult(BaseModel):
 
 
 @router.get("/strategies")
-async def list_backtestable(current_user: User = Depends(get_current_user)):
+async def list_backtestable(current_user: User = Depends(require_admin)):
     return [{"engine_class": key, "version": cls.version} for key, cls in STRATEGY_REGISTRY.items()]
 
 
 @router.post("/run", response_model=BacktestResult)
 async def run_backtest_route(
     payload: BacktestRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -154,7 +154,7 @@ async def run_backtest_route(
 @router.get("/compare")
 async def compare_backtests(
     symbol: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Latest stored backtest per registered engine for one symbol. Does not call Dhan."""
@@ -219,7 +219,7 @@ async def latest_backtest(
     engine_class: str,
     symbol: str,
     version: str = "1",
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(

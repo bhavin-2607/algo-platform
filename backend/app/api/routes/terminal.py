@@ -372,9 +372,8 @@ async def set_row_formula(
 
     if payload.entry_formula  is not None: row.entry_formula  = payload.entry_formula
     if payload.exit_formula   is not None: row.exit_formula   = payload.exit_formula
-    if payload.target_pct     is not None: row.target_pct     = payload.target_pct
-    if payload.sl_pct         is not None: row.sl_pct         = payload.sl_pct
-    if payload.trailing_sl    is not None: row.trailing_sl    = payload.trailing_sl
+    if payload.target_formula is not None: row.target_formula = payload.target_formula
+    if payload.sl_formula     is not None: row.sl_formula     = payload.sl_formula
     if payload.trail_pct      is not None: row.trail_pct      = payload.trail_pct
     if payload.strategy_label is not None: row.strategy_label = payload.strategy_label
 
@@ -398,6 +397,8 @@ async def get_row_formula(
         "symbol":        row.symbol,
         "entry_formula": row.entry_formula,
         "exit_formula":  row.exit_formula,
+        "target_formula": row.target_formula,
+        "sl_formula":    row.sl_formula,
         "target_pct":    row.target_pct,
         "sl_pct":        row.sl_pct,
         "trailing_sl":   row.trailing_sl,
@@ -462,6 +463,35 @@ async def list_formula_presets(current_user: User = Depends(get_current_user)):
     ]
 
 
+COLUMN_PRESETS = [
+    {"name": "TREND", "formula": '=IF((high+low+close)/3>ltp,"DOWN","UP")', "colors": '{"UP":"green","DOWN":"red"}'},
+    {"name": "HCG", "formula": "=(high+close)/2", "colors": "{}"},
+    {"name": "OCG", "formula": "=(open+close)/2", "colors": "{}"},
+    {"name": "LCG", "formula": "=(low+close)/2", "colors": "{}"},
+    {"name": "KD", "formula": "=-(ltp-low)/(low-high)*100", "colors": "{}"},
+    {"name": "GANN", "formula": "=(high+low)/2", "colors": "{}"},
+    {"name": "SIGNAL", "formula": '=IF(ltp>open,"BUY","SELL")', "colors": '{"BUY":"green","SELL":"red"}'},
+    {"name": "SSIG", "formula": '=IFERROR(IF(AND(open>close,ltp>open),"BUY",IF(AND(open<close,ltp<open),"SELL","")),"")', "colors": '{"BUY":"green","SELL":"red"}'},
+    {"name": "ENTRY", "formula": '=IF(AND(open=0,high=0,low=0)," ",IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0),IF(signal="SELL",ROUND(((SQRT(open)-0.015)^2),0)," ")))', "colors": "{}"},
+    {"name": "SL", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)-(ROUND(((SQRT(open)+0.015)^2),0)*0.5%),ROUND(((SQRT(open)-0.015)^2),0)+(ROUND(((SQRT(open)-0.015)^2),0)*0.5%))', "colors": "{}"},
+    {"name": "T11.8", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.118%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.118%))', "colors": "{}"},
+    {"name": "T23.8", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.238%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.238%))', "colors": "{}"},
+    {"name": "T38.2", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.382%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.382%))', "colors": "{}"},
+    {"name": "T50", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.5%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.5%))', "colors": "{}"},
+    {"name": "T61.8", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.618%))', "colors": "{}"},
+    {"name": "T78.6", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*0.786%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*0.786%))', "colors": "{}"},
+    {"name": "T100", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*1%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*1%))', "colors": "{}"},
+    {"name": "T1.618", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*1.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*1.618%))', "colors": "{}"},
+    {"name": "T2.618", "formula": '=IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0)+(ROUND(((SQRT(open)+0.015)^2),0)*2.618%),ROUND(((SQRT(open)-0.015)^2),0)-(ROUND(((SQRT(open)-0.015)^2),0)*2.618%))', "colors": "{}"},
+]
+
+
+@router.get("/column-presets")
+async def list_column_presets(current_user: User = Depends(require_admin)):
+    """House column templates. Admin only, so the expressions stay out of the trader bundle."""
+    return COLUMN_PRESETS
+
+
 # ── Terminal Columns (default + custom, all manageable) ─────────────────────
 
 class ColumnCreate(BaseModel):
@@ -475,61 +505,144 @@ class ColumnCreate(BaseModel):
     color_rules: Optional[str] = None
 
 
-@router.get("/columns")
-async def list_columns(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    List all terminal columns for user.
-    Seeds default columns on first visit.
-    Formula hidden from non-admin users.
-    """
-    from sqlalchemy import select
+class ColumnValueTick(BaseModel):
+    symbol: str
+    ltp: Optional[float] = None
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    close: Optional[float] = None
+    volume: Optional[float] = None
+    oi: Optional[float] = None
+    vwap: Optional[float] = None
+    atp: Optional[float] = None
+
+
+class ColumnValueRequest(BaseModel):
+    ticks: list[ColumnValueTick] = []
+
+
+async def _column_for_editor(db: AsyncSession, col_id: UUID, current_user: User):
+    """Admins share one column set, so any admin can edit a column owned by another admin."""
+    from app.models.terminal_column import TerminalColumn
+
+    result = await db.execute(select(TerminalColumn).where(TerminalColumn.id == col_id))
+    col = result.scalar_one_or_none()
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+    if col.user_id == current_user.id:
+        return col
+    if current_user.role == UserRole.admin:
+        owner = await db.get(User, col.user_id)
+        if owner and owner.role == UserRole.admin:
+            return col
+    raise HTTPException(status_code=404, detail="Column not found")
+
+
+async def _shared_columns(db: AsyncSession, current_user: User):
+    """Column definitions belong to admin accounts so every terminal shows the same set."""
     from app.models.terminal_column import TerminalColumn, DEFAULT_COLUMNS
 
+    admins = await db.execute(
+        select(User.id).where(User.role == UserRole.admin).order_by(User.created_at)
+    )
+    admin_ids = [row[0] for row in admins.all()]
+    cols = []
+    if admin_ids:
+        result = await db.execute(
+            select(TerminalColumn)
+            .where(TerminalColumn.user_id.in_(admin_ids))
+            .order_by(TerminalColumn.col_order)
+        )
+        cols = list(result.scalars().all())
+    if cols or current_user.role != UserRole.admin:
+        return cols
+    for d in DEFAULT_COLUMNS:
+        db.add(TerminalColumn(
+            user_id=current_user.id,
+            name=d["name"],
+            col_key=d["col_key"],
+            col_type=d["col_type"],
+            formula=d.get("formula"),
+            col_order=d["col_order"],
+            width=d["width"],
+            is_visible=True,
+            color_rules=d["color_rules"],
+        ))
+    await db.commit()
     result = await db.execute(
         select(TerminalColumn)
         .where(TerminalColumn.user_id == current_user.id)
         .order_by(TerminalColumn.col_order)
     )
-    cols = result.scalars().all()
+    return list(result.scalars().all())
 
-    # Seed defaults on first visit
-    if not cols:
-        for d in DEFAULT_COLUMNS:
-            db.add(TerminalColumn(
-                user_id     = current_user.id,
-                name        = d["name"],
-                col_key     = d["col_key"],
-                col_type    = d["col_type"],
-                col_order   = d["col_order"],
-                width       = d["width"],
-                is_visible  = True,
-                color_rules = d["color_rules"],
-            ))
-        await db.commit()
-        result = await db.execute(
-            select(TerminalColumn)
-            .where(TerminalColumn.user_id == current_user.id)
-            .order_by(TerminalColumn.col_order)
-        )
-        cols = result.scalars().all()
 
-    is_admin = current_user.role == "admin"
+@router.post("/column-values")
+async def column_values(
+    payload: ColumnValueRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Evaluate shared formula columns. Callers receive values, not expressions."""
+    from app.strategy.excel_formula_engine import evaluate_columns_in_order
+
+    cols = await _shared_columns(db, current_user)
+    formulas = [{"name": col.name, "formula": col.formula} for col in cols if col.formula]
+    values: dict[str, dict] = {}
+    for tick in payload.ticks:
+        data = {
+            key: val for key, val in tick.model_dump().items()
+            if key != "symbol" and val is not None
+        }
+        raw = evaluate_columns_in_order(formulas, data)
+        named = {}
+        for col in formulas:
+            key = col["name"].lower()
+            if key in raw:
+                named[col["name"]] = raw[key]
+        values[tick.symbol] = named
+    return {"values": values}
+
+
+@router.get("/columns")
+async def list_columns(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Shared install columns. Formula text is included only for an admin."""
+    from app.models.terminal_column import DEFAULT_COLUMNS
+
+    cols = await _shared_columns(db, current_user)
+    is_admin = current_user.role == UserRole.admin
+    if cols:
+        return [
+            {
+                "id":          str(col.id),
+                "name":        col.name,
+                "col_key":     col.col_key,
+                "col_type":    col.col_type,
+                "formula":     col.formula if is_admin else None,
+                "col_order":   col.col_order,
+                "width":       col.width,
+                "is_visible":  col.is_visible,
+                "color_rules": col.color_rules,
+            }
+            for col in cols
+        ]
     return [
         {
-            "id":          str(c.id),
-            "name":        c.name,
-            "col_key":     c.col_key,
-            "col_type":    c.col_type,
-            "formula":     c.formula if is_admin else None,
-            "col_order":   c.col_order,
-            "width":       c.width,
-            "is_visible":  c.is_visible,
-            "color_rules": c.color_rules,
+            "id":          d["col_key"],
+            "name":        d["name"],
+            "col_key":     d["col_key"],
+            "col_type":    d["col_type"],
+            "formula":     None,
+            "col_order":   d["col_order"],
+            "width":       d["width"],
+            "is_visible":  True,
+            "color_rules": d["color_rules"],
         }
-        for c in cols
+        for d in DEFAULT_COLUMNS
     ]
 
 
@@ -586,19 +699,8 @@ async def toggle_column_visibility(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Show/hide any column — available to all users."""
-    from sqlalchemy import select
-    from app.models.terminal_column import TerminalColumn
-
-    result = await db.execute(
-        select(TerminalColumn).where(
-            TerminalColumn.id      == col_id,
-            TerminalColumn.user_id == current_user.id,
-        )
-    )
-    col = result.scalar_one_or_none()
-    if not col:
-        raise HTTPException(status_code=404, detail="Column not found")
+    """Show or hide a shared column. Any admin can change a column owned by another admin."""
+    col = await _column_for_editor(db, col_id, current_user)
 
     col.is_visible = bool(body.get("is_visible", not col.is_visible))
     await db.commit()
@@ -616,18 +718,7 @@ async def update_column(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    from sqlalchemy import select
-    from app.models.terminal_column import TerminalColumn
-
-    result = await db.execute(
-        select(TerminalColumn).where(
-            TerminalColumn.id      == col_id,
-            TerminalColumn.user_id == current_user.id,
-        )
-    )
-    col = result.scalar_one_or_none()
-    if not col:
-        raise HTTPException(status_code=404, detail="Column not found")
+    col = await _column_for_editor(db, col_id, current_user)
 
     if payload.formula:
         from app.strategy.excel_formula_engine import validate_formula_excel
@@ -651,19 +742,10 @@ async def delete_column(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete any column — default or custom. All users can remove columns."""
-    from sqlalchemy import select
-    from app.models.terminal_column import TerminalColumn
-
-    result = await db.execute(
-        select(TerminalColumn).where(
-            TerminalColumn.id      == col_id,
-            TerminalColumn.user_id == current_user.id,
-        )
-    )
-    col = result.scalar_one_or_none()
-    if not col:
-        raise HTTPException(status_code=404, detail="Column not found")
+    """Delete a shared column. Any admin can remove a column owned by another admin."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    col = await _column_for_editor(db, col_id, current_user)
 
     await db.delete(col)
     await db.commit()
@@ -709,158 +791,6 @@ async def validate_column_formula(
     ok, msg = validate_formula_excel(body.get("formula", ""))
     return {"valid": ok, "message": msg}
 
-
-
-class ColumnCreate(BaseModel):
-    name:        str
-    formula:     str
-    col_order:   int   = 0
-    width:       int   = 80
-    is_visible:  bool  = True
-    color_rules: Optional[str] = None  # JSON: {"UP":"green","DOWN":"red"}
-
-
-@router.get("/columns")
-async def list_columns(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List all formula columns. Formula hidden from non-admin users."""
-    from sqlalchemy import select
-    from app.models.terminal_column import TerminalColumn
-
-    result = await db.execute(
-        select(TerminalColumn)
-        .where(TerminalColumn.user_id == current_user.id)
-        .order_by(TerminalColumn.col_order)
-    )
-    cols = result.scalars().all()
-    is_admin = current_user.role == "admin"
-
-    return [
-        {
-            "id":          str(c.id),
-            "name":        c.name,
-            "formula":     c.formula if is_admin else None,  # hidden from users
-            "col_order":   c.col_order,
-            "width":       c.width,
-            "is_visible":  c.is_visible,
-            "color_rules": c.color_rules,
-        }
-        for c in cols
-    ]
-
-
-@router.post("/columns", status_code=201)
-async def create_column(
-    payload: ColumnCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a new formula column. Admin only."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-
-    # Validate formula first
-    from app.strategy.excel_formula_engine import validate_formula_excel
-    ok, msg = validate_formula_excel(payload.formula)
-    if not ok:
-        raise HTTPException(status_code=400, detail=f"Invalid formula: {msg}")
-
-    from app.models.terminal_column import TerminalColumn
-    col = TerminalColumn(
-        user_id     = current_user.id,
-        name        = payload.name.upper(),
-        formula     = payload.formula,
-        col_order   = payload.col_order,
-        width       = payload.width,
-        is_visible  = payload.is_visible,
-        color_rules = payload.color_rules,
-    )
-    db.add(col)
-    await db.commit()
-    await db.refresh(col)
-    return {"id": str(col.id), "name": col.name, "validated": msg}
-
-
-@router.put("/columns/{col_id}")
-async def update_column(
-    col_id: UUID,
-    payload: ColumnCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a formula column. Admin only."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-
-    from sqlalchemy import select
-    from app.models.terminal_column import TerminalColumn
-
-    result = await db.execute(
-        select(TerminalColumn).where(
-            TerminalColumn.id      == col_id,
-            TerminalColumn.user_id == current_user.id,
-        )
-    )
-    col = result.scalar_one_or_none()
-    if not col:
-        raise HTTPException(status_code=404, detail="Column not found")
-
-    from app.strategy.excel_formula_engine import validate_formula_excel
-    ok, msg = validate_formula_excel(payload.formula)
-    if not ok:
-        raise HTTPException(status_code=400, detail=f"Invalid formula: {msg}")
-
-    col.name        = payload.name.upper()
-    col.formula     = payload.formula
-    col.col_order   = payload.col_order
-    col.width       = payload.width
-    col.is_visible  = payload.is_visible
-    col.color_rules = payload.color_rules
-    await db.commit()
-    return {"status": "updated", "name": col.name}
-
-
-@router.delete("/columns/{col_id}", status_code=204)
-async def delete_column(
-    col_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a formula column. Admin only."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-
-    from sqlalchemy import select
-    from app.models.terminal_column import TerminalColumn
-
-    result = await db.execute(
-        select(TerminalColumn).where(
-            TerminalColumn.id      == col_id,
-            TerminalColumn.user_id == current_user.id,
-        )
-    )
-    col = result.scalar_one_or_none()
-    if not col:
-        raise HTTPException(status_code=404, detail="Column not found")
-
-    await db.delete(col)
-    await db.commit()
-
-
-@router.post("/columns/validate")
-async def validate_column_formula(
-    body: dict,
-    current_user: User = Depends(get_current_user),
-):
-    """Validate a formula before saving."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-
-    from app.strategy.excel_formula_engine import validate_formula_excel
-    ok, msg = validate_formula_excel(body.get("formula", ""))
-    return {"valid": ok, "message": msg}
 
 
 class ManualOrderRequest(BaseModel):
@@ -985,6 +915,154 @@ async def _dhan_get(path: str):
         return resp.json()
     except Exception:
         raise HTTPException(status_code=502, detail="Dhan returned a non-JSON response")
+
+
+def _pair_dhan_fills(fills: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Turn Dhan fills into closed round trips and leftover open lots."""
+    from collections import defaultdict, deque
+
+    books: dict = defaultdict(deque)
+    closed: list[dict] = []
+    for fill in sorted(fills, key=lambda row: row["time"] or ""):
+        key = (fill["security_id"], fill["product"], fill["symbol"])
+        qty = int(fill["qty"] or 0)
+        book = books[key]
+        while qty > 0 and book and book[0]["side"] != fill["side"]:
+            lot = book[0]
+            take = min(qty, lot["qty"])
+            if lot["side"] == "BUY":
+                entry, exit_price, direction = lot["price"], fill["price"], "BUY"
+                pnl = (exit_price - entry) * take
+            else:
+                entry, exit_price, direction = lot["price"], fill["price"], "SELL"
+                pnl = (entry - exit_price) * take
+            pnl_pct = (pnl / (entry * take) * 100) if entry else 0
+            closed.append({
+                "id": f"{lot['order_id']}-{fill['order_id']}-{take}",
+                "symbol": fill["symbol"],
+                "exchange": fill["exchange"],
+                "direction": direction,
+                "quantity": take,
+                "entry_price": entry,
+                "exit_price": exit_price,
+                "stop_loss": None,
+                "target_price": None,
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "exit_reason": "DHAN",
+                "status": "CLOSED",
+                "is_paper": False,
+                "created_at": lot["time"],
+                "closed_at": fill["time"],
+            })
+            lot["qty"] -= take
+            qty -= take
+            if lot["qty"] <= 0:
+                book.popleft()
+        if qty > 0:
+            book.append({
+                "side": fill["side"],
+                "qty": qty,
+                "price": fill["price"],
+                "time": fill["time"],
+                "order_id": fill["order_id"],
+                "symbol": fill["symbol"],
+                "exchange": fill["exchange"],
+            })
+    open_rows = []
+    for book in books.values():
+        for lot in book:
+            open_rows.append({
+                "id": f"open-{lot['order_id']}-{lot['qty']}",
+                "symbol": lot["symbol"],
+                "exchange": lot["exchange"],
+                "direction": lot["side"],
+                "quantity": lot["qty"],
+                "entry_price": lot["price"],
+                "exit_price": None,
+                "stop_loss": None,
+                "target_price": None,
+                "pnl": None,
+                "pnl_pct": None,
+                "exit_reason": None,
+                "status": "OPEN",
+                "is_paper": False,
+                "created_at": lot["time"],
+                "closed_at": None,
+            })
+    closed.sort(key=lambda row: row["closed_at"] or "", reverse=True)
+    return closed, open_rows
+
+
+@router.get("/trade-history")
+async def get_dhan_trade_history(
+    current_user: User = Depends(get_current_user),
+):
+    """Live fills from Dhan, including trades placed on the Dhan app."""
+    from datetime import date, timedelta
+    from app.core.config import settings
+
+    if not settings.DHAN_ACCESS_TOKEN or not settings.DHAN_CLIENT_ID:
+        return {"connected": False, "trades": [], "summary": None, "weekly": []}
+
+    end = date.today()
+    start = end - timedelta(days=90)
+    fills = []
+    for page in range(5):
+        data = await _dhan_get(f"/trades/{start.isoformat()}/{end.isoformat()}/{page}")
+        rows = data if isinstance(data, list) else []
+        if not rows:
+            break
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            when = row.get("exchangeTime") or row.get("updateTime") or row.get("createTime")
+            if when in (None, "NA"):
+                when = None
+            fills.append({
+                "symbol": row.get("customSymbol") or row.get("tradingSymbol") or row.get("securityId"),
+                "exchange": row.get("exchangeSegment"),
+                "security_id": str(row.get("securityId") or ""),
+                "product": row.get("productType") or "",
+                "side": row.get("transactionType"),
+                "qty": row.get("tradedQuantity") or 0,
+                "price": float(row.get("tradedPrice") or 0),
+                "time": when,
+                "order_id": str(row.get("orderId") or row.get("exchangeTradeId") or ""),
+            })
+        if len(rows) < 100:
+            break
+
+    closed, open_rows = _pair_dhan_fills(fills)
+    trades = closed + open_rows
+    winners = [row for row in closed if (row["pnl"] or 0) > 0]
+    losers = [row for row in closed if (row["pnl"] or 0) < 0]
+    total_pnl = round(sum(row["pnl"] or 0 for row in closed), 2)
+    today = date.today().isoformat()
+    today_pnl = round(sum(
+        row["pnl"] or 0 for row in closed
+        if (row["closed_at"] or "").startswith(today)
+    ), 2)
+    weekly = []
+    for offset in range(6, -1, -1):
+        day = end - timedelta(days=offset)
+        key = day.isoformat()
+        pnl = sum(row["pnl"] or 0 for row in closed if (row["closed_at"] or "").startswith(key))
+        weekly.append({"day": day.strftime("%a"), "date": key, "pnl": round(pnl, 2)})
+    return {
+        "connected": True,
+        "trades": trades[:50],
+        "summary": {
+            "total_trades": len(trades),
+            "closed_trades": len(closed),
+            "total_pnl": total_pnl,
+            "today_pnl": today_pnl,
+            "win_rate": round(len(winners) / len(closed) * 100, 1) if closed else 0,
+            "winners": len(winners),
+            "losers": len(losers),
+        },
+        "weekly": weekly,
+    }
 
 
 @router.get("/orderbook")

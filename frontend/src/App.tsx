@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
 import { useAuthStore } from "@/store/auth";
 import LoginPage       from "@/pages/LoginPage";
-import RegisterPage    from "@/pages/RegisterPage";
 import DashboardPage   from "@/pages/DashboardPage";
 import TradingPage     from "@/pages/TradingPage";
 import OptionsPage    from "@/pages/OptionsPage";
@@ -38,14 +37,14 @@ export default function App() {
         }} />
         <Routes>
           <Route path="/login"        element={<LoginPage />} />
-          <Route path="/register"     element={<RegisterPage />} />
+          <Route path="/register"     element={<Navigate to="/login" replace />} />
           <Route path="/dashboard"    element={<Protected><DashboardPage /></Protected>} />
           <Route path="/terminal"     element={<Protected><TerminalPage /></Protected>} />
           <Route path="/trading"      element={<Protected><TradingPage /></Protected>} />
           <Route path="/options" element={<Protected><OptionsPage /></Protected>} />
-          <Route path="/strategies"   element={<Protected><StrategiesPage /></Protected>} />
-          <Route path="/formula"      element={<Protected><FormulaPage /></Protected>} />
-          <Route path="/guide"        element={<Protected><GuidePage /></Protected>} />
+          <Route path="/strategies"   element={<Protected><AdminOnly><StrategiesPage /></AdminOnly></Protected>} />
+          <Route path="/formula"      element={<Protected><AdminOnly><FormulaPage /></AdminOnly></Protected>} />
+          <Route path="/guide"        element={<Protected><AdminOnly><GuidePage /></AdminOnly></Protected>} />
           <Route path="/copy-trading" element={<Protected><CopyTradingPage /></Protected>} />
           <Route path="/risk"         element={<Protected><RiskPage /></Protected>} />
           <Route path="/settings"     element={<Protected><SettingsPage /></Protected>} />

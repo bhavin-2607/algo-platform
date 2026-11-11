@@ -3,7 +3,6 @@ Market Data Routes — serves OHLCV candles, quotes and instrument search.
 """
 import logging
 import random
-from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -12,6 +11,24 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_SCRIP_CACHE: dict = {"mtime": None, "frame": None}
+
+
+def _scrip_frame():
+    """Scrip master is about 200k rows. Read it once per file change."""
+    import os
+    import pandas as pd
+    csv_path = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "../../market/instruments.csv"
+    ))
+    mtime = os.path.getmtime(csv_path)
+    if _SCRIP_CACHE["frame"] is not None and _SCRIP_CACHE["mtime"] == mtime:
+        return _SCRIP_CACHE["frame"]
+    frame = pd.read_csv(csv_path, header=0, low_memory=False)
+    _SCRIP_CACHE["mtime"] = mtime
+    _SCRIP_CACHE["frame"] = frame
+    return frame
 
 INSTRUMENTS = {
     "RELIANCE":   {"name": "Reliance Industries",        "base": 2850,  "sector": "Energy"},
@@ -40,16 +57,19 @@ async def get_candles(
     bars:      int = Query(200, le=500),
     current_user: User = Depends(get_current_user),
 ):
-    from app.core.trading_mode import synthetic_blocked
-    if synthetic_blocked():
-        raise HTTPException(
-            status_code=409,
-            detail="Synthetic candles are disabled while live trading is enabled.",
+    import asyncio
+    from app.market.history import fetch_intraday_candles
+    try:
+        interval = int(timeframe)
+    except ValueError:
+        interval = 5
+    try:
+        candles = await asyncio.to_thread(
+            fetch_intraday_candles, symbol.upper(), exchange, interval, bars,
         )
-    symbol = symbol.upper()
-    info   = INSTRUMENTS.get(symbol, {"base": 1000, "name": symbol, "sector": "Unknown"})
-    candles = _generate_candles(info["base"], bars, int(timeframe))
-    return {"symbol": symbol, "exchange": exchange, "timeframe": timeframe, "candles": candles}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"symbol": symbol.upper(), "exchange": exchange, "timeframe": str(interval), "candles": candles}
 
 
 @router.get("/instruments")
@@ -57,67 +77,10 @@ async def search_instruments(
     q: str = Query(""),
     current_user: User = Depends(get_current_user),
 ):
-    """Search instruments from CSV — NSE first, BSE as fallback."""
+    """Same search as /instruments/search, including options and indices."""
     if not q or len(q) < 2:
         return []
-
-    import pandas as pd, os
-    q = q.upper().strip()
-
-    try:
-        csv_path = os.path.abspath(os.path.join(
-            os.path.dirname(__file__), "../../market/instruments.csv"))
-        df = pd.read_csv(csv_path, header=0, low_memory=False)
-
-        # Filter equity only (EQ series for NSE, E series for BSE)
-        eq_df = df[
-            ((df["EXCH_ID"] == "NSE") & (df["SERIES"] == "EQ")) |
-            ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))
-        ]
-
-        # Search by symbol name or display name
-        mask = (
-            eq_df["SYMBOL_NAME"].str.upper().str.contains(q, na=False) |
-            eq_df["DISPLAY_NAME"].str.upper().str.contains(q, na=False)
-        )
-        matches = eq_df[mask].head(40)
-
-        # Build results — deduplicate by ISIN, prefer NSE
-        seen_isin = {}
-        results   = []
-
-        # Process NSE first
-        for _, row in matches[matches["EXCH_ID"] == "NSE"].iterrows():
-            isin = str(row["ISIN"])
-            entry = {
-                "symbol":           str(row["DISPLAY_NAME"]),
-                "security_id":      str(int(row["SECURITY_ID"])),
-                "exchange_segment": "NSE_EQ",
-                "exchange":         "NSE",
-                "series":           str(row["SERIES"]),
-                "isin":             isin,
-            }
-            seen_isin[isin] = len(results)
-            results.append(entry)
-
-        # Add BSE only if no NSE equivalent
-        for _, row in matches[matches["EXCH_ID"] == "BSE"].iterrows():
-            isin = str(row["ISIN"])
-            if isin not in seen_isin:
-                results.append({
-                    "symbol":           str(row["DISPLAY_NAME"]),
-                    "security_id":      str(int(row["SECURITY_ID"])),
-                    "exchange_segment": "BSE_EQ",
-                    "exchange":         "BSE",
-                    "series":           str(row["SERIES"]),
-                    "isin":             isin,
-                })
-
-        return results[:20]
-
-    except Exception as e:
-        logger.error(f"Instrument search error: {e}")
-        return []
+    return await search_instruments_csv(q=q, exch="NSE", current_user=current_user)
 
 
 @router.get("/quote/{symbol}")
@@ -151,56 +114,6 @@ async def get_quote(
         "52w_high":   round(base * 1.35, 2),
         "52w_low":    round(base * 0.72, 2),
     }
-
-
-@router.get("/ticker")
-async def get_ticker(current_user: User = Depends(get_current_user)):
-    """Returns live ticker data for all instruments — used by the top ticker bar."""
-    from app.core.trading_mode import synthetic_blocked
-    if synthetic_blocked():
-        raise HTTPException(
-            status_code=409,
-            detail="Synthetic ticker is disabled while live trading is enabled. Use /api/market/ticker live quotes.",
-        )
-    tickers = []
-    for sym, info in INSTRUMENTS.items():
-        base = info["base"]
-        pct  = random.uniform(-0.03, 0.03)
-        tickers.append({
-            "symbol":     sym,
-            "ltp":        round(base * (1 + pct), 2),
-            "change_pct": round(pct * 100, 2),
-        })
-    return tickers
-
-
-def _generate_candles(base_price: float, num_bars: int, interval_min: int) -> list:
-    candles = []
-    price   = base_price
-    now     = datetime.now().replace(second=0, microsecond=0)
-    minutes = (now.minute // interval_min) * interval_min
-    now     = now.replace(minute=minutes)
-    rng     = random.Random(int(base_price * 1000))
-
-    for i in range(num_bars, 0, -1):
-        ts  = now - timedelta(minutes=i * interval_min)
-        if ts.hour < 9 or (ts.hour == 9 and ts.minute < 15): continue
-        if ts.hour > 15 or (ts.hour == 15 and ts.minute > 30): continue
-
-        vol    = base_price * rng.uniform(0.001, 0.004)
-        chg    = rng.gauss(0, vol / base_price)
-        open_  = round(price, 2)
-        close  = round(price * (1 + chg), 2)
-        spread = abs(close - open_)
-        high   = round(max(open_, close) + rng.uniform(0, spread * 1.5), 2)
-        low    = round(min(open_, close) - rng.uniform(0, spread * 1.5), 2)
-        candles.append({
-            "time": int(ts.timestamp()), "open": open_,
-            "high": high, "low": low, "close": close,
-            "volume": max(rng.randint(100_000, 500_000), 10_000),
-        })
-        price = close
-    return candles
 
 
 @router.get("/fib-levels")
@@ -417,16 +330,18 @@ async def get_live_quotes(
     if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
         try:
             securities: dict = {}
+            resolved: dict = {}
             for sym in symbol_list:
-                inst = DHAN_SECURITY_IDS.get(sym)
+                inst = DHAN_SECURITY_IDS.get(sym) or poller._watchlist.get(sym)
                 if inst:
+                    resolved[sym] = inst
                     securities.setdefault(inst["exchange_segment"], []).append(inst["security_id"])
 
             if securities:
                 data   = _dhan_ohlc(securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
                 result = []
                 for sym in symbol_list:
-                    inst = DHAN_SECURITY_IDS.get(sym)
+                    inst = resolved.get(sym)
                     if not inst:
                         result.append(_sim_quote(sym))
                         continue
@@ -577,13 +492,10 @@ async def search_instruments_csv(
     current_user: User = Depends(get_current_user),
 ):
     """Search instruments from CSV — NSE first, BSE as fallback."""
-    import pandas as pd, os, re
     q_upper = q.upper().strip()
 
     try:
-        csv_path = os.path.abspath(os.path.join(
-            os.path.dirname(__file__), "../../market/instruments.csv"))
-        df = pd.read_csv(csv_path, header=0, low_memory=False)
+        df = _scrip_frame()
 
         # Equity + Indices
         eq_df = df[
@@ -594,7 +506,8 @@ async def search_instruments_csv(
 
         mask = (
             eq_df["SYMBOL_NAME"].str.upper().str.contains(q_upper, na=False, regex=False) |
-            eq_df["DISPLAY_NAME"].str.upper().str.contains(q_upper, na=False, regex=False)
+            eq_df["DISPLAY_NAME"].str.upper().str.contains(q_upper, na=False, regex=False) |
+            eq_df["UNDERLYING_SYMBOL"].str.upper().str.contains(q_upper, na=False, regex=False)
         )
         matches = eq_df[mask].head(60)
 
@@ -604,13 +517,14 @@ async def search_instruments_csv(
 
         for _, row in matches[matches["EXCH_ID"] == "NSE"].iterrows():
             isin = str(row["ISIN"])
+            is_index = str(row.get("SEGMENT") or "") == "I"
             entry = {
-                "symbol":           str(row["DISPLAY_NAME"]),
-                "name":             str(row["SYMBOL_NAME"]),
+                "symbol":           str(row["UNDERLYING_SYMBOL"] or row["DISPLAY_NAME"]).strip() if is_index else str(row["DISPLAY_NAME"]),
+                "name":             str(row["DISPLAY_NAME"] if is_index else row["SYMBOL_NAME"]),
                 "security_id":      str(int(float(row["SECURITY_ID"]))),
-                "exchange_segment": "NSE_EQ",
+                "exchange_segment": "IDX_I" if is_index else "NSE_EQ",
                 "exchange":         "NSE",
-                "series":           "EQ",
+                "series":           "IDX" if is_index else "EQ",
                 "isin":             isin,
             }
             seen_isin[isin] = len(results)
@@ -638,11 +552,37 @@ async def search_instruments_csv(
             return 2
 
         results.sort(key=sort_key)
+
+        # Option contracts join this search when the query names a strike or CE/PE.
+        # Equity and index rows stay first so a plain symbol search is unchanged.
+        if _query_includes_option(q_upper):
+            from app.api.routes.options import match_option_contracts
+            results = results[:8]
+            seen = {r["security_id"] for r in results}
+            for opt in match_option_contracts(q_upper, limit=12):
+                if opt["security_id"] in seen:
+                    continue
+                results.append({
+                    "symbol":           opt["symbol"],
+                    "name":             f"{opt['underlying']} {opt['strike']:g} {opt['option_type']} {opt['expiry']}",
+                    "security_id":      opt["security_id"],
+                    "exchange_segment": "NSE_FNO",
+                    "exchange":         "NSE",
+                    "series":           opt["option_type"],
+                    "isin":             "",
+                })
+            return results[:20]
         return results[:20]
 
     except Exception as e:
         logger.error(f"Instrument search error: {e}")
         return []
+
+
+def _query_includes_option(q: str) -> bool:
+    if any(ch.isdigit() for ch in q):
+        return True
+    return any(word in q.split() for word in ("CE", "PE", "CALL", "PUT"))
 
 
 BUNDLED_INSTRUMENTS = [
@@ -741,12 +681,6 @@ async def get_watchlist(
             select(UserWatchlist).where(UserWatchlist.user_id == current_user.id)
         )).scalars().all()
 
-    # Sync poller with user's saved watchlist
-    poller = get_poller()
-    for row in rows:
-        poller.add_symbol(row.symbol, row.security_id, row.exchange_segment)
-
-    # Sync poller
     poller = get_poller()
     for row in rows:
         poller.add_symbol(row.symbol, row.security_id, row.exchange_segment)
@@ -773,35 +707,19 @@ async def add_to_watchlist(
     # If BSE symbol, try to find NSE equivalent before saving
     if body.get("exchange_segment", "").startswith("BSE"):
         try:
-            import pandas as pd, os
-            csv_path = os.path.abspath(os.path.join(
-                os.path.dirname(__file__), "../../market/instruments.csv"))
-            df = pd.read_csv(csv_path, header=None, low_memory=False)
-            bse_row = df[df.iloc[:, 2].astype(str) == str(body.get("security_id", ""))]
+            df = _scrip_frame()
+            sid = str(body.get("security_id", "")).replace(".0", "")
+            ids = df["SECURITY_ID"].map(lambda value: str(value).replace(".0", ""))
+            bse_row = df[(df["EXCH_ID"] == "BSE") & (ids == sid)]
             if not bse_row.empty:
-                isin = bse_row.iloc[0, 3]
-                nse_row = df[(df.iloc[:, 0] == "NSE") & (df.iloc[:, 3] == isin) & (df.iloc[:, 10] == "EQ")]
+                isin = bse_row.iloc[0]["ISIN"]
+                nse_row = df[(df["EXCH_ID"] == "NSE") & (df["ISIN"] == isin) & (df["SERIES"] == "EQ")]
                 if not nse_row.empty:
-                    body["security_id"]      = str(int(nse_row.iloc[0, 2]))
+                    body["security_id"] = str(int(float(nse_row.iloc[0]["SECURITY_ID"])))
                     body["exchange_segment"] = "NSE_EQ"
-                    logger.info(f"Watchlist: BSE→NSE for {body.get('symbol')}")
-        except Exception as e:
-            logger.warning(f"Watchlist BSE→NSE lookup failed: {e}")
-
-    # If BSE symbol, try to find NSE equivalent before saving
-    if body.get("exchange_segment", "").startswith("BSE"):
-        try:
-            import pandas as pd, os
-            csv_path = os.path.abspath(os.path.join(
-                os.path.dirname(__file__), "../../market/instruments.csv"))
-            df = pd.read_csv(csv_path, header=None, low_memory=False)
-            bse_row = df[df.iloc[:, 2].astype(str) == str(body.get("security_id", ""))]
-            if not bse_row.empty:
-                isin = bse_row.iloc[0, 3]
-                nse_row = df[(df.iloc[:, 0] == "NSE") & (df.iloc[:, 3] == isin) & (df.iloc[:, 10] == "EQ")]
-                if not nse_row.empty:
-                    body["security_id"]      = str(int(nse_row.iloc[0, 2]))
-                    body["exchange_segment"] = "NSE_EQ"
+                    ticker = str(nse_row.iloc[0]["UNDERLYING_SYMBOL"] or "").strip()
+                    if ticker:
+                        body["symbol"] = ticker
                     logger.info(f"Watchlist: BSE→NSE for {body.get('symbol')}")
         except Exception as e:
             logger.warning(f"Watchlist BSE→NSE lookup failed: {e}")

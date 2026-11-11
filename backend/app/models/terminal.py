@@ -36,6 +36,8 @@ class TerminalRow(Base):
     # Hidden formulas (admin-only, never returned to non-admin users)
     entry_formula     = Column(String, nullable=True)
     exit_formula      = Column(String, nullable=True)
+    target_formula    = Column(String, nullable=True)
+    sl_formula        = Column(String, nullable=True)
     # Optional: custom label shown to user instead of formula
     strategy_label    = Column(String, nullable=True)
 

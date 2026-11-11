@@ -64,6 +64,7 @@ class StrategyExecutor:
         adapter = None
         usm = None
         symbol = None
+        books = []
         flatten_reason = None
         self._last_ltp = None
 
@@ -87,11 +88,36 @@ class StrategyExecutor:
             logger.error(f"BrokerAccount not found for map {self.map_id}")
             return
 
-        # Instantiate strategy engine
+        # One engine per watchlist symbol. A single symbol in params is not used.
         strategy_cls = get_strategy_class(usm.strategy.engine_class)
-        strategy = strategy_cls(usm.params)
-        if not strategy.validate_params():
-            logger.error(f"Invalid strategy params for {self.map_id}")
+        from app.models.watchlist import UserWatchlist
+        from app.market.dhan_feed import redis_exchange
+        listed = await self.db.execute(
+            select(UserWatchlist).where(UserWatchlist.user_id == usm.user_id)
+        )
+        books = []
+        for row in listed.scalars().all():
+            exch = redis_exchange(row.exchange_segment)
+            params = {
+                **(usm.params or {}),
+                "symbol": row.symbol,
+                "exchange": exch,
+                "token": str(row.security_id),
+            }
+            engine = strategy_cls(params)
+            if not engine.validate_params():
+                logger.error(f"Invalid strategy params for {self.map_id} {row.symbol}")
+                continue
+            books.append({
+                "symbol": row.symbol,
+                "exchange": exch,
+                "token": str(row.security_id),
+                "channel": f"tick:{exch}:{row.security_id}",
+                "engine": engine,
+                "last_bar": None,
+            })
+        if not books:
+            logger.error(f"No watchlist symbols for {self.map_id}")
             return
 
         # Risk config — persisted in Redis by map_id
@@ -113,40 +139,41 @@ class StrategyExecutor:
             logger.error(f"Broker adapter unavailable for {self.map_id}: {e}")
             return
 
-        symbol    = usm.params.get("symbol", "RELIANCE")
-        exchange  = usm.params.get("exchange", "NSE")
-        token     = usm.params.get("token", "2885")
+        symbol = books[0]["symbol"]
         timeframe = int(usm.params.get("timeframe_minutes", 1))
 
-        await reconcile_open_trades(self.db, adapter, usm, symbol, token, strategy)
+        for book in books:
+            await reconcile_open_trades(
+                self.db, adapter, usm, book["symbol"], book["token"], book["engine"]
+            )
         if risk.is_killed:
             logger.error(f"Risk kill active for {self.map_id} — flattening and not starting")
-            pnls = await flatten_open_trades(
-                self.db, redis, adapter,
-                await load_open_trades(self.db, usm, symbol),
-                reason="KILL",
-            )
-            for pnl in pnls:
-                risk.record_trade_pnl(pnl)
+            for book in books:
+                pnls = await flatten_open_trades(
+                    self.db, redis, adapter,
+                    await load_open_trades(self.db, usm, book["symbol"]),
+                    reason="KILL",
+                )
+                for pnl in pnls:
+                    risk.record_trade_pnl(pnl)
             await risk.save()
             await self._publish_status(redis, "killed", risk)
             return
 
-        # Mark running
         await redis.set(strategy_running_key(self.map_id), "1", ex=86400)
         await self._publish_status(redis, "running", risk)
-        logger.info(f"▶ Executor started: {self.map_id} | {symbol} | TF={timeframe}m")
+        logger.info(
+            "Executor started: %s | %s symbols",
+            self.map_id, len(books),
+        )
 
-        # Subscribe to tick channel
-        tick_ch = f"tick:{exchange}:{token}"
+        by_channel = {book["channel"]: book for book in books}
         pubsub = redis.pubsub()
-        await pubsub.subscribe(tick_ch)
-
-        last_bar_ts = None
+        await pubsub.subscribe(*by_channel.keys())
+        tick_ch = list(by_channel.keys())
 
         try:
             async for message in pubsub.listen():
-                # Check stop flag via Redis key
                 still_running = await redis.get(strategy_running_key(self.map_id))
                 if self._stop_flag or not still_running:
                     logger.info(f"⏹ Stop signal received for {self.map_id}")
@@ -155,6 +182,16 @@ class StrategyExecutor:
 
                 if message["type"] != "message":
                     continue
+
+                channel = message.get("channel")
+                if isinstance(channel, bytes):
+                    channel = channel.decode()
+                book = by_channel.get(channel)
+                if book is None:
+                    continue
+                exchange = book["exchange"]
+                token = book["token"]
+                strategy = book["engine"]
 
                 try:
                     tick = json.loads(message["data"])
@@ -169,9 +206,9 @@ class StrategyExecutor:
                 if bar_ts is None or df.empty or len(df) < 2:
                     logger.debug(f"Not enough closed candles yet: {len(df)}")
                     continue
-                if last_bar_ts is not None and bar_ts == last_bar_ts:
+                if book["last_bar"] is not None and bar_ts == book["last_bar"]:
                     continue
-                last_bar_ts = bar_ts
+                book["last_bar"] = bar_ts
                 logger.info(f"🕯 Closed bar {bar_ts} — evaluating signal")
 
                 signal = strategy.generate_signal(df)
@@ -304,22 +341,23 @@ class StrategyExecutor:
         except Exception as e:
             logger.error(f"Executor error: {e}", exc_info=True)
         finally:
-            if flatten_reason and adapter is not None and usm is not None and symbol:
+            if flatten_reason and adapter is not None and usm is not None and books:
                 try:
-                    pnls = await flatten_open_trades(
-                        self.db, redis, adapter,
-                        await load_open_trades(self.db, usm, symbol),
-                        reason=flatten_reason,
-                        price_hint=self._last_ltp,
-                    )
-                    if risk is not None:
-                        for pnl in pnls:
-                            risk.record_trade_pnl(pnl)
+                    for book in books:
+                        pnls = await flatten_open_trades(
+                            self.db, redis, adapter,
+                            await load_open_trades(self.db, usm, book["symbol"]),
+                            reason=flatten_reason,
+                            price_hint=self._last_ltp,
+                        )
+                        if risk is not None:
+                            for pnl in pnls:
+                                risk.record_trade_pnl(pnl)
                 except Exception as e:
                     logger.error(f"Flatten on {flatten_reason} failed: {e}", exc_info=True)
-            if pubsub is not None and tick_ch is not None:
+            if pubsub is not None and tick_ch:
                 try:
-                    await pubsub.unsubscribe(tick_ch)
+                    await pubsub.unsubscribe(*tick_ch)
                 except Exception:
                     pass
             await redis.delete(strategy_running_key(self.map_id))

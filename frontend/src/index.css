@@ -1,19 +1,33 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-:root {
-  --bg:        #080c10;
-  --surface:   #0d1117;
-  --surface2:  #111820;
-  --border:    rgba(0,255,136,0.12);
-  --green:     #00ff88;
-  --green-dim: rgba(0,255,136,0.15);
-  --red:       #ff4466;
-  --yellow:    #ffd060;
-  --text:      #e8f5e9;
-  --muted:     #4a5568;
-  --font:      'JetBrains Mono', 'Courier New', monospace;
+:root, [data-theme="dark"] {
+  --bg:        #0e141b;
+  --surface:   #17202b;
+  --surface2:  #1e2a38;
+  --border:    rgba(226, 232, 240, 0.1);
+  --green:     #2f9e8f;
+  --green-dim: rgba(47, 158, 143, 0.16);
+  --red:       #e15b64;
+  --yellow:    #d9a441;
+  --text:      #e8eef6;
+  --muted:     #93a4b8;
+  --font:      'DM Sans', 'Segoe UI', sans-serif;
+}
+
+[data-theme="light"] {
+  --bg:        #f3f6f8;
+  --surface:   #ffffff;
+  --surface2:  #e7eef3;
+  --border:    rgba(15, 23, 42, 0.1);
+  --green:     #0f766e;
+  --green-dim: rgba(15, 118, 110, 0.12);
+  --red:       #c2414d;
+  --yellow:    #a16207;
+  --text:      #142033;
+  --muted:     #5c6b7e;
+  --font:      'DM Sans', 'Segoe UI', sans-serif;
 }
 
 body {
@@ -76,12 +90,12 @@ a:hover { text-decoration: underline; }
 .field-label { display: block; color: var(--green); font-size: 10px; letter-spacing: 2px; margin-bottom: 8px; }
 .field-input {
   width: 100%; padding: 12px 14px;
-  background: rgba(0,255,136,0.04);
+  background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text); font-size: 13px; font-family: var(--font);
   outline: none; transition: border-color 0.2s;
 }
-.field-input:focus { border-color: rgba(0,255,136,0.5); }
+.field-input:focus { border-color: var(--green); }
 .field-input::placeholder { color: var(--muted); }
 
 .auth-btn {
@@ -92,7 +106,7 @@ a:hover { text-decoration: underline; }
   font-family: var(--font); margin-top: 8px;
   transition: all 0.15s ease;
 }
-.auth-btn:hover { background: #00e077; }
+.auth-btn:hover { filter: brightness(1.08); }
 .auth-btn.loading { background: var(--green-dim); color: var(--green); cursor: not-allowed; }
 .auth-footer { margin-top: 24px; text-align: center; font-size: 12px; color: var(--muted); }
 .auth-footer a { color: var(--green); }
@@ -133,7 +147,13 @@ a:hover { text-decoration: underline; }
 .user-name { font-size: 12px; font-weight: 600; }
 .user-role { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
 
-.sidebar-nav { flex: 1; padding: 12px 0; }
+.sidebar-nav { flex: 1; padding: 12px 0; overflow-y: auto; }
+.nav-section {
+  padding: 14px 20px 4px;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--muted);
+}
 .nav-item {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 20px; color: var(--muted);
@@ -156,6 +176,31 @@ a:hover { text-decoration: underline; }
   letter-spacing: 1.5px; cursor: pointer; transition: all 0.15s;
 }
 .logout-btn:hover { border-color: var(--red); color: var(--red); }
+
+.settings-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+.token-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 12px;
+  padding: 16px 20px 8px;
+  align-items: end;
+}
+.token-value { font-size: 15px; font-weight: 700; }
+.token-update {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  padding: 8px 20px 12px;
+}
+.token-note { padding: 0 20px 16px; color: var(--muted); font-size: 13px; }
+@media (max-width: 960px) {
+  .settings-board, .token-grid, .token-update { grid-template-columns: 1fr; }
+}
 
 .main-content { flex: 1; padding: 32px; overflow-y: auto; background: var(--bg); }
 
@@ -410,6 +455,7 @@ a:hover { text-decoration: underline; }
     flex-direction: column; gap: 2px; padding: 8px 12px;
     font-size: 9px; min-width: 60px; text-align: center;
   }
+  .nav-section { flex: none; align-self: center; white-space: nowrap; }
   .nav-icon { font-size: 16px; }
   .nav-active-bar { display: none; }
   .sidebar-user { padding: 10px 16px; }

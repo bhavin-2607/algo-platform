@@ -91,10 +91,6 @@ class MarketPoller:
             sym_index[(seg, sid)] = sym
         return securities, sym_index
 
-    @property
-    def client_count(self) -> int:
-        return len(self._queues)
-
     async def subscribe(self, symbols: str = "") -> asyncio.Queue:
         """Register a new WebSocket client. Returns a queue to receive ticks."""
         q: asyncio.Queue = asyncio.Queue(maxsize=10)

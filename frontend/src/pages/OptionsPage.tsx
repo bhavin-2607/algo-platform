@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
@@ -12,7 +12,9 @@ export default function OptionsPage() {
   const [expiry,     setExpiry]     = useState("");
   const [expiryType, setExpiryType] = useState<"all"|"weekly"|"monthly">("all");
   const [orderPanel, setOrderPanel] = useState<any>(null);
-  const [strikeFilter, setStrikeFilter] = useState<"all"|"itm"|"atm"|"otm">("all");
+  const [strikeFilter, setStrikeFilter] = useState<"all"|"itm"|"atm"|"otm">("atm");
+  const chainScroller = useRef<HTMLDivElement>(null);
+  const atmRow = useRef<HTMLTableRowElement>(null);
 
   // Fetch expiry list
   const { data: expiryData } = useQuery({
@@ -66,13 +68,22 @@ export default function OptionsPage() {
   const ltp = chainData?.underlying_ltp ?? 0;
   const lotSize = chainData?.lot_size ?? expiryData?.lot_size ?? 75;
 
-  const filteredStrikes = (chainData?.strikes ?? []).filter((s: any) => {
+  const allStrikes: any[] = chainData?.strikes ?? [];
+  const atmIndex = allStrikes.findIndex((s) => s.strike === atm);
+  const filteredStrikes = allStrikes.filter((s: any, i: number) => {
     if (strikeFilter === "all") return true;
-    if (strikeFilter === "atm") return Math.abs(s.strike - atm) <= (underlying === "BANKNIFTY" ? 200 : 100);
+    if (strikeFilter === "atm") return atmIndex >= 0 && Math.abs(i - atmIndex) <= 12;
     if (strikeFilter === "itm") return s.strike < atm;
     if (strikeFilter === "otm") return s.strike > atm;
     return true;
   });
+
+  useEffect(() => {
+    const box = chainScroller.current;
+    const row = atmRow.current;
+    if (!box || !row) return;
+    box.scrollTop = Math.max(0, row.offsetTop - box.clientHeight / 2);
+  }, [chainData?.atm_strike, underlying, expiry, strikeFilter]);
 
   const addedSids = new Set((optWatchlist ?? []).map((w: any) => w.security_id));
 
@@ -163,7 +174,7 @@ export default function OptionsPage() {
         </div>
 
         {/* ── Option Chain Table ───────────────────────────────── */}
-        <div className="card" style={{overflowX:"auto"}}>
+        <div className="card">
           <div className="card-header">
             <span className="card-title">OPTION CHAIN — {underlying} {expiry}</span>
             <span style={{fontSize:10, color:"var(--muted)"}}>Lot Size: {lotSize} · Rate limit: 3s</span>
@@ -176,29 +187,27 @@ export default function OptionsPage() {
           )}
 
           {!chainLoading && chainData && (
+            <div ref={chainScroller} style={{overflow:"auto", maxHeight:"68vh"}}>
             <table style={{width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"var(--font)"}}>
               <thead>
-                <tr style={{background:"rgba(0,0,0,0.3)"}}>
-                  {/* CE side */}
-                  <th style={thStyle("ce")}>OI (CE)</th>
-                  <th style={thStyle("ce")}>IV</th>
-                  <th style={thStyle("ce")}>Delta</th>
-                  <th style={thStyle("ce")}>Theta</th>
-                  <th style={thStyle("ce")}>Volume</th>
-                  <th style={thStyle("ce")}>BID</th>
+                <tr style={{background:"var(--surface2)"}}>
+                  <th style={stickyHead}>STRIKE</th>
                   <th style={thStyle("ce")}>LTP (CE)</th>
-                  <th style={thStyle("ce")}>ADD</th>
-                  {/* Strike */}
-                  <th style={{...thStyle("strike"), minWidth:90}}>STRIKE</th>
-                  {/* PE side */}
-                  <th style={thStyle("pe")}>ADD</th>
                   <th style={thStyle("pe")}>LTP (PE)</th>
-                  <th style={thStyle("pe")}>BID</th>
-                  <th style={thStyle("pe")}>Volume</th>
-                  <th style={thStyle("pe")}>Theta</th>
-                  <th style={thStyle("pe")}>Delta</th>
-                  <th style={thStyle("pe")}>IV</th>
+                  <th style={thStyle("ce")}>BID (CE)</th>
+                  <th style={thStyle("pe")}>BID (PE)</th>
+                  <th style={thStyle("ce")}>OI (CE)</th>
                   <th style={thStyle("pe")}>OI (PE)</th>
+                  <th style={thStyle("ce")}>IV</th>
+                  <th style={thStyle("pe")}>IV</th>
+                  <th style={thStyle("ce")}>Delta</th>
+                  <th style={thStyle("pe")}>Delta</th>
+                  <th style={thStyle("ce")}>Theta</th>
+                  <th style={thStyle("pe")}>Theta</th>
+                  <th style={thStyle("ce")}>Volume</th>
+                  <th style={thStyle("pe")}>Volume</th>
+                  <th style={thStyle("ce")}>ADD</th>
+                  <th style={thStyle("pe")}>ADD</th>
                 </tr>
               </thead>
               <tbody>
@@ -207,23 +216,34 @@ export default function OptionsPage() {
                   const ceAdded = addedSids.has(s.ce?.security_id);
                   const peAdded = addedSids.has(s.pe?.security_id);
                   return (
-                    <tr key={s.strike} style={{
+                    <tr key={s.strike} ref={isATM ? atmRow : undefined} style={{
                       borderBottom:"1px solid var(--border)",
-                      background: isATM ? "rgba(0,255,136,0.05)" : "transparent",
-                    }}
-                      onMouseEnter={e=>(e.currentTarget.style.background=isATM?"rgba(0,255,136,0.08)":"rgba(255,255,255,0.02)")}
-                      onMouseLeave={e=>(e.currentTarget.style.background=isATM?"rgba(0,255,136,0.05)":"transparent")}
-                    >
-                      {/* CE */}
-                      <td style={tdStyle("ce")}>{fmtOI(s.ce?.oi)}</td>
-                      <td style={tdStyle("ce")}>{s.ce?.iv?.toFixed(1)}%</td>
-                      <td style={tdStyle("ce")}>{s.ce?.delta?.toFixed(3)}</td>
-                      <td style={tdStyle("ce")}>{s.ce?.theta?.toFixed(2)}</td>
-                      <td style={tdStyle("ce")}>{fmtOI(s.ce?.volume)}</td>
-                      <td style={tdStyle("ce")}>{s.ce?.bid}</td>
-                      <td style={{...tdStyle("ce"), fontWeight:700, color:"var(--green)"}}>
-                        {s.ce?.ltp}
+                      background: isATM ? "rgba(47,158,143,0.08)" : "transparent",
+                    }}>
+                      <td style={{
+                        ...stickyCell,
+                        fontWeight:700,
+                        fontSize: isATM ? 13 : 11,
+                        color: isATM ? "var(--green)" : "var(--text)",
+                        background: isATM ? "var(--surface2)" : "var(--surface)",
+                      }}>
+                        {s.strike.toLocaleString("en-IN")}
+                        {isATM && <div style={{fontSize:8, color:"var(--green)", letterSpacing:1}}>ATM</div>}
                       </td>
+                      <td style={{...tdStyle("ce"), fontWeight:700, color:"var(--green)"}}>{fmtPx(s.ce?.ltp)}</td>
+                      <td style={{...tdStyle("pe"), fontWeight:700, color:"var(--red)"}}>{fmtPx(s.pe?.ltp)}</td>
+                      <td style={tdStyle("ce")}>{fmtPx(s.ce?.bid)}</td>
+                      <td style={tdStyle("pe")}>{fmtPx(s.pe?.bid)}</td>
+                      <td style={tdStyle("ce")}>{fmtOI(s.ce?.oi)}</td>
+                      <td style={tdStyle("pe")}>{fmtOI(s.pe?.oi)}</td>
+                      <td style={tdStyle("ce")}>{s.ce?.iv ? `${fmtNum(s.ce.iv, 1)}%` : "—"}</td>
+                      <td style={tdStyle("pe")}>{s.pe?.iv ? `${fmtNum(s.pe.iv, 1)}%` : "—"}</td>
+                      <td style={tdStyle("ce")}>{fmtNum(s.ce?.delta, 3)}</td>
+                      <td style={tdStyle("pe")}>{fmtNum(s.pe?.delta, 3)}</td>
+                      <td style={tdStyle("ce")}>{fmtNum(s.ce?.theta, 2)}</td>
+                      <td style={tdStyle("pe")}>{fmtNum(s.pe?.theta, 2)}</td>
+                      <td style={tdStyle("ce")}>{fmtOI(s.ce?.volume)}</td>
+                      <td style={tdStyle("pe")}>{fmtOI(s.pe?.volume)}</td>
                       <td style={tdStyle("ce")}>
                         {s.ce?.security_id && (
                           <button onClick={() => {
@@ -239,20 +259,6 @@ export default function OptionsPage() {
                           </button>
                         )}
                       </td>
-                      {/* Strike */}
-                      <td style={{
-                        textAlign:"center", fontWeight:700,
-                        fontSize: isATM ? 13 : 11,
-                        color: isATM ? "var(--green)" : "var(--text)",
-                        padding:"8px 6px",
-                        background: isATM ? "rgba(0,255,136,0.1)" : "transparent",
-                        borderLeft:"1px solid var(--border)",
-                        borderRight:"1px solid var(--border)",
-                      }}>
-                        {s.strike}
-                        {isATM && <div style={{fontSize:8,color:"var(--green)",letterSpacing:1}}>ATM</div>}
-                      </td>
-                      {/* PE */}
                       <td style={tdStyle("pe")}>
                         {s.pe?.security_id && (
                           <button onClick={() => {
@@ -268,20 +274,12 @@ export default function OptionsPage() {
                           </button>
                         )}
                       </td>
-                      <td style={{...tdStyle("pe"), fontWeight:700, color:"var(--red)"}}>
-                        {s.pe?.ltp}
-                      </td>
-                      <td style={tdStyle("pe")}>{s.pe?.bid}</td>
-                      <td style={tdStyle("pe")}>{fmtOI(s.pe?.volume)}</td>
-                      <td style={tdStyle("pe")}>{s.pe?.theta?.toFixed(2)}</td>
-                      <td style={tdStyle("pe")}>{s.pe?.delta?.toFixed(3)}</td>
-                      <td style={tdStyle("pe")}>{s.pe?.iv?.toFixed(1)}%</td>
-                      <td style={tdStyle("pe")}>{fmtOI(s.pe?.oi)}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            </div>
           )}
 
           {!chainLoading && !chainData && expiry && (
@@ -292,74 +290,68 @@ export default function OptionsPage() {
         </div>
 
         {/* ── Options Watchlist ──────────────────────────────────── */}
-        {optWatchlist && optWatchlist.length > 0 && (
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">MY OPTIONS ({optWatchlist.length})</span>
-              <span style={{fontSize:10, color:"var(--muted)"}}>Live data via NFO_FNO segment</span>
-            </div>
-            <table style={{width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"var(--font)"}}>
-              <thead>
-                <tr style={{background:"rgba(0,0,0,0.3)"}}>
-                  {["SYMBOL","TYPE","STRIKE","EXPIRY","LTP","CHG%","OI","LOT SIZE","ACTIONS"].map(h => (
-                    <th key={h} style={{padding:"8px 12px",fontSize:9,letterSpacing:1.5,
-                      color:"var(--muted)",textAlign:"left",borderBottom:"1px solid var(--border)"}}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {optWatchlist.map((w: any) => (
-                  <tr key={w.security_id} style={{borderBottom:"1px solid var(--border)"}}
-                    onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,0.02)")}
-                    onMouseLeave={e=>(e.currentTarget.style.background="transparent")}
-                  >
-                    <td style={{padding:"10px 12px", fontWeight:700}}>
-                      <div>{w.symbol}</div>
-                      <div style={{fontSize:9, color:"var(--muted)", marginTop:2}}>{w.exchange_segment} · ID: {w.security_id}</div>
-                    </td>
-                    <td style={{padding:"10px 12px"}}>
-                      <span className={`badge ${w.option_type==="CE"?"badge-green":"badge-red"}`}>
-                        {w.option_type}
-                      </span>
-                    </td>
-                    <td style={{padding:"10px 12px", fontWeight:700}}>₹{w.strike}</td>
-                    <td style={{padding:"10px 12px", color:"var(--muted)", fontSize:11}}>
-                      {new Date(w.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}
-                    </td>
-                    <td style={{padding:"10px 12px", fontWeight:700,
-                      color: (optLive?.[w.security_id]?.ltp ?? 0) > 0 ? "var(--green)" : "var(--muted)"}}>
-                      {optLive?.[w.security_id]?.ltp ? `₹${optLive[w.security_id].ltp}` : "—"}
-                    </td>
-                    <td style={{padding:"10px 12px",
-                      color: (optLive?.[w.security_id]?.change_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)"}}>
-                      {optLive?.[w.security_id]?.change_pct != null
-                        ? `${optLive[w.security_id].change_pct >= 0 ? "+" : ""}${optLive[w.security_id].change_pct}%`
-                        : "—"}
-                    </td>
-                    <td style={{padding:"10px 12px", color:"var(--muted)", fontSize:11}}>
-                      {optLive?.[w.security_id]?.oi
-                        ? (optLive[w.security_id].oi >= 1e6
-                          ? `${(optLive[w.security_id].oi/1e6).toFixed(1)}M`
-                          : `${(optLive[w.security_id].oi/1e3).toFixed(0)}K`)
-                        : "—"}
-                    </td>
-                    <td style={{padding:"10px 12px"}}>{w.lot_size}</td>
-                    <td style={{padding:"10px 12px"}}>
-                      <div style={{display:"flex", gap:6}}>
-                        <button onClick={() => setOrderPanel({...w, side:"BUY"})}
-                          style={orderBtnStyle("BUY")}>BUY</button>
-                        <button onClick={() => setOrderPanel({...w, side:"SELL"})}
-                          style={orderBtnStyle("SELL")}>SELL</button>
-                        <button onClick={() => removeMutation.mutate(w.security_id)}
-                          style={{...orderBtnStyle("SELL"), color:"var(--muted)", borderColor:"var(--border)"}}>✕</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">OPTIONS WATCHLIST ({optWatchlist?.length ?? 0})</span>
+            <span style={{fontSize:10, color:"var(--muted)"}}>Same quote columns as the terminal</span>
           </div>
-        )}
+          <OptionSearch onAdd={(inst) => addMutation.mutate(inst)} pending={addMutation.isPending} />
+          {(optWatchlist ?? []).length === 0 ? (
+            <div style={{padding:"28px 16px", textAlign:"center", color:"var(--muted)", fontSize:12}}>
+              No option contracts yet. Search above, or use + on a chain strike.
+            </div>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:"var(--font)"}}>
+                <thead>
+                  <tr style={{background:"var(--surface)", borderBottom:"2px solid var(--border)"}}>
+                    {["#","SYMBOL","OPEN","HIGH","LOW","CLOSE","VWAP","VOLUME","OI","LTP","%CHG",""].map(h => (
+                      <th key={h} style={{padding:"8px 10px", fontSize:10, letterSpacing:1.2,
+                        color:"var(--muted)", textAlign:"left", borderRight:"1px solid var(--border)",
+                        whiteSpace:"nowrap"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(optWatchlist ?? []).map((w: any, idx: number) => {
+                    const live = optLive?.[w.security_id] ?? {};
+                    const chg = live.change_pct;
+                    return (
+                      <tr key={w.security_id} style={{borderBottom:"1px solid var(--border)"}}>
+                        <td style={wlCell}>{idx + 1}</td>
+                        <td style={wlCell}>
+                          <div style={{fontWeight:700, color:"var(--green)"}}>{w.symbol}</div>
+                          <div style={{fontSize:10, color:"var(--muted)", marginTop:2}}>
+                            {w.option_type} · {Number(w.strike).toLocaleString("en-IN")} · {fmtExpiry(w.expiry)} · Lot {w.lot_size}
+                          </div>
+                        </td>
+                        <td style={wlCell}>{fmtPx(live.open)}</td>
+                        <td style={{...wlCell, color:"var(--green)"}}>{fmtPx(live.high)}</td>
+                        <td style={{...wlCell, color:"var(--red)"}}>{fmtPx(live.low)}</td>
+                        <td style={wlCell}>{fmtPx(live.close)}</td>
+                        <td style={wlCell}>{fmtPx(live.vwap)}</td>
+                        <td style={wlCell}>{fmtLakhs(live.volume)}</td>
+                        <td style={wlCell}>{fmtLakhs(live.oi)}</td>
+                        <td style={{...wlCell, fontWeight:700, fontSize:14}}>{fmtPx(live.ltp)}</td>
+                        <td style={{...wlCell, color: (chg ?? 0) >= 0 ? "var(--green)" : "var(--red)"}}>
+                          {chg == null ? "—" : `${chg >= 0 ? "+" : ""}${Number(chg).toFixed(2)}%`}
+                        </td>
+                        <td style={wlCell}>
+                          <div style={{display:"flex", gap:4}}>
+                            <button onClick={() => setOrderPanel({...w, side:"BUY"})} style={orderBtnStyle("BUY")}>B</button>
+                            <button onClick={() => setOrderPanel({...w, side:"SELL"})} style={orderBtnStyle("SELL")}>S</button>
+                            <button onClick={() => removeMutation.mutate(w.security_id)}
+                              style={{background:"transparent", border:"none", color:"var(--muted)", cursor:"pointer"}}>✕</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         {/* ── Order Panel ────────────────────────────────────────── */}
         {orderPanel && (
@@ -373,19 +365,96 @@ export default function OptionsPage() {
   );
 }
 
+function OptionSearch({ onAdd, pending }: { onAdd: (inst: any) => void; pending: boolean }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setResults([]); return; }
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const data = await api.get(`/options/search?q=${encodeURIComponent(query.trim())}`).then(r => r.data);
+        setResults(data);
+      } catch {
+        setResults([]);
+      }
+      setLoading(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  return (
+    <div style={{padding:"12px 16px", borderBottom:"1px solid var(--border)"}}>
+      <input className="field-input" value={query} autoComplete="off"
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search an option to add... e.g. BANKNIFTY 61000 CE"
+        style={{maxWidth:520}} />
+      {loading && <div style={{fontSize:10, color:"var(--muted)", marginTop:6}}>Searching...</div>}
+      {results.length > 0 && (
+        <div style={{marginTop:8, border:"1px solid var(--border)", maxHeight:260, overflowY:"auto", maxWidth:640}}>
+          {results.map(inst => (
+            <div key={inst.security_id} style={{
+              padding:"8px 12px", display:"flex", justifyContent:"space-between",
+              alignItems:"center", gap:12, borderBottom:"1px solid var(--border)",
+            }}>
+              <div>
+                <span style={{fontWeight:700, color:"var(--green)", fontSize:12}}>{inst.symbol}</span>
+                <span style={{fontSize:10, color:"var(--muted)", marginLeft:8}}>
+                  {inst.option_type} · Lot {inst.lot_size} · {fmtExpiry(inst.expiry)}
+                </span>
+              </div>
+              <button className="connect-btn" style={{padding:"2px 10px", fontSize:10}}
+                disabled={pending}
+                onClick={() => { onAdd(inst); setQuery(""); setResults([]); }}>
+                + ADD
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const wlCell: React.CSSProperties = {
+  padding: "8px 10px",
+  borderRight: "1px solid var(--border)",
+  whiteSpace: "nowrap",
+};
+
+function fmtExpiry(value?: string) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function fmtLakhs(v?: number) {
+  if (v == null || Number(v) <= 0) return "—";
+  return `${(Number(v) / 100000).toFixed(1)}L`;
+}
+
 /* ── Options Order Panel ─────────────────────────────────────────────────── */
 function OptionsOrderPanel({ item, onClose }: { item: any; onClose: () => void }) {
   const [side,      setSide]      = useState<"BUY"|"SELL">(item.side || "BUY");
   const [lots,      setLots]      = useState(1);
+  const [lotSize,   setLotSize]   = useState<number>(item.lot_size || 1);
   const [orderType, setOrderType] = useState("MARKET");
   const [product,   setProduct]   = useState("INTRADAY");
   const [price,     setPrice]     = useState("");
   const [confirm,   setConfirm]   = useState(false);
+  const qc = useQueryClient();
 
-  const qty = lots * (item.lot_size || 75);
+  const qty = lots * (lotSize || 1);
 
   const orderMutation = useMutation({
-    mutationFn: () => api.post("/terminal/order", {
+    mutationFn: async () => {
+      if (item.security_id && lotSize !== item.lot_size) {
+        await api.patch(`/options/watchlist/${item.security_id}`, { lot_size: lotSize }).catch(() => null);
+      }
+      return api.post("/terminal/order", {
       symbol:           item.symbol,
       security_id:      item.security_id,
       exchange_segment: item.exchange_segment || "NSE_FNO",
@@ -395,9 +464,11 @@ function OptionsOrderPanel({ item, onClose }: { item: any; onClose: () => void }
       product_type:     product,
       price:            orderType === "LIMIT" ? parseFloat(price) : 0,
       trigger_price:    0,
-    }),
+    });
+    },
     onSuccess: (res: any) => {
       toast.success(`✅ ${side} order placed — ${res.data?.order_id ?? ""}`);
+      qc.invalidateQueries({queryKey:["options-watchlist"]});
       onClose();
     },
     onError: (e: any) => {
@@ -474,9 +545,14 @@ function OptionsOrderPanel({ item, onClose }: { item: any; onClose: () => void }
         {/* Lots + Price */}
         <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16}}>
           <div className="field">
-            <label className="field-label">LOTS (1 lot = {item.lot_size} qty)</label>
+            <label className="field-label">LOTS</label>
             <input className="field-input" type="number" min={1} value={lots}
               onChange={e=>setLots(parseInt(e.target.value)||1)} />
+          </div>
+          <div className="field">
+            <label className="field-label">QTY PER LOT</label>
+            <input className="field-input" type="number" min={1} value={lotSize}
+              onChange={e=>setLotSize(Math.max(1, parseInt(e.target.value) || 1))} />
           </div>
           {orderType === "LIMIT" && (
             <div className="field">
@@ -547,13 +623,40 @@ function fmtOI(v?: number) {
   return String(v);
 }
 
+function fmtPx(v?: number | null) {
+  if (v == null || Number(v) === 0) return "—";
+  return Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtNum(v?: number | null, digits = 2) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  return Number(v).toFixed(digits);
+}
+
+const stickyHead: React.CSSProperties = {
+  position: "sticky", left: 0, top: 0, zIndex: 3,
+  padding: "8px 10px", fontSize: 9, letterSpacing: 1.2,
+  textAlign: "center", color: "var(--text)",
+  background: "var(--surface2)",
+  borderBottom: "1px solid var(--border)",
+  minWidth: 88,
+};
+
+const stickyCell: React.CSSProperties = {
+  position: "sticky", left: 0, zIndex: 1,
+  textAlign: "center", padding: "8px 10px",
+  borderRight: "1px solid var(--border)",
+};
+
 function thStyle(side: "ce"|"pe"|"strike"): React.CSSProperties {
   return {
+    position: "sticky", top: 0, zIndex: 1,
     padding:"8px 8px", fontSize:9, letterSpacing:1.2,
-    color: side==="ce" ? "rgba(0,255,136,0.7)" : side==="pe" ? "rgba(255,68,102,0.7)" : "var(--text)",
+    color: side==="ce" ? "var(--green)" : side==="pe" ? "var(--red)" : "var(--text)",
     textAlign: side==="pe" ? "right" : "left",
+    background: "var(--surface2)",
     borderBottom:"1px solid var(--border)",
-    borderRight:"1px solid rgba(255,255,255,0.05)",
+    borderRight:"1px solid var(--border)",
     whiteSpace:"nowrap",
   };
 }

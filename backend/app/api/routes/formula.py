@@ -14,7 +14,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_admin
 from app.models.user import User
 from app.models.formula import FormulaStrategy, ManagedPosition, PositionStatus
 from app.models.broker import BrokerAccount
@@ -67,7 +67,7 @@ class ManualPositionCreate(BaseModel):
 
 @router.get("")
 async def list_formula_strategies(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -103,7 +103,7 @@ async def list_formula_strategies(
 @router.post("", status_code=201)
 async def create_formula_strategy(
     payload: FormulaStrategyCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     # Validate all provided formulas
@@ -149,7 +149,7 @@ async def create_formula_strategy(
 async def update_formula_strategy(
     strategy_id: UUID,
     payload: FormulaStrategyCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     strat = await _get_strat(strategy_id, current_user.id, db)
@@ -170,7 +170,7 @@ async def update_formula_strategy(
 @router.delete("/{strategy_id}", status_code=204)
 async def delete_formula_strategy(
     strategy_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     strat = await _get_strat(strategy_id, current_user.id, db)
@@ -182,7 +182,7 @@ async def delete_formula_strategy(
 async def start_formula_strategy(
     strategy_id: UUID,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     strat = await _get_strat(strategy_id, current_user.id, db)
@@ -219,7 +219,7 @@ async def start_formula_strategy(
 @router.post("/{strategy_id}/stop")
 async def stop_formula_strategy(
     strategy_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     strat = await _get_strat(strategy_id, current_user.id, db)
@@ -234,7 +234,7 @@ async def stop_formula_strategy(
 @router.post("/validate-formula")
 async def validate_formula_endpoint(
     body: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """Validate a formula expression before saving."""
     expr = body.get("expression", "")
@@ -253,7 +253,7 @@ class FormulaPreviewRequest(BaseModel):
 @router.post("/preview")
 async def preview_formula_endpoint(
     body: FormulaPreviewRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """Show how a formula reads on recent Dhan candles. Invalid formulas never hit the broker."""
     ok, err = validate_formula(body.expression)

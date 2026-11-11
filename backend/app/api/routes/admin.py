@@ -109,6 +109,28 @@ async def create_user(
     return {"id": str(user.id), "username": user.username}
 
 
+class ResetPasswordRequest(BaseModel):
+    password: str
+
+
+@router.patch("/users/{user_id}/password")
+async def reset_user_password(
+    user_id: UUID,
+    payload: ResetPasswordRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set a new password when the current one is unknown. Admin only."""
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.hashed_password = hash_password(payload.password)
+    await db.commit()
+    return {"message": "Password reset"}
+
+
 @router.patch("/users/{user_id}/toggle")
 async def toggle_user(
     user_id: UUID,

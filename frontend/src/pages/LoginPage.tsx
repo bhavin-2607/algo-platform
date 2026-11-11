@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { authApi, userApi } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
@@ -57,8 +57,7 @@ export default function LoginPage() {
           </button>
         </form>
         <div className="auth-footer">
-          <span>No account? </span>
-          <Link to="/register">REQUEST_ACCESS</Link>
+          <span>Accounts are created by an admin.</span>
         </div>
       </div>
     </div>

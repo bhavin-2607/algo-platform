@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
@@ -69,6 +69,8 @@ function UsersTab() {
   });
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ email:"", username:"", password:"", role:"trader" });
+  const [resetId, setResetId] = useState<string | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
   const set = (k:string)=>(e:any)=>setForm(f=>({...f,[k]:e.target.value}));
 
   const createMutation = useMutation({
@@ -83,6 +85,16 @@ function UsersTab() {
   const deleteMutation = useMutation({
     mutationFn:(id:string)=>api.delete(`/admin/users/${id}`),
     onSuccess:()=>{ toast.success("User deleted"); qc.invalidateQueries({queryKey:["admin-users"]}); },
+  });
+  const resetMutation = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      api.patch(`/admin/users/${id}/password`, { password }),
+    onSuccess: () => {
+      toast.success("Password reset");
+      setResetId(null);
+      setResetPassword("");
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Reset failed"),
   });
 
   if (isLoading) return <Spinner />;
@@ -123,7 +135,8 @@ function UsersTab() {
         </tr></thead>
         <tbody>
           {users?.map((u:any)=>(
-            <tr key={u.id}>
+            <Fragment key={u.id}>
+            <tr>
               <td className="symbol">{u.username}</td>
               <td style={{color:"var(--muted)",fontSize:11}}>{u.email}</td>
               <td><span className={`badge ${u.role==="admin"?"badge-yellow":"badge-gray"}`}>
@@ -135,9 +148,15 @@ function UsersTab() {
               <td>{u.brokers}</td>
               <td>{u.strategies}</td>
               <td>{u.trades}</td>
-              <td style={{display:"flex",gap:6}}>
+              <td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 <button className="exit-btn" onClick={()=>toggleMutation.mutate(u.id)}>
                   {u.is_active?"DISABLE":"ENABLE"}
+                </button>
+                <button className="exit-btn" onClick={() => {
+                  setResetId(resetId === u.id ? null : u.id);
+                  setResetPassword("");
+                }}>
+                  {resetId === u.id ? "CANCEL" : "RESET"}
                 </button>
                 <button className="exit-btn"
                   style={{borderColor:"rgba(255,68,102,0.4)",color:"var(--red)"}}
@@ -146,6 +165,24 @@ function UsersTab() {
                 </button>
               </td>
             </tr>
+            {resetId === u.id && (
+              <tr>
+                <td colSpan={8}>
+                  <div style={{display:"flex", gap:8, alignItems:"center", padding:"4px 0 8px"}}>
+                    <input className="field-input" type="password" value={resetPassword}
+                      placeholder="New password, at least 8 characters"
+                      onChange={e => setResetPassword(e.target.value)}
+                      style={{maxWidth:320}} />
+                    <button className="connect-btn"
+                      disabled={resetPassword.length < 8 || resetMutation.isPending}
+                      onClick={() => resetMutation.mutate({ id: u.id, password: resetPassword })}>
+                      {resetMutation.isPending ? "SAVING" : "SET PASSWORD"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -315,11 +352,14 @@ function StrategiesTab() {
                         {assignForm.user_id && userBrokers.length === 0 && (
                           <div style={{fontSize:11,color:"var(--yellow)"}}>⚠ User has no broker connected</div>
                         )}
+                        <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>
+                          Runs on every symbol in that user's terminal watchlist.
+                        </div>
                         <button className={`auth-btn${assignMutation.isPending?" loading":""}`}
                           onClick={()=>assignMutation.mutate(s.id)}
                           disabled={!assignForm.broker_account_id||assignMutation.isPending}
-                          style={{maxWidth:140, marginBottom:4}}>
-                          {assignMutation.isPending?"ASSIGNING...":"ASSIGN →"}
+                          style={{maxWidth:220, marginBottom:4}}>
+                          {assignMutation.isPending?"ASSIGNING...":"ASSIGN TO WATCHLIST"}
                         </button>
                       </div>
                     </td>

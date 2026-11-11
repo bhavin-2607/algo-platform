@@ -28,6 +28,12 @@ async def init_db():
         await conn.exec_driver_sql(
             "ALTER TABLE user_strategy_map ADD COLUMN IF NOT EXISTS engine_version VARCHAR"
         )
+        await conn.exec_driver_sql(
+            "ALTER TABLE terminal_rows ADD COLUMN IF NOT EXISTS target_formula VARCHAR"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE terminal_rows ADD COLUMN IF NOT EXISTS sl_formula VARCHAR"
+        )
 
 
 async def get_db():

@@ -19,6 +19,7 @@ from app.models.user import User
 from app.models.strategy import Strategy, UserStrategyMap, StrategyStatus
 from app.models.broker import BrokerAccount
 from app.core.redis_client import get_redis, strategy_running_key, strategy_state_key
+from app.market.dhan_feed import redis_exchange
 
 router = APIRouter()
 
@@ -68,12 +69,18 @@ async def list_available_strategies(
         select(Strategy).where(Strategy.is_available == True)
     )
     strategies = result.scalars().all()
+    order_fields = {"symbol", "quantity", "exchange"}
+    is_admin = current_user.role == "admin"
     return [
         {
             "id":             str(s.id),
             "name":           s.name,
             "description":    s.description,
-            "default_params": s.default_params,
+            "default_params": s.default_params if is_admin else {
+                key: value
+                for key, value in (s.default_params or {}).items()
+                if key in order_fields
+            },
         }
         for s in strategies
     ]
@@ -119,31 +126,41 @@ async def assign_strategy(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Assign a strategy to the user with a specific broker account."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-    # Verify broker account belongs to user
-    ba = await db.execute(
-        select(BrokerAccount).where(
-            BrokerAccount.id == payload.broker_account_id,
-            BrokerAccount.user_id == current_user.id,
-        )
-    )
-    if not ba.scalar_one_or_none():
+    """Assign a strategy to the broker account's user. It runs on that user's whole watchlist."""
+    account = await db.get(BrokerAccount, payload.broker_account_id)
+    if not account:
         raise HTTPException(status_code=404, detail="Broker account not found")
+    if account.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
 
     strat = await db.get(Strategy, payload.strategy_id)
     if not strat or not strat.is_available:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    reason = _live_block(strat, payload.paper_trading, payload.params, None, require_params=False)
+
+    from app.models.watchlist import UserWatchlist
+    listed = await db.execute(
+        select(UserWatchlist).where(UserWatchlist.user_id == account.user_id)
+    )
+    symbols = [
+        {"symbol": row.symbol, "token": row.security_id, "exchange": redis_exchange(row.exchange_segment)}
+        for row in listed.scalars().all()
+    ]
+    if not symbols:
+        raise HTTPException(status_code=400, detail="Add symbols on the terminal watchlist before assigning a strategy")
+
+    params = dict(payload.params or {})
+    params.pop("symbol", None)
+    params["apply_to"] = "watchlist"
+    params["symbols"] = [row["symbol"] for row in symbols]
+    reason = _live_block(strat, payload.paper_trading, params, None, require_params=False)
     if reason:
         raise HTTPException(status_code=403, detail=reason)
 
     usm = UserStrategyMap(
-        user_id           = current_user.id,
+        user_id           = account.user_id,
         strategy_id       = payload.strategy_id,
         broker_account_id = payload.broker_account_id,
-        params            = payload.params,
+        params            = params,
         engine_version    = strat.version,
         paper_trading     = payload.paper_trading,
         status            = StrategyStatus.stopped,
@@ -166,9 +183,14 @@ async def start_strategy(
     if usm.status == StrategyStatus.active:
         raise HTTPException(status_code=400, detail="Strategy is already running")
 
-    symbol   = usm.params.get("symbol", "RELIANCE")
-    exchange = usm.params.get("exchange", "NSE")
-    token    = usm.params.get("token", "2885")
+    from app.models.watchlist import UserWatchlist
+    listed = await db.execute(
+        select(UserWatchlist).where(UserWatchlist.user_id == usm.user_id)
+    )
+    watch = list(listed.scalars().all())
+    if not watch:
+        raise HTTPException(status_code=400, detail="The watchlist is empty")
+    symbols = [row.symbol.upper() for row in watch]
 
     if not usm.paper_trading:
         # Live path — hard gates before mutating state or enqueueing work
@@ -191,35 +213,42 @@ async def start_strategy(
             .where(
                 BacktestRun.engine_class == strat.engine_class,
                 BacktestRun.version == (strat.version or "1"),
-                BacktestRun.symbol == symbol.upper(),
+                BacktestRun.symbol.in_(symbols),
             )
             .order_by(BacktestRun.created_at.desc())
-            .limit(1)
         )
-        row = latest.scalar_one_or_none()
-        blocked = backtest_block_reason(None if row is None else bool(row.passed))
-        if blocked:
-            raise HTTPException(status_code=403, detail=blocked)
+        seen = set()
+        for row in latest.scalars().all():
+            key = row.symbol.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            blocked = backtest_block_reason(bool(row.passed))
+            if blocked:
+                raise HTTPException(status_code=403, detail=f"{key}: {blocked}")
 
     usm.status = StrategyStatus.active
     await db.commit()
 
     if usm.paper_trading:
-        # Paper trading — simulated feed only (never used for live)
         from app.worker.tasks import start_simulated_feed
         price = float(usm.params.get("base_price", 2800.0))
-        start_simulated_feed.delay(exchange=exchange, token=token, base_price=price)
-        logger.info(f"Paper trading: simulated feed started for {symbol}")
+        for row in watch:
+            exch = redis_exchange(row.exchange_segment)
+            start_simulated_feed.delay(exchange=exch, token=row.security_id, base_price=price)
+        logger.info("Paper trading: simulated feed started for %s symbols", len(watch))
     else:
         from app.worker.tasks import start_dhan_feed
-        start_dhan_feed.delay(instruments=[{
-            "exchange":    exchange,
-            "security_id": token,
-            "token":       token,
-        }])
-        logger.info(f"Live trading: Dhan feed started for {symbol} ({exchange}:{token})")
+        start_dhan_feed.delay(instruments=[
+            {
+                "exchange": redis_exchange(row.exchange_segment),
+                "security_id": row.security_id,
+                "token": row.security_id,
+            }
+            for row in watch
+        ])
+        logger.info("Live trading: Dhan feed started for %s symbols", len(watch))
 
-    # Launch strategy executor
     from app.worker.tasks import run_strategy
     task = run_strategy.delay(str(map_id))
 
@@ -227,8 +256,7 @@ async def start_strategy(
         "status":     "started",
         "task_id":    task.id,
         "feed":       "simulated" if usm.paper_trading else "dhan_live",
-        "symbol":     symbol,
-        "exchange":   exchange,
+        "symbols":    [row.symbol for row in watch],
     }
 
 
@@ -462,13 +490,19 @@ async def get_live_signals(
     for usm, strategy in assignments:
         try:
             StrategyClass = get_strategy_class(strategy.engine_class)
-            engine        = StrategyClass(usm.params or strategy.default_params or {})
 
             for wl in watchlist:
                 sym  = wl.symbol
                 tick = live_data.get(sym, {})
                 if not tick:
                     continue
+                params = {
+                    **(usm.params or strategy.default_params or {}),
+                    "symbol": sym,
+                    "exchange": redis_exchange(wl.exchange_segment),
+                    "token": wl.security_id,
+                }
+                engine = StrategyClass(params)
 
                 ltp   = float(tick.get("ltp",   0) or 0)
                 open_ = float(tick.get("open",  0) or 0)
@@ -498,13 +532,11 @@ async def get_live_signals(
                     "assignment_id":  str(usm.id),
                     "strategy_id":    str(strategy.id),
                     "strategy_name":  strategy.name,
-                    "engine_class":   strategy.engine_class,
                     "symbol":         sym,
                     "direction":      signal.direction if signal else "HOLD",
                     "price":          signal.price     if signal else ltp,
                     "sl":             signal.sl        if signal else None,
                     "target":         signal.target    if signal else None,
-                    "reason":         signal.reason    if signal else "",
                     "paper_trading":  usm.paper_trading,
                 })
         except Exception as e:
