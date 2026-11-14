@@ -108,6 +108,11 @@ class ExcelFormulaEngine:
         if expr.startswith("="):
             expr = expr[1:]
 
+        # Column results such as SIGNAL are names, not prices. Keep the
+        # spelling the namespace uses so signal="BUY" survives validation.
+        for alias in ("signal", "entry", "trend", "sl"):
+            expr = re.sub(rf'\b{alias}\b', alias, expr, flags=re.IGNORECASE)
+
         # Replace named field references first (e.g. high, low, close, ltp)
         named_fields = [
             "open", "high", "low", "close", "vwap", "ltp",
@@ -158,7 +163,7 @@ class ExcelFormulaEngine:
 
     def _safe_ns(self, tick: dict) -> dict:
         """Safe namespace for eval."""
-        return {
+        ns = {
             "sqrt":   math.sqrt,
             # Excel helper functions
             "_IF":    lambda cond, t, f: t if cond else f,
@@ -173,6 +178,14 @@ class ExcelFormulaEngine:
             **{k: float(v) if isinstance(v, (int, float)) else v
                for k, v in tick.items()},
         }
+        # Filled by an earlier column when that column has a value.
+        # A blank default lets ENTRY and SL formulas mention signal
+        # before the SIGNAL column has fired.
+        ns.setdefault("signal", "")
+        ns.setdefault("entry", 0.0)
+        ns.setdefault("trend", "")
+        ns.setdefault("sl", 0.0)
+        return ns
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
@@ -183,6 +196,28 @@ def evaluate_formula(formula: str, tick: dict) -> Any:
 
 def validate_formula_excel(formula: str) -> tuple[bool, str]:
     return _engine.validate(formula)
+
+
+OPTION_PERCENT_COLUMNS = frozenset({
+    "T11.8", "T23.8", "T38.2", "T50", "T61.8", "T78.6", "T100", "T1.618", "T2.618",
+})
+
+
+def formula_for_book(name: str, formula: str, book: str) -> str:
+    """Options keep their own saved formula. A new options copy starts at 100x the equity T percent."""
+    if book == "option" and name in OPTION_PERCENT_COLUMNS:
+        return scale_option_percents(formula)
+    return formula
+
+
+def scale_option_percents(formula: str) -> str:
+    """Equity T11.8 uses 0.118%. The options table uses 11.8% for that same column."""
+    def wider(match: re.Match) -> str:
+        number = float(match.group(1)) * 100
+        text = f"{number:.4f}".rstrip("0").rstrip(".")
+        return f"{text}%"
+
+    return re.sub(r"(\d+\.?\d*)\s*%", wider, formula)
 
 
 def evaluate_columns_in_order(columns: list[dict], tick: dict) -> dict:

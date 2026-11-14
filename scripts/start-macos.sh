@@ -104,6 +104,54 @@ print_admin() {
   fi
 }
 
+choose_web_port() {
+  if (echo >/dev/tcp/127.0.0.1/80) >/dev/null 2>&1; then
+    echo 5173
+  else
+    echo 80
+  fi
+}
+
+choose_native_web_port() {
+  if python3 -c 'import socket
+s=socket.socket()
+try:
+    s.bind(("0.0.0.0", 80))
+except OSError:
+    raise SystemExit(1)
+finally:
+    s.close()' >/dev/null 2>&1; then
+    echo 80
+  else
+    echo 5173
+  fi
+}
+
+lan_host() {
+  local ip
+  ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+  if [[ -n "$ip" ]]; then
+    echo "$ip"
+  else
+    echo "localhost"
+  fi
+}
+
+print_home() {
+  local port="$1" host url
+  host="$(lan_host)"
+  if [[ "$port" == "80" ]]; then
+    url="http://${host}"
+    echo "On this Mac: http://localhost"
+  else
+    url="http://${host}:${port}"
+    echo "On this Mac: http://localhost:${port}"
+  fi
+  echo "On this home network: ${url}"
+  echo "No router port forward is required. Postgres and Redis stay on this Mac."
+  echo "macOS may ask to allow incoming connections. Allow it for this private network."
+}
+
 if [[ "$MODE" == "docker" ]]; then
   ensure_brew
   export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
@@ -126,11 +174,18 @@ if [[ "$MODE" == "docker" ]]; then
     exit 1
   fi
   write_env "$ROOT/.env"
+  WEB_PORT="$(choose_web_port)"
+  export WEB_PORT
   docker compose up -d --build
-  wait_http "http://localhost/api/health"
+  if [[ "$WEB_PORT" == "80" ]]; then
+    wait_http "http://localhost/api/health"
+    open "http://localhost" || true
+  else
+    wait_http "http://localhost:${WEB_PORT}/api/health"
+    open "http://localhost:${WEB_PORT}" || true
+  fi
   print_admin docker
-  echo "Open http://localhost"
-  open "http://localhost" || true
+  print_home "$WEB_PORT"
   exit 0
 fi
 
@@ -185,16 +240,22 @@ if [[ ! -d "$ROOT/frontend/node_modules" ]]; then
   (cd "$ROOT/frontend" && npm install)
 fi
 
+WEB_PORT="$(choose_native_web_port)"
 osascript <<EOF
 tell application "Terminal"
   do script "cd '$ROOT/backend' && '$PY' -m uvicorn app.main:app --reload"
   do script "cd '$ROOT/backend' && '$PY' -m celery -A app.worker.celery_app worker --loglevel=info"
   do script "cd '$ROOT/backend' && '$PY' -m celery -A app.worker.celery_app beat --loglevel=info"
-  do script "cd '$ROOT/frontend' && npm run dev"
+  do script "cd '$ROOT/frontend' && npm run dev -- --host 0.0.0.0 --port $WEB_PORT --strictPort"
 end tell
 EOF
+print_home "$WEB_PORT"
 
 if wait_http "http://localhost:8000/api/health"; then
   print_admin native
 fi
-echo "API http://localhost:8000  UI http://localhost:5173"
+if [[ "$WEB_PORT" == "80" ]]; then
+  echo "API http://localhost:8000  UI http://localhost"
+else
+  echo "API http://localhost:8000  UI http://localhost:${WEB_PORT}"
+fi

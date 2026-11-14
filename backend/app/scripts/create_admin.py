@@ -27,14 +27,14 @@ async def main() -> None:
             print("Users already exist. No admin was created.")
             return
         db.add(User(
-            email="admin@localhost",
+            email="admin@example.com",
             username="admin",
             hashed_password=hash_password(password),
             role=UserRole.admin,
             is_active=True,
         ))
         await db.commit()
-        print("Created admin user 'admin' (admin@localhost).")
+        print("Created admin user 'admin' (admin@example.com).")
 
 
 if __name__ == "__main__":

@@ -487,9 +487,19 @@ COLUMN_PRESETS = [
 
 
 @router.get("/column-presets")
-async def list_column_presets(current_user: User = Depends(require_admin)):
+async def list_column_presets(
+    book: str = "equity",
+    current_user: User = Depends(require_admin),
+):
     """House column templates. Admin only, so the expressions stay out of the trader bundle."""
-    return COLUMN_PRESETS
+    from app.strategy.excel_formula_engine import formula_for_book
+
+    if book not in ("equity", "option"):
+        raise HTTPException(status_code=400, detail="book must be equity or option")
+    return [
+        {**preset, "formula": formula_for_book(preset["name"], preset["formula"], book)}
+        for preset in COLUMN_PRESETS
+    ]
 
 
 # ── Terminal Columns (default + custom, all manageable) ─────────────────────
@@ -503,6 +513,7 @@ class ColumnCreate(BaseModel):
     width:       int   = 80
     is_visible:  bool  = True
     color_rules: Optional[str] = None
+    book:        str   = "equity"       # equity or option; market columns are shared
 
 
 class ColumnValueTick(BaseModel):
@@ -520,6 +531,7 @@ class ColumnValueTick(BaseModel):
 
 class ColumnValueRequest(BaseModel):
     ticks: list[ColumnValueTick] = []
+    book: str = "equity"
 
 
 async def _column_for_editor(db: AsyncSession, col_id: UUID, current_user: User):
@@ -555,24 +567,57 @@ async def _shared_columns(db: AsyncSession, current_user: User):
             .order_by(TerminalColumn.col_order)
         )
         cols = list(result.scalars().all())
-    if cols or current_user.role != UserRole.admin:
+    if not cols and current_user.role == UserRole.admin:
+        for d in DEFAULT_COLUMNS:
+            db.add(TerminalColumn(
+                user_id=current_user.id,
+                name=d["name"],
+                col_key=d["col_key"],
+                col_type=d["col_type"],
+                formula=d.get("formula"),
+                col_order=d["col_order"],
+                width=d["width"],
+                is_visible=True,
+                color_rules=d["color_rules"],
+                book="shared",
+            ))
+        await db.commit()
+        result = await db.execute(
+            select(TerminalColumn)
+            .where(TerminalColumn.user_id == current_user.id)
+            .order_by(TerminalColumn.col_order)
+        )
+        cols = list(result.scalars().all())
+    cols = await _ensure_option_formulas(db, cols)
+    return cols
+
+
+async def _ensure_option_formulas(db: AsyncSession, cols: list):
+    """Copy equity formulas into the options book once. Later edits stay on the book that was saved."""
+    from app.models.terminal_column import TerminalColumn
+    from app.strategy.excel_formula_engine import formula_for_book
+
+    equity = [col for col in cols if col.formula and (col.book or "equity") == "equity"]
+    if not equity or any(col.book == "option" for col in cols):
         return cols
-    for d in DEFAULT_COLUMNS:
+    for src in equity:
         db.add(TerminalColumn(
-            user_id=current_user.id,
-            name=d["name"],
-            col_key=d["col_key"],
-            col_type=d["col_type"],
-            formula=d.get("formula"),
-            col_order=d["col_order"],
-            width=d["width"],
-            is_visible=True,
-            color_rules=d["color_rules"],
+            user_id=src.user_id,
+            name=src.name,
+            col_key=src.col_key,
+            col_type=src.col_type,
+            formula=formula_for_book(src.name, src.formula, "option"),
+            col_order=src.col_order,
+            width=src.width,
+            is_visible=src.is_visible,
+            color_rules=src.color_rules,
+            book="option",
         ))
     await db.commit()
+    owner_ids = {col.user_id for col in cols}
     result = await db.execute(
         select(TerminalColumn)
-        .where(TerminalColumn.user_id == current_user.id)
+        .where(TerminalColumn.user_id.in_(owner_ids))
         .order_by(TerminalColumn.col_order)
     )
     return list(result.scalars().all())
@@ -584,11 +629,16 @@ async def column_values(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Evaluate shared formula columns. Callers receive values, not expressions."""
+    """Evaluate the saved formulas for one book. Equity and options are stored separately."""
     from app.strategy.excel_formula_engine import evaluate_columns_in_order
 
+    book = "option" if payload.book == "option" else "equity"
     cols = await _shared_columns(db, current_user)
-    formulas = [{"name": col.name, "formula": col.formula} for col in cols if col.formula]
+    formulas = []
+    for col in cols:
+        if not col.formula or (col.book or "equity") != book:
+            continue
+        formulas.append({"name": col.name, "formula": col.formula})
     values: dict[str, dict] = {}
     for tick in payload.ticks:
         data = {
@@ -627,6 +677,7 @@ async def list_columns(
                 "width":       col.width,
                 "is_visible":  col.is_visible,
                 "color_rules": col.color_rules,
+                "book":        col.book or "equity",
             }
             for col in cols
         ]
@@ -641,6 +692,7 @@ async def list_columns(
             "width":       d["width"],
             "is_visible":  True,
             "color_rules": d["color_rules"],
+            "book":        "shared",
         }
         for d in DEFAULT_COLUMNS
     ]
@@ -655,6 +707,8 @@ async def create_column(
     """Create a new custom formula column. Admin only."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
+    if payload.book not in ("equity", "option"):
+        raise HTTPException(status_code=400, detail="book must be equity or option")
 
     if payload.formula:
         from app.strategy.excel_formula_engine import validate_formula_excel
@@ -685,6 +739,7 @@ async def create_column(
         width       = payload.width,
         is_visible  = payload.is_visible,
         color_rules = payload.color_rules,
+        book        = payload.book,
     )
     db.add(col)
     await db.commit()
@@ -732,6 +787,8 @@ async def update_column(
     col.width       = payload.width
     col.is_visible  = payload.is_visible
     col.color_rules = payload.color_rules
+    if (col.book or "equity") in ("equity", "option") and payload.book in ("equity", "option"):
+        col.book = payload.book
     await db.commit()
     return {"status": "updated", "name": col.name}
 
@@ -773,6 +830,7 @@ async def reset_columns(
             width       = d["width"],
             is_visible  = True,
             color_rules = d["color_rules"],
+            book        = "shared",
         ))
     await db.commit()
     return {"status": "reset", "columns": len(DEFAULT_COLUMNS)}

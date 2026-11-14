@@ -31,6 +31,8 @@ Mac, from the repo root:
 
 The first time the database has no users, the script prints an admin username and password once. That password is not written into `.env`. Sign in with it, then change it from Settings. Public registration stays closed.
 
+Other devices on the same home network open the address the launcher prints. That is `http://<this-pc>` when this PC can use port 80, and `http://<this-pc>:5173` when port 80 is taken or cannot be opened. No router port forward is required. Postgres and Redis stay on that PC.
+
 Linux, when Docker is already installed:
 
 ```bash

@@ -6,7 +6,7 @@
  *   Row 1: Account summary (Cash, Margin, Overall PnL, Order Type, Trade Mode)
  *   Row 3+: Per-symbol rows with OHLC, VWAP, Best Buy/Sell, LTP, signals, entry/exit, T/SL, PnL
  */
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
@@ -99,16 +99,38 @@ const SECURITY_IDS: Record<string, {security_id:string, segment:string}> = {
   "BAJFINANCE": {security_id:"317",   segment:"NSE_EQ"},
 };
 
+const T_HEADERS: Record<string, string> = {
+  "T11.8": "T1", "T23.8": "T2", "T38.2": "T3", "T50": "T4", "T61.8": "T5",
+  "T78.6": "T6", "T100": "T7", "T1.618": "T8", "T2.618": "T9",
+};
+
+function columnTitle(name: string) {
+  return T_HEADERS[name] ?? name;
+}
+
+const LiveClock = memo(function LiveClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <span style={{ fontSize: 10, color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>
+      {now.toLocaleTimeString()}
+    </span>
+  );
+});
+
 export default function TerminalPage() {
   const qc = useQueryClient();
   const { accessToken, user } = useAuthStore();
   const isAdmin = user?.role === "admin";
   const [liveData,   setLiveData]   = useState<Record<string, any>>({});
   const [wsStatus,   setWsStatus]   = useState<"connecting"|"live"|"polling">("connecting");
-  const [lastUpdate, setLastUpdate] = useState<Date|null>(null);
   const [showAdd,    setShowAdd]    = useState(false);
   const [formulaRow, setFormulaRow] = useState<{id:string,symbol:string}|null>(null);
   const [showColumns, setShowColumns] = useState(false);
+  const [signalsOpen, setSignalsOpen] = useState(false);
   const [orderPanel,  setOrderPanel]  = useState<{symbol:string,security_id:string,segment:string,prefillSide?:string,prefillPrice?:number}|null>(null);
   const wsRef = useRef<WebSocket|null>(null);
 
@@ -156,7 +178,6 @@ export default function TerminalPage() {
               msg.data.forEach((q: any) => { next[q.symbol] = q; });
               return next;
             });
-            setLastUpdate(new Date());
           }
         } catch {}
       };
@@ -177,7 +198,6 @@ export default function TerminalPage() {
         const map: Record<string,any> = {};
         data.forEach((q: any) => { map[q.symbol] = q; });
         setLiveData(map);
-        setLastUpdate(new Date());
       }
       return data;
     },
@@ -193,27 +213,59 @@ export default function TerminalPage() {
   const visibleCols = (allCols ?? [])
     .filter((c:any) => c.is_visible)
     .sort((a:any, b:any) => a.col_order - b.col_order);
+  const colsFor = (book: string) => visibleCols.filter((c: any) => !c.formula || (c.book || "equity") === book);
   const customCols  = (allCols ?? []).filter((c:any) => c.col_type === "custom" && c.is_visible);
 
-  const columnTicks = watchlist.map((sym) => {
-    const q = liveData[sym] ?? {};
-    return {
-      symbol: sym,
-      ltp: q.ltp ?? null,
-      open: q.open ?? null,
-      high: q.high ?? null,
-      low: q.low ?? null,
-      close: q.close ?? null,
-      volume: q.volume ?? null,
-      oi: q.oi ?? null,
-      vwap: q.vwap ?? q.atp ?? null,
-    };
-  });
+  const segmentOf = (sym: string) =>
+    instrMap[sym]?.segment || (SECURITY_IDS as Record<string, {segment: string}>)[sym]?.segment || "NSE_EQ";
+  const equitySymbols = watchlist.filter((sym) => segmentOf(sym) !== "NSE_FNO");
+  const optionSymbols = watchlist.filter((sym) => segmentOf(sym) === "NSE_FNO");
+  const ticksRef = useRef<Record<string, any>>({});
+  ticksRef.current = liveData;
+  const booksRef = useRef({ equity: equitySymbols, options: optionSymbols });
+  booksRef.current = { equity: equitySymbols, options: optionSymbols };
+
+  function ticksFor(symbols: string[]) {
+    return symbols.map((sym) => {
+      const q = ticksRef.current[sym] ?? {};
+      return {
+        symbol: sym,
+        ltp: q.ltp ?? null,
+        open: q.open ?? null,
+        high: q.high ?? null,
+        low: q.low ?? null,
+        close: q.close ?? null,
+        volume: q.volume ?? null,
+        oi: q.oi ?? null,
+        vwap: q.vwap ?? q.atp ?? null,
+      };
+    });
+  }
+
   const { data: columnValues } = useQuery({
-    queryKey: ["column-values", JSON.stringify(columnTicks)],
-    queryFn: () => api.post("/terminal/column-values", { ticks: columnTicks }).then(r => r.data.values as Record<string, Record<string, any>>),
+    queryKey: ["column-values", equitySymbols.join("|"), optionSymbols.join("|")],
+    queryFn: async () => {
+      const load = (symbols: string[], book: string) =>
+        symbols.length
+          ? api.post("/terminal/column-values", { ticks: ticksFor(symbols), book }).then(r => r.data.values as Record<string, Record<string, any>>)
+          : Promise.resolve({});
+      const [equity, options] = await Promise.all([
+        load(booksRef.current.equity, "equity"),
+        load(booksRef.current.options, "option"),
+      ]);
+      return { ...equity, ...options };
+    },
     enabled: watchlist.length > 0,
+    refetchInterval: 1000,
+    placeholderData: (prev) => prev,
   });
+
+  const { data: tokenStatus, isError: tokenError, isSuccess: tokenLoaded } = useQuery({
+    queryKey: ["dhan-token-status"],
+    queryFn: () => api.get("/dhan-auth/token-status").then(r => r.data),
+    refetchInterval: 60_000,
+  });
+  const tokenOffline = tokenError || (tokenLoaded && !tokenStatus?.valid);
 
   // Live strategy signals — refreshed every 5s
   const { data: liveSignals } = useQuery({
@@ -242,11 +294,6 @@ export default function TerminalPage() {
     onSuccess: () => refetchCols(),
   });
 
-  const deleteColMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/terminal/columns/${id}`),
-    onSuccess: () => { toast.success("Column removed"); refetchCols(); },
-  });
-
   const resetColsMutation = useMutation({
     mutationFn: () => api.post("/terminal/columns/reset"),
     onSuccess: () => { toast.success("Columns reset to defaults"); refetchCols(); },
@@ -269,20 +316,8 @@ export default function TerminalPage() {
   });
 
 
-  const SECURITY_IDS = {
-    "NIFTY50":   {security_id:"13",    segment:"IDX_I"},
-    "BANKNIFTY": {security_id:"25",    segment:"IDX_I"},
-    "RELIANCE":  {security_id:"2885",  segment:"NSE_EQ"},
-    "TCS":       {security_id:"11536", segment:"NSE_EQ"},
-    "INFY":      {security_id:"1594",  segment:"NSE_EQ"},
-    "HDFCBANK":  {security_id:"1333",  segment:"NSE_EQ"},
-    "ICICIBANK": {security_id:"4963",  segment:"NSE_EQ"},
-    "SBIN":      {security_id:"3045",  segment:"NSE_EQ"},
-    "WIPRO":     {security_id:"3787",  segment:"NSE_EQ"},
-    "TATAMOTORS":{security_id:"3456",  segment:"NSE_EQ"},
-    "BAJFINANCE":{security_id:"317",   segment:"NSE_EQ"},
-  };
   const isLive = wsStatus === "live";
+  const screenRows = (termRows ?? []).filter((r: any) => watchlist.includes(r.symbol));
 
   // Build unified row list — watchlist symbols merged with terminal rows
   const termRowMap: Record<string, any> = {};
@@ -294,7 +329,7 @@ export default function TerminalPage() {
     <Layout>
       {/* ── Account Summary Bar (Row 1 of Excel) ──────────────────────────── */}
       <div style={{
-        display: "flex", gap: 0, marginBottom: 16,
+        display: "flex", flexWrap: "wrap", gap: 0, marginBottom: 16,
         border: "1px solid var(--border)", background: "var(--surface)",
       }}>
         {[
@@ -314,16 +349,24 @@ export default function TerminalPage() {
 
         {/* Status + controls */}
         <div style={{display:"flex", alignItems:"center", gap:12, padding:"0 20px", marginLeft:"auto"}}>
+          <LiveClock />
+          {[
+            {label:"SYMBOLS", value: watchlist.length},
+            {label:"ACTIVE", value: screenRows.filter((r:any)=>r.is_active).length},
+            {label:"IN POSITION", value: screenRows.filter((r:any)=>r.status==="active").length},
+            {label:"LIVE DATA", value: tokenOffline ? "OFFLINE" : isLive ? "WEBSOCKET" : "POLLING"},
+          ].map(({label, value}) => (
+            <div key={label} style={{fontSize:10, color:"var(--muted)", letterSpacing:1}}>
+              {label} <b style={{color:"var(--text)"}}>{value}</b>
+            </div>
+          ))}
           <div style={{display:"flex", alignItems:"center", gap:6,
-            color: isLive ? "var(--green)" : "var(--muted)", fontSize: 11}}>
+            color: tokenOffline ? "var(--red)" : isLive ? "var(--green)" : "var(--muted)", fontSize: 11}}>
             <span style={{width:7, height:7, borderRadius:"50%", display:"inline-block",
-              background: isLive ? "var(--green)" : "var(--muted)",
-              boxShadow: isLive ? "0 0 6px var(--green)" : "none"}} />
-            {isLive ? "LIVE" : "POLLING"}
+              background: tokenOffline ? "var(--red)" : isLive ? "var(--green)" : "var(--muted)",
+              boxShadow: !tokenOffline && isLive ? "0 0 6px var(--green)" : "none"}} />
+            {tokenOffline ? "OFFLINE" : isLive ? "LIVE" : "POLLING"}
           </div>
-          {lastUpdate && <span style={{fontSize:10, color:"var(--muted)"}}>
-            {lastUpdate.toLocaleTimeString()}
-          </span>}
           {isAdmin && (
             <button className="exit-btn" style={{fontSize:11, padding:"6px 14px",
               color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
@@ -371,147 +414,67 @@ export default function TerminalPage() {
           setShowAdd(false);
         }} />
       )}
-      {/* ── Terminal Table ──────────────────────────────────────────────────── */}
-      <TerminalTable onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={watchlist} liveData={liveData} termRowMap={termRowMap} visibleCols={visibleCols} columnValues={columnValues ?? {}} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} onDeleteCol={(id)=>deleteColMutation.mutate(id)} />
+      {watchlist.length === 0 && (
+        <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
+          fontSize:13,border:"1px solid var(--border)",background:"var(--surface)"}}>
+          No symbols — click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to start
+        </div>
+      )}
+      {equitySymbols.length > 0 && (
+        <TerminalTable title="EQUITY" onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={equitySymbols} liveData={liveData} termRowMap={termRowMap} visibleCols={colsFor("equity")} columnValues={columnValues ?? {}} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} />
+      )}
+      {optionSymbols.length > 0 && (
+        <div style={{marginTop: equitySymbols.length ? 18 : 0}}>
+          <TerminalTable title="OPTIONS" onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={optionSymbols} liveData={liveData} termRowMap={termRowMap} visibleCols={colsFor("option")} columnValues={columnValues ?? {}} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} />
+        </div>
+      )}
 
       
       {/* ── Strategy Signal Table ──────────────────────────────────────────── */}
       {strategyNames.length > 0 && (
-        <div style={{marginTop:16}}>
-          <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)",marginBottom:8,padding:"0 4px"}}>
-            STRATEGY SIGNALS
-          </div>
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,fontFamily:"var(--font)"}}>
-              <thead>
-                <tr style={{background:"var(--surface)",borderBottom:"2px solid var(--border)"}}>
-                  <th style={{padding:"8px 10px",fontSize:9,letterSpacing:1.5,color:"var(--muted)",
-                    borderRight:"1px solid var(--border)",minWidth:140,textAlign:"left"}}>#  SYMBOL</th>
-                  {strategyNames.map((name:string) => (
-                    <th key={"sh-"+name} style={{
-                      padding:"8px 12px",fontSize:9,letterSpacing:1.2,textAlign:"left",
-                      color:"rgba(0,255,136,0.9)",whiteSpace:"nowrap",
-                      borderRight:"1px solid var(--border)",minWidth:200,
-                    }}>
-                      <div>{name.toUpperCase()}</div>
-                      <div style={{fontSize:8,color:"var(--muted)",fontWeight:400,marginTop:2}}>SIGNAL · ENTRY · SL · TARGET</div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {watchlist.map((sym:string, idx:number) => (
-                  <tr key={"strat-"+sym} style={{
-                    borderBottom:"1px solid var(--border)",
-                  }}
-                    onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,0.02)")}
-                    onMouseLeave={e=>(e.currentTarget.style.background="transparent")}
-                  >
-                    <td style={{padding:"10px 10px",borderRight:"1px solid var(--border)"}}>
-                      <div style={{fontSize:10,color:"var(--muted)",marginBottom:2}}>{idx+1}</div>
-                      <div style={{fontWeight:700,color:"var(--green)",fontSize:12}}>{sym}</div>
-                    </td>
-                    {strategyNames.map((stratName:string) => {
-                      const sig  = signalMap[sym]?.[stratName];
-                      const dir  = sig?.direction || "HOLD";
-                      const inst = instrMap[sym] || SECURITY_IDS[sym];
-                      return (
-                        <td key={"sc-"+stratName} style={{
-                          padding:"10px 12px",
-                          borderRight:"1px solid var(--border)",
-                          minWidth:200,
-                        }}>
-                          {sig ? (
-                            <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                              {/* Signal + Entry */}
-                              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                                <span className={`badge ${dir==="BUY"?"badge-green":dir==="SELL"?"badge-red":"badge-gray"}`}
-                                  style={{minWidth:48,textAlign:"center",fontSize:11}}>
-                                  {dir}
-                                </span>
-                                {sig.price && (
-                                  <span style={{fontSize:13,fontWeight:700}}>
-                                    ₹{Number(sig.price).toLocaleString()}
-                                  </span>
-                                )}
-                              </div>
-                              {/* SL + Target */}
-                              {(sig.sl || sig.target) && (
-                                <div style={{display:"flex",gap:12,fontSize:11}}>
-                                  {sig.sl && (
-                                    <span style={{color:"var(--red)"}}>
-                                      SL ₹{Number(sig.sl).toFixed(0)}
-                                    </span>
-                                  )}
-                                  {sig.target && (
-                                    <span style={{color:"var(--green)"}}>
-                                      T ₹{Number(sig.target).toFixed(0)}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              {/* Reason */}
-                              {sig.reason && (
-                                <div style={{fontSize:9,color:"var(--muted)",lineHeight:1.4}}>
-                                  {sig.reason}
-                                </div>
-                              )}
-                              {/* Action button */}
-                              {dir !== "HOLD" && inst && (
-                                <button
-                                  onClick={()=>setOrderPanel({
-                                    symbol:sym,...inst,
-                                    prefillSide:dir,
-                                    prefillPrice:sig.price||0,
-                                  })}
-                                  style={{
-                                    padding:"5px 14px",fontSize:11,cursor:"pointer",
-                                    fontWeight:700,fontFamily:"var(--font)",width:"fit-content",
-                                    background:dir==="BUY"?"rgba(0,255,136,0.15)":"rgba(255,68,102,0.15)",
-                                    border:`1px solid ${dir==="BUY"?"rgba(0,255,136,0.5)":"rgba(255,68,102,0.5)"}`,
-                                    color:dir==="BUY"?"var(--green)":"var(--red)",
-                                  }}>
-                                  {dir} ORDER →
-                                </button>
-                              )}
-                            </div>
-                          ) : (
-                            <div style={{color:"var(--muted)",fontSize:11}}>
-                              <span className="badge badge-gray">HOLD</span>
-                            </div>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ── Bottom Summary ───────────────────────────────────────────────────── */}
-      {watchlist.length > 0 && (
-        <div style={{display:"flex", gap:0, marginTop:16,
-          border:"1px solid var(--border)", background:"var(--surface)"}}>
-          {[
-            {label:"SYMBOLS",     value:watchlist.length},
-            {label:"ACTIVE",      value:(termRows??[]).filter((r:any)=>r.is_active).length,
-              color:"var(--green)"},
-            {label:"IN POSITION", value:(termRows??[]).filter((r:any)=>r.status==="active").length,
-              color:"var(--green)"},
-            {label:"LIVE DATA",   value: isLive ? "● WEBSOCKET" : "○ POLLING",
-              color: isLive ? "var(--green)" : "var(--muted)"},
-          ].map(({label, value, color}) => (
-            <div key={label} style={{flex:1, padding:"10px 20px",
-              borderRight:"1px solid var(--border)"}}>
-              <div style={{fontSize:9,letterSpacing:2,color:"var(--muted)",marginBottom:2}}>{label}</div>
-              <div style={{fontSize:14,fontWeight:700,color:color??"var(--text)"}}>{value}</div>
+        <div style={{marginTop:12, border:"1px solid var(--border)", background:"var(--surface)"}}>
+          <button type="button" onClick={() => setSignalsOpen(v => !v)}
+            style={{width:"100%", display:"flex", alignItems:"center", gap:8, padding:"6px 10px",
+              background:"transparent", border:"none", cursor:"pointer", fontFamily:"var(--font)", textAlign:"left"}}>
+            <span style={{fontSize:10, letterSpacing:1.5, color:"var(--muted)"}}>
+              {signalsOpen ? "▾" : "▸"} STRATEGY SIGNALS
+            </span>
+            <span style={{fontSize:10, color:"var(--text)"}}>{strategyNames.length}</span>
+          </button>
+          {signalsOpen && watchlist.map((sym: string) => (
+            <div key={"strat-"+sym} style={{display:"flex", flexWrap:"wrap", alignItems:"center", gap:6,
+              padding:"4px 10px", borderTop:"1px solid var(--border)", fontSize:11}}>
+              <span style={{fontWeight:700, color:"var(--green)", minWidth:88}}>{sym}</span>
+              {strategyNames.map((stratName: string) => {
+                const sig = signalMap[sym]?.[stratName];
+                const dir = sig?.direction || "HOLD";
+                const inst = instrMap[sym] || SECURITY_IDS[sym];
+                return (
+                  <span key={"sc-"+stratName} style={{display:"inline-flex", alignItems:"center", gap:4,
+                    padding:"2px 6px", border:"1px solid var(--border)"}}>
+                    <span style={{color:"var(--muted)", fontSize:9}}>{stratName}</span>
+                    <span className={`badge ${dir==="BUY"?"badge-green":dir==="SELL"?"badge-red":"badge-gray"}`}
+                      style={{fontSize:9, minWidth:36, textAlign:"center"}}>{dir}</span>
+                    {sig?.price ? <span>₹{Number(sig.price).toLocaleString()}</span> : null}
+                    {sig?.sl ? <span style={{color:"var(--red)"}}>SL {Number(sig.sl).toFixed(0)}</span> : null}
+                    {sig?.target ? <span style={{color:"var(--green)"}}>T {Number(sig.target).toFixed(0)}</span> : null}
+                    {dir !== "HOLD" && inst && (
+                      <button onClick={() => setOrderPanel({symbol:sym, ...inst, prefillSide:dir, prefillPrice:sig?.price||0})}
+                        style={{padding:"1px 6px", fontSize:9, cursor:"pointer", fontWeight:700, fontFamily:"var(--font)",
+                          background:dir==="BUY"?"rgba(0,255,136,0.15)":"rgba(255,68,102,0.15)",
+                          border:`1px solid ${dir==="BUY"?"rgba(0,255,136,0.5)":"rgba(255,68,102,0.5)"}`,
+                          color:dir==="BUY"?"var(--green)":"var(--red)"}}>
+                        ORDER
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
             </div>
           ))}
         </div>
       )}
+
     </Layout>
   );
 }
@@ -782,10 +745,10 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
 // ── Admin Column Manager ──────────────────────────────────────────────────────
 export function AdminColumnManager({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({
-    name: "", formula: "", col_order: 0,
-    width: 80, color_rules: "",
+  const emptyForm = (book: "equity" | "option") => ({
+    name: "", formula: "", col_order: 0, width: 80, color_rules: "", book,
   });
+  const [form, setForm] = useState(emptyForm("equity"));
   const [editId,    setEditId]    = useState<string|null>(null);
   const [validMsg,  setValidMsg]  = useState("");
   const [validOk,   setValidOk]   = useState<boolean|null>(null);
@@ -795,6 +758,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
     queryKey: ["terminal-columns"],
     queryFn: () => api.get("/terminal/columns").then(r => r.data),
   });
+  const listed = (columns ?? []).filter((col: any) => col.formula && (col.book || "equity") === form.book);
 
   const validateMutation = useMutation({
     mutationFn: (formula: string) =>
@@ -811,6 +775,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
         width:       parseInt(String(form.width)),
         is_visible:  true,
         color_rules: form.color_rules || null,
+        book:        form.book,
       };
       return editId
         ? api.put(`/terminal/columns/${editId}`, payload)
@@ -819,7 +784,8 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
     onSuccess: () => {
       toast.success(editId ? "Column updated" : "Column added");
       qc.invalidateQueries({queryKey:["terminal-columns"]});
-      setForm({name:"",formula:"",col_order:0,width:80,color_rules:""});
+      qc.invalidateQueries({queryKey:["column-values"]});
+      setForm(f => emptyForm(f.book));
       setEditId(null); setValidMsg(""); setValidOk(null);
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
@@ -839,13 +805,14 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
       name: col.name, formula: col.formula ?? "",
       col_order: col.col_order, width: col.width,
       color_rules: col.color_rules ?? "",
+      book: col.book === "option" ? "option" : "equity",
     });
     setValidMsg(""); setValidOk(null);
   }
 
   const { data: presets } = useQuery({
-    queryKey: ["column-presets"],
-    queryFn: () => api.get("/terminal/column-presets").then(r => r.data as {name:string,formula:string,colors:string}[]),
+    queryKey: ["column-presets", form.book],
+    queryFn: () => api.get("/terminal/column-presets", { params: { book: form.book } }).then(r => r.data as {name:string,formula:string,colors:string}[]),
   });
 
   return (
@@ -868,7 +835,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
               ƒ FORMULA COLUMNS
             </div>
             <div style={{fontSize:11, color:"var(--muted)"}}>
-              Admin only — users see calculated values, never the formula
+              Equity and options each keep their own formulas. Price columns stay on both tables.
             </div>
           </div>
           <button onClick={onClose}
@@ -877,6 +844,20 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
         </div>
 
         <div style={{padding:"20px"}}>
+          <div style={{display:"flex", gap:8, marginBottom:16}}>
+            {(["equity", "option"] as const).map((book) => (
+              <button key={book} type="button"
+                onClick={() => { setForm(emptyForm(book)); setEditId(null); setValidMsg(""); setValidOk(null); }}
+                style={{
+                  padding:"6px 14px", fontSize:11, cursor:"pointer", fontFamily:"var(--font)", fontWeight:700,
+                  background: form.book === book ? "rgba(0,255,136,0.12)" : "transparent",
+                  border: `1px solid ${form.book === book ? "rgba(0,255,136,0.5)" : "var(--border)"}`,
+                  color: form.book === book ? "var(--green)" : "var(--muted)",
+                }}>
+                {book === "equity" ? "EQUITY" : "OPTIONS"}
+              </button>
+            ))}
+          </div>
           {/* Example templates */}
           <div style={{marginBottom:16}}>
             <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)",marginBottom:8}}>
@@ -996,7 +977,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
                 <button className="exit-btn"
                   onClick={() => {
                     setEditId(null);
-                    setForm({name:"",formula:"",col_order:0,width:80,color_rules:""});
+                    setForm({name:"",formula:"",col_order:0,width:80,color_rules:"",book:form.book});
                     setValidMsg(""); setValidOk(null);
                   }}
                   style={{padding:"10px 16px"}}>CANCEL</button>
@@ -1005,14 +986,14 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
           </div>
 
           {/* All columns list with show/hide/delete */}
-          {columns && columns.length > 0 && (
+          {listed.length > 0 && (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)"}}>
-                  ALL COLUMNS ({columns.length}) — click ✕ to remove, eye to show/hide
+                  {form.book === "equity" ? "EQUITY" : "OPTIONS"} FORMULAS — click ✕ to remove, eye to show/hide
                 </div>
                 <button
-                  onClick={() => { if(confirm("Reset all columns to defaults?")) api.post("/terminal/columns/reset").then(()=>{toast.success("Reset");qc.invalidateQueries({queryKey:["terminal-columns"]});}).catch(()=>toast.error("Failed")); }}
+                  onClick={() => { if(confirm("Remove equity and options formulas and restore the price columns?")) api.post("/terminal/columns/reset").then(()=>{toast.success("Reset");qc.invalidateQueries({queryKey:["terminal-columns"]});}).catch(()=>toast.error("Failed")); }}
                   style={{padding:"4px 12px",fontSize:10,cursor:"pointer",
                     background:"transparent",border:"1px solid var(--border)",
                     color:"var(--muted)",fontFamily:"var(--font)"}}>
@@ -1020,7 +1001,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                {columns.map((col: any) => (
+                {listed.map((col: any) => (
                   <div key={col.id} style={{
                     display:"flex",alignItems:"center",gap:4,
                     padding:"5px 10px",
@@ -1035,7 +1016,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
                     <span style={{
                       fontSize:11,fontWeight:700,
                       color: col.col_type==="custom"?"var(--yellow)":"var(--text)",
-                    }}>{col.name}</span>
+                    }}>{columnTitle(col.name)}</span>
                     {col.col_type==="custom"&&<span style={{fontSize:9,color:"var(--muted)"}}>ƒ</span>}
                     {col.col_type==="custom"&&col.formula&&(
                       <button className="exit-btn"
@@ -1064,14 +1045,9 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {(!columns || columns.length === 0) && (
+          {listed.length === 0 && (
             <div style={{color:"var(--muted)",fontSize:12,textAlign:"center",padding:20}}>
-              No columns yet. Click ↺ RESET DEFAULTS to restore default columns.
-              <br/>
-              <button className="connect-btn" style={{marginTop:10}}
-                onClick={()=>api.post("/terminal/columns/reset").then(()=>{toast.success("Seeded");qc.invalidateQueries({queryKey:["terminal-columns"]});})}>
-                ↺ SEED DEFAULTS
-              </button>
+              No formulas on this book yet. Load a template above, or add one.
             </div>
           )}
         </div>
@@ -1081,25 +1057,21 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
 }
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
-function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
-  onRemoveSymbol, onExitRow, onFormulaRow, onDeleteCol, onOrder, instrMap, signalMap, strategyNames }: {
+function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
+  onRemoveSymbol, onExitRow, onFormulaRow, onOrder, instrMap, signalMap, strategyNames }: {
+  title: string;
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; columnValues: Record<string, Record<string, any>>; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
-  onFormulaRow:(id:string,sym:string)=>void; onDeleteCol:(id:string)=>void;
+  onFormulaRow:(id:string,sym:string)=>void;
   onOrder:(sym:string,inst:{security_id:string,segment:string})=>void;
   instrMap: Record<string,{security_id:string,segment:string}>;
   signalMap: Record<string,Record<string,any>>;
   strategyNames: string[];
 }) {
-  if (watchlist.length === 0) return (
-    <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
-      fontSize:13,border:"1px solid var(--border)",background:"var(--surface)"}}>
-      No symbols — click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to start
-    </div>
-  );
-
   return (
+    <div>
+      <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)",margin:"0 0 8px 4px"}}>{title}</div>
     <div style={{overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:"var(--font)"}}>
         <thead>
@@ -1114,13 +1086,7 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, columnVal
                 color:col.col_type==="custom"||col.col_type==="formula"?"var(--yellow)":"var(--muted)",
                 borderRight:"1px solid var(--border)",minWidth:col.width||80,textAlign:"left",
               }}>
-                <div style={{display:"flex",alignItems:"center",gap:3}}>
-                  <span>{col.name}</span>
-                  <button onClick={()=>onDeleteCol(col.id)} title="Remove column"
-                    style={{background:"transparent",border:"none",
-                      color:"rgba(255,68,102,0.4)",cursor:"pointer",
-                      fontSize:9,padding:0,lineHeight:1,opacity:0.6}}>✕</button>
-                </div>
+                <span>{columnTitle(col.name)}</span>
               </th>
             ))}
             <th style={{padding:"8px 6px",fontSize:9,color:"var(--muted)",minWidth:90}}></th>
@@ -1249,6 +1215,7 @@ function TerminalTable({ watchlist, liveData, termRowMap, visibleCols, columnVal
           })}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }

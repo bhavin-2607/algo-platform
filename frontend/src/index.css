@@ -132,6 +132,16 @@ a:hover { text-decoration: underline; }
   box-shadow: 0 0 8px var(--green);
 }
 .sidebar-brand b { color: var(--green); }
+.sidebar-toggle {
+  margin-left: auto; background: transparent; border: 1px solid var(--border);
+  color: var(--muted); cursor: pointer; font-family: var(--font); padding: 2px 8px;
+}
+.sidebar.collapsed { width: 72px; }
+.sidebar.collapsed .sidebar-brand { padding: 16px 10px; flex-wrap: wrap; justify-content: center; }
+.sidebar.collapsed .sidebar-toggle { margin-left: 0; }
+.sidebar.collapsed .sidebar-user,
+.sidebar.collapsed .nav-item,
+.sidebar.collapsed .logout-btn { justify-content: center; padding-left: 8px; padding-right: 8px; }
 
 .sidebar-user {
   padding: 16px 20px;

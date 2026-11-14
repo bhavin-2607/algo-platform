@@ -5,7 +5,6 @@ import { useAuthStore } from "@/store/auth";
 import LoginPage       from "@/pages/LoginPage";
 import DashboardPage   from "@/pages/DashboardPage";
 import TradingPage     from "@/pages/TradingPage";
-import OptionsPage    from "@/pages/OptionsPage";
 import StrategiesPage  from "@/pages/StrategiesPage";
 import SettingsPage    from "@/pages/SettingsPage";
 import CopyTradingPage from "@/pages/CopyTradingPage";
@@ -41,7 +40,7 @@ export default function App() {
           <Route path="/dashboard"    element={<Protected><DashboardPage /></Protected>} />
           <Route path="/terminal"     element={<Protected><TerminalPage /></Protected>} />
           <Route path="/trading"      element={<Protected><TradingPage /></Protected>} />
-          <Route path="/options" element={<Protected><OptionsPage /></Protected>} />
+          <Route path="/options" element={<Navigate to="/terminal" replace />} />
           <Route path="/strategies"   element={<Protected><AdminOnly><StrategiesPage /></AdminOnly></Protected>} />
           <Route path="/formula"      element={<Protected><AdminOnly><FormulaPage /></AdminOnly></Protected>} />
           <Route path="/guide"        element={<Protected><AdminOnly><GuidePage /></AdminOnly></Protected>} />

@@ -24,6 +24,7 @@ class TerminalColumn(Base):
     width       = Column(Integer, default=80)
     is_visible  = Column(Boolean, default=True)
     color_rules = Column(String, nullable=True)       # JSON {"UP":"green"}
+    book        = Column(String, nullable=False, default="equity")  # shared, equity, option
     created_at  = Column(DateTime, default=datetime.utcnow)
 
 

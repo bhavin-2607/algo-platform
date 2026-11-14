@@ -15,8 +15,9 @@ dist/
 .vite/
 
 # Data
-backend/app/market/instruments.csv
 *.db
+backend/celerybeat-schedule
+backend/celerybeat-schedule.*
 
 # IDE
 .vscode/

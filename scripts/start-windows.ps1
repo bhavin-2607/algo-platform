@@ -73,17 +73,18 @@ function Wait-DockerEngine {
     throw "Docker Desktop did not start. Open it once, wait until it is running, then run this script again."
 }
 
-function Wait-Api {
+function Wait-Api([int]$Port) {
+    $base = if ($Port -eq 80) { "http://localhost" } else { "http://localhost:$Port" }
     $deadline = (Get-Date).AddMinutes(5)
     while ((Get-Date) -lt $deadline) {
         try {
-            $res = Invoke-WebRequest -Uri "http://localhost/api/health" -UseBasicParsing -TimeoutSec 5
+            $res = Invoke-WebRequest -Uri "$base/api/health" -UseBasicParsing -TimeoutSec 5
             if ($res.StatusCode -eq 200) { return }
         } catch {
             Start-Sleep -Seconds 5
         }
     }
-    throw "The API did not answer on http://localhost/api/health. Check 'docker compose logs backend'."
+    throw "The API did not answer on $base/api/health. Check 'docker compose logs backend'."
 }
 
 function New-FirstAdmin {
@@ -111,6 +112,54 @@ function Test-Port([int]$Port) {
     }
 }
 
+function Get-WebPort {
+    if (Test-Port 80) { return 5173 }
+    return 80
+}
+
+function Test-CanBind([int]$Port) {
+    $listener = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Any, $Port)
+    try {
+        $listener.Start()
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $listener.Stop()
+    }
+}
+
+function Get-NativeWebPort {
+    if (Test-CanBind 80) { return 80 }
+    return 5173
+}
+
+function Get-LanHost {
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
+        Select-Object -First 1 -ExpandProperty IPAddress
+    if ($ip) { return $ip }
+    return "localhost"
+}
+
+function Allow-HomePort([int]$Port) {
+    $name = "Algo platform TCP $Port"
+    if (Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue) { return }
+    try {
+        New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Private | Out-Null
+    } catch {
+        Write-Host "Could not open port $Port on the Private firewall. Other devices on this network may be blocked."
+    }
+}
+
+function Write-HomeAddress([int]$Port) {
+    $hostName = Get-LanHost
+    $url = if ($Port -eq 80) { "http://$hostName" } else { "http://${hostName}:$Port" }
+    Write-Host "On this PC: http://localhost$(if ($Port -eq 80) { '' } else { ":$Port" })"
+    Write-Host "On this home network: $url"
+    Write-Host "No router port forward is required. Postgres and Redis stay on this PC."
+}
+
 function Update-SessionPath {
     $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -131,6 +180,99 @@ function Install-Winget([string]$Id) {
     winget install -e --id $Id --accept-package-agreements --accept-source-agreements --disable-interactivity
     if ($LASTEXITCODE -ne 0) { throw "winget could not install $Id" }
     Update-SessionPath
+}
+
+function Test-IsAdmin {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Install-Memurai {
+    # Redis 7 protocol. The exact id with --disable-interactivity fails on a new PC:
+    # Memurai is a Windows service, and that flag hides the Administrator prompt.
+    Write-Host "Installing Memurai (Redis 7 protocol). Windows has no current Redis build."
+    Write-Host "Windows will ask for Administrator. Approve that prompt."
+    winget install Memurai.MemuraiDeveloper --accept-package-agreements --accept-source-agreements
+    $wingetCode = $LASTEXITCODE
+    $alreadyThere = @(0, -1978335189, -1978334963, -1978334962)
+    if ($alreadyThere -notcontains $wingetCode) {
+        Write-Host "winget could not install Memurai (exit $wingetCode). Downloading the developer installer."
+        $msi = Join-Path $env:TEMP "Memurai-Developer-v4.1.2.msi"
+        Invoke-WebRequest -Uri "https://dist.memurai.com/releases/Memurai-Developer/4.1.2/Memurai-Developer-v4.1.2.msi" -OutFile $msi
+        $installArgs = "/i `"$msi`" /quiet"
+        try {
+            if (Test-IsAdmin) {
+                $proc = Start-Process msiexec.exe -ArgumentList $installArgs -Wait -PassThru
+            } else {
+                $proc = Start-Process msiexec.exe -ArgumentList $installArgs -Verb RunAs -Wait -PassThru
+            }
+        } catch {
+            throw "Memurai did not install. Approve the Administrator prompt, then run this script again."
+        }
+        if ($null -eq $proc.ExitCode -or ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010 -and $proc.ExitCode -ne 1638)) {
+            throw "Memurai did not install (msiexec $($proc.ExitCode)). Open PowerShell as Administrator and run this script again."
+        }
+    }
+
+    $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'Memurai' } | Select-Object -First 1
+    if ($svc -and $svc.Status -ne "Running") {
+        try {
+            Start-Service $svc.Name
+        } catch {
+            throw "Memurai is installed, but its service is stopped. Open PowerShell as Administrator and run this script again."
+        }
+    }
+}
+
+function Get-PostgresInstallerUrl {
+    $fallback = "https://get.enterprisedb.com/postgresql/postgresql-16.15-5-windows-x64.exe"
+    $show = & winget show -e --id PostgreSQL.PostgreSQL.16 --accept-source-agreements 2>&1 | Out-String
+    $found = [regex]::Match($show, 'https://get\.enterprisedb\.com/postgresql/postgresql-16\S+\.exe')
+    if ($found.Success) { return $found.Value }
+    return $fallback
+}
+
+function Install-Postgres([string]$SuperPassword) {
+    # Same failure as Memurai: --disable-interactivity hides the Administrator prompt,
+    # and winget then exits before the EnterpriseDB installer runs. The override still
+    # makes that installer unattended. Stack Builder is left out; it pops a window at the end.
+    Write-Host "Installing PostgreSQL 16."
+    Write-Host "Windows will ask for Administrator. Approve that prompt."
+    $override = "--mode unattended --unattendedmodeui none --superpassword $SuperPassword --servicepassword $SuperPassword --servicename postgresql-x64-16 --serverport 5432 --enable-components server,commandlinetools"
+    winget install -e --id PostgreSQL.PostgreSQL.16 --scope machine --accept-package-agreements --accept-source-agreements --override $override
+    $wingetCode = $LASTEXITCODE
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and -not (Test-Port 5432)) { Start-Sleep -Seconds 2 }
+    if (Test-Port 5432) { return }
+
+    Write-Host "winget could not install PostgreSQL 16 (exit $wingetCode). Downloading the installer from EnterpriseDB."
+    $url = Get-PostgresInstallerUrl
+    $exe = Join-Path $env:TEMP "postgresql-16-windows-x64.exe"
+    $prev = $ProgressPreference
+    $ProgressPreference = "SilentlyContinue"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+    } catch {
+        throw "PostgreSQL 16 did not download from $url. Check this PC's internet connection, then run this script again."
+    } finally {
+        $ProgressPreference = $prev
+    }
+    if (-not (Test-Path $exe) -or (Get-Item $exe).Length -lt 1MB) {
+        throw "PostgreSQL 16 did not download from $url. Check this PC's internet connection, then run this script again."
+    }
+    try {
+        if (Test-IsAdmin) {
+            $proc = Start-Process -FilePath $exe -ArgumentList $override -Wait -PassThru
+        } else {
+            $proc = Start-Process -FilePath $exe -ArgumentList $override -Verb RunAs -Wait -PassThru
+        }
+    } catch {
+        throw "PostgreSQL 16 did not install. Approve the Administrator prompt, then run this script again."
+    }
+    if ($null -eq $proc.ExitCode -or ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010)) {
+        throw "PostgreSQL 16 did not install (installer exit $($proc.ExitCode)). Open PowerShell as Administrator and run this script again."
+    }
 }
 
 function Find-Python312 {
@@ -173,9 +315,9 @@ function Ensure-NativeTools {
     }
 
     if (-not (Test-Port 6379)) {
-        Write-Host "Installing Memurai (Redis 7 protocol). Windows has no current Redis build."
-        Install-Winget "Memurai.MemuraiDeveloper"
-        Start-Sleep -Seconds 5
+        Install-Memurai
+        $deadline = (Get-Date).AddMinutes(2)
+        while ((Get-Date) -lt $deadline -and -not (Test-Port 6379)) { Start-Sleep -Seconds 3 }
     }
     if (-not (Test-Port 6379)) {
         throw "Redis is not listening on localhost:6379. Start the Memurai service, then run this script again."
@@ -183,18 +325,22 @@ function Ensure-NativeTools {
 
     $superPassword = $null
     if (-not (Test-Port 5432)) {
-        Write-Host "Installing PostgreSQL 16."
         $superPassword = New-ServicePassword
-        winget install -e --id PostgreSQL.PostgreSQL.16 --accept-package-agreements --accept-source-agreements --disable-interactivity --override "--mode unattended --unattendedmodeui none --superpassword $superPassword --servicepassword $superPassword --servicename postgresql-x64-16 --serverport 5432"
-        if ($LASTEXITCODE -ne 0) { throw "winget could not install PostgreSQL 16" }
+        Install-Postgres $superPassword
         Update-SessionPath
         $svc = Get-Service -Name "postgresql-x64-16" -ErrorAction SilentlyContinue
-        if ($svc -and $svc.Status -ne "Running") { Start-Service $svc.Name }
+        if ($svc -and $svc.Status -ne "Running") {
+            try {
+                Start-Service $svc.Name
+            } catch {
+                throw "PostgreSQL 16 is installed, but its service is stopped. Open PowerShell as Administrator and run this script again."
+            }
+        }
         $deadline = (Get-Date).AddMinutes(2)
         while ((Get-Date) -lt $deadline -and -not (Test-Port 5432)) { Start-Sleep -Seconds 3 }
     }
     if (-not (Test-Port 5432)) {
-        throw "Postgres is not listening on localhost:5432."
+        throw "Postgres is not listening on localhost:5432. If the installer asked for a restart, restart Windows and run this script again."
     }
     return @{ Python = $python; SuperPassword = $superPassword }
 }
@@ -272,7 +418,10 @@ function Start-Native {
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$backend'; & '$py' -m uvicorn app.main:app --reload"
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$backend'; & '$py' -m celery -A app.worker.celery_app worker --pool=solo --loglevel=info"
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$backend'; & '$py' -m celery -A app.worker.celery_app beat --loglevel=info"
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$frontend'; npm run dev"
+    $webPort = Get-NativeWebPort
+    Allow-HomePort $webPort
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$frontend'; npm run dev -- --host 0.0.0.0 --port $webPort --strictPort"
+    Write-HomeAddress $webPort
 
     $deadline = (Get-Date).AddMinutes(3)
     $up = $false
@@ -337,9 +486,12 @@ if ($installedSomething) {
 
 Wait-DockerEngine
 New-DockerEnv
+$env:WEB_PORT = "$(Get-WebPort)"
+Allow-HomePort ([int]$env:WEB_PORT)
 docker compose up -d --build
 if ($LASTEXITCODE -ne 0) { throw "docker compose failed" }
-Wait-Api
+Wait-Api ([int]$env:WEB_PORT)
 New-FirstAdmin
-Start-Process "http://localhost"
-Write-Host "Open http://localhost"
+$homeUrl = if ($env:WEB_PORT -eq "80") { "http://localhost" } else { "http://localhost:$($env:WEB_PORT)" }
+Start-Process $homeUrl
+Write-HomeAddress ([int]$env:WEB_PORT)

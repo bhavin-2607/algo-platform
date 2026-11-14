@@ -34,6 +34,12 @@ async def init_db():
         await conn.exec_driver_sql(
             "ALTER TABLE terminal_rows ADD COLUMN IF NOT EXISTS sl_formula VARCHAR"
         )
+        await conn.exec_driver_sql(
+            "ALTER TABLE terminal_columns ADD COLUMN IF NOT EXISTS book VARCHAR DEFAULT 'equity'"
+        )
+        await conn.exec_driver_sql(
+            "UPDATE terminal_columns SET book = 'shared' WHERE formula IS NULL AND book IS DISTINCT FROM 'shared'"
+        )
 
 
 async def get_db():
