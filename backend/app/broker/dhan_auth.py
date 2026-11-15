@@ -74,7 +74,7 @@ class DhanAuthManager:
             )
 
             if new_token:
-                logger.info("✅ Dhan token renewed via RenewToken")
+                logger.info("Dhan token renewed via RenewToken")
                 return {
                     "access_token": new_token,
                     "method":       "renew",
@@ -120,7 +120,7 @@ class DhanAuthManager:
             data = resp.json()
 
             if "accessToken" in data:
-                logger.info(f"✅ Token generated via TOTP — expires: {data.get('expiryTime')}")
+                logger.info(f"Token generated via TOTP — expires: {data.get('expiryTime')}")
                 return {
                     "access_token": data["accessToken"],
                     "client_id":    data.get("dhanClientId", self.client_id),
@@ -165,7 +165,7 @@ class DhanAuthManager:
                 self._apply_token(result["access_token"])
                 # Clear any failure flag
                 self._set_token_status("ok", result.get("expires_at"))
-                logger.info(f"✅ Token renewed via {result['method']}")
+                logger.info(f"Token renewed via {result['method']}")
                 return result
 
             if attempt < max_retries:
@@ -174,7 +174,7 @@ class DhanAuthManager:
                 time.sleep(wait)
 
         # All attempts failed
-        logger.error("❌ All token renewal attempts failed!")
+        logger.error("All token renewal attempts failed!")
         self._set_token_status("failed")
         self._send_failure_alert()
         return None

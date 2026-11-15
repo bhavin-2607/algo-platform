@@ -121,6 +121,19 @@ def ensure_services():
     else:
         log_launcher("PostgreSQL is active on port 5432.", Colors.GREEN)
 
+    # Check Outgoing Public IPv4 for Dhan SEBI Static IP Setup
+    try:
+        import urllib.request
+        import json
+        req = urllib.request.Request("https://api.ipify.org?format=json", headers={"User-Agent": "algo-platform"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            ip = data.get("ip")
+            if ip:
+                log_launcher(f"Outgoing Public IPv4: {ip} (Verify this matches Dhan Portal IP Setup)", Colors.CYAN)
+    except Exception:
+        pass
+
 def ensure_frontend_built():
     """Ensure frontend/dist is built for standalone serving."""
     index_html = os.path.join(DIST_DIR, "index.html")

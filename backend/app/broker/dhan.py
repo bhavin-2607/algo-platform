@@ -12,8 +12,20 @@ Data APIs (quotes, positions, holdings) work without IP whitelisting.
 Auto-renewal: Call /v2/RenewToken before token expires.
 """
 import logging
+import socket
 import requests
+from app.core.config import settings
 from app.broker.base import BaseBrokerAdapter, OrderRequest, OrderResponse
+
+if getattr(settings, "DHAN_FORCE_IPV4", True):
+    try:
+        import urllib3.util.connection as urllib_conn
+        # Enforce IPv4 on socket creation across urllib3 / requests.
+        # Windows 11 dual-stack can otherwise resolve api.dhan.co over IPv6,
+        # causing SEBI static IP rejection (DH-905) because Dhan portal whitelists IPv4 only.
+        urllib_conn.allowed_gai_family = lambda: socket.AF_INET
+    except Exception:
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +61,25 @@ ORDER_TYPE_MAP = {
 }
 
 
+def get_public_ipv4() -> str:
+    """Fetch current outbound public IPv4 address to assist Dhan static IP verification."""
+    for url in [
+        "https://api.ipify.org?format=json",
+        "https://ifconfig.me/all.json",
+        "https://api4.ipify.org?format=json",
+    ]:
+        try:
+            r = requests.get(url, timeout=3)
+            if r.status_code == 200:
+                data = r.json()
+                ip = data.get("ip") or data.get("ip_addr")
+                if ip and "." in ip:
+                    return ip
+        except Exception:
+            continue
+    return "unknown"
+
+
 class DhanAdapter(BaseBrokerAdapter):
     """
     Adapter for Dhan / DhanHQ v2 API.
@@ -65,6 +96,7 @@ class DhanAdapter(BaseBrokerAdapter):
         return {
             "access-token":  self._access_token,
             "dhanClientId":  self._client_id,
+            "client-id":     self._client_id,
             "Content-Type":  "application/json",
             "Accept":        "application/json",
         }
@@ -92,7 +124,8 @@ class DhanAdapter(BaseBrokerAdapter):
             resp = dhan.get_fund_limits()
             if resp and resp.get("status") == "success":
                 self._connected = True
-                logger.info(f"✅ Dhan connected: {self._client_id}")
+                curr_ip = get_public_ipv4()
+                logger.info(f"Dhan connected: {self._client_id} (Outgoing IPv4: {curr_ip})")
                 return True
             logger.error(f"Dhan connect failed: {resp}")
             return False
@@ -112,6 +145,7 @@ class DhanAdapter(BaseBrokerAdapter):
                 headers={
                     "access-token": self._access_token,
                     "dhanClientId": self._client_id,
+                    "client-id":    self._client_id,
                     "Accept":       "application/json",
                 },
                 timeout=10,
@@ -163,7 +197,9 @@ class DhanAdapter(BaseBrokerAdapter):
                 headers={
                     "access-token": self._access_token,
                     "client-id":    self._client_id,
+                    "dhanClientId": self._client_id,
                     "Content-Type": "application/json",
+                    "Accept":       "application/json",
                 },
                 json=payload,
                 timeout=10,
@@ -185,8 +221,25 @@ class DhanAdapter(BaseBrokerAdapter):
                     status=order_status or "TRANSIT",
                 )
 
-            msg = resp.get("remarks", str(resp)) if isinstance(resp, dict) else str(resp or "No response")
-            logger.error(f"Dhan place_order failed: {msg}")
+            err_code = resp.get("errorCode") if isinstance(resp, dict) else ""
+            if err_code == "DH-905":
+                detected_ip = get_public_ipv4()
+                logger.error(
+                    f"Dhan DH-905 (Invalid IP): Outgoing IP mismatch or token invalidation. "
+                    f"Detected outgoing IPv4: {detected_ip}. "
+                    f"Check: 1) Does '{detected_ip}' match the IP configured in Dhan Web Portal? "
+                    f"2) CRITICAL: Did you click 'Generate Access Token' in Dhan portal AFTER setting the IP? "
+                    f"Old tokens created prior to IP configuration are rejected with DH-905. "
+                    f"Please generate a fresh token, update DHAN_ACCESS_TOKEN in .env, and restart run.bat."
+                )
+                msg = (
+                    f"DH-905 Invalid IP. Outgoing IP: {detected_ip}. "
+                    f"Ensure this IP is whitelisted on Dhan portal AND generate a NEW token afterwards."
+                )
+            else:
+                msg = resp.get("remarks") or resp.get("errorMessage") or str(resp) if isinstance(resp, dict) else str(resp or "No response")
+                logger.error(f"Dhan place_order failed: {msg}")
+
             return OrderResponse(broker_order_id="", status="FAILED", message=msg)
 
         except Exception as e:

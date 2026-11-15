@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     ALERT_EMAIL:      str = ""
     DHAN_CLIENT_ID:    str = ""
     DHAN_ACCESS_TOKEN: str = ""
+    DHAN_FORCE_IPV4:   bool = True
 
     # Operator alerts (optional). Empty values keep alerts in logs and Redis only.
     TELEGRAM_BOT_TOKEN: str = ""
