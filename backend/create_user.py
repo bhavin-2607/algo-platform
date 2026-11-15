@@ -34,14 +34,14 @@ async def create_or_update_user(email: str, username: str, password: str, role_s
         user = res.scalar_one_or_none()
 
         if user:
-            print(f"ℹ️  User already exists (ID: {user.id}, Email: {user.email}, Username: {user.username}).")
+            print(f"[INFO] User already exists (ID: {user.id}, Email: {user.email}, Username: {user.username}).")
             user.email = email
             user.username = username
             user.hashed_password = hash_password(password)
             user.role = role
             user.is_active = True
             await db.commit()
-            print(f"✅ Successfully updated user credentials and role to '{role.value}' for {email}!")
+            print(f"[SUCCESS] Successfully updated user credentials and role to '{role.value}' for {email}!")
         else:
             new_user = User(
                 email=email,
@@ -52,7 +52,7 @@ async def create_or_update_user(email: str, username: str, password: str, role_s
             )
             db.add(new_user)
             await db.commit()
-            print(f"✅ Successfully created {role.value} user: {email} (username: {username})")
+            print(f"[SUCCESS] Successfully created {role.value} user: {email} (username: {username})")
 
 
 def main():
