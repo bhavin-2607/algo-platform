@@ -3,6 +3,15 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root, [data-theme="dark"] {
+  /* Brand Tokens (Bhavin Amesara Palette) */
+  --ba-navy:   #0B1933;
+  --ba-cyan:   #08B6DE;
+  --ba-blue:   #1687E8;
+  --ba-amber:  #F5A623;
+  --ba-white:  #F7FAFC;
+  --ba-muted:  #A9B8CC;
+  --brand-radius: 14px;
+
   --bg:        #080c11;
   --surface:   #0f1722;
   --surface2:  #162231;
@@ -13,14 +22,23 @@
   --red-dim:   rgba(255, 59, 87, 0.12);
   --yellow:    #ffb703;
   --yellow-dim:rgba(255, 183, 3, 0.12);
-  --blue:      #00b4d8;
-  --blue-dim:  rgba(0, 180, 216, 0.12);
+  --blue:      #08b6de;
+  --blue-dim:  rgba(8, 182, 222, 0.12);
   --text:      #f0f4f8;
   --muted:     #8b9bb4;
   --font:      'DM Sans', 'Segoe UI', -apple-system, sans-serif;
 }
 
 [data-theme="light"] {
+  /* Brand Tokens */
+  --ba-navy:   #0B1933;
+  --ba-cyan:   #08B6DE;
+  --ba-blue:   #1687E8;
+  --ba-amber:  #F5A623;
+  --ba-white:  #F7FAFC;
+  --ba-muted:  #A9B8CC;
+  --brand-radius: 14px;
+
   --bg:        #f4f7fa;
   --surface:   #ffffff;
   --surface2:  #e9eef5;

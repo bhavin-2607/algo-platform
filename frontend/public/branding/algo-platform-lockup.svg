@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="330" viewBox="0 0 900 330" role="img">
+<title>Bhavin Amesara brand asset</title>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+
+<g transform="translate(0 0) scale(.66)">
+<g transform="translate(40 40)">
+<rect x="0" y="0" width="320" height="320" rx="72" fill="#0B1933"/>
+<path d="M72 242 V190 H112 V242 Z M142 242 V145 H182 V242 Z M212 242 V95 H252 V242 Z"
+      fill="#08B6DE"/>
+<path d="M68 151 L132 124 L177 145 L251 75" fill="none" stroke="#F7FAFC" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="68" cy="151" r="10" fill="#F5A623"/>
+<circle cx="132" cy="124" r="10" fill="#F5A623"/>
+<circle cx="177" cy="145" r="10" fill="#F5A623"/>
+<circle cx="251" cy="75" r="10" fill="#F5A623"/>
+</g></g>
+<text x="315" y="175" font-family="Inter,Arial,sans-serif" font-size="48" font-weight="750" letter-spacing="1.4" fill="#0B1933">ALGO PLATFORM</text>
+<text x="318" y="220" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="550" letter-spacing="4" fill="#08B6DE">STRATEGY EXECUTION</text>
+
+</svg>

@@ -42,22 +42,38 @@ export default function LoginPage() {
       <div className="glow-blob" />
       <div className="auth-card">
         <Corner pos="tl" /><Corner pos="tr" /><Corner pos="bl" /><Corner pos="br" />
-        <div className="auth-header">
-          <div className="status-dot" />
-          <span className="status-label">SYSTEM ACCESS</span>
-          <h1 className="brand">ALGO<span>TRADE</span></h1>
-          <p className="brand-sub">PRIVATE EXECUTION PLATFORM v1.0</p>
+        <div className="auth-header" style={{ textAlign: "center" }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+            <img
+              src="/branding/algo-symbol.svg"
+              alt="Algo Platform"
+              style={{
+                width: 52,
+                height: 52,
+                borderRadius: 12,
+                boxShadow: "0 8px 24px rgba(8, 182, 222, 0.25)",
+              }}
+            />
+          </div>
+          <span className="status-label" style={{ color: "var(--ba-cyan, #08B6DE)", letterSpacing: 2 }}>SYSTEM ACCESS</span>
+          <h1 className="brand" style={{ letterSpacing: 1.5 }}>ALGO<span style={{ color: "var(--ba-cyan, #08B6DE)" }}>PLATFORM</span></h1>
+          <p className="brand-sub" style={{ letterSpacing: 1.5 }}>QUANTITATIVE STRATEGY EXECUTION</p>
         </div>
         <form onSubmit={handleSubmit}>
           <Field label="EMAIL_ADDR" value={email} onChange={setEmail} type="email" placeholder="trader@domain.com" />
           <Field label="PASSWORD" value={password} onChange={setPassword} type="password" placeholder="••••••••••••" />
           {needsMfa && <Field label="MFA_TOKEN" value={mfa} onChange={setMfa} type="text" placeholder="000000" />}
           <button className={`auth-btn${loading ? " loading" : ""}`} type="submit" disabled={loading}>
-            {loading ? "AUTHENTICATING..." : "AUTHENTICATE →"}
+            {loading ? "AUTHENTICATING..." : "AUTHENTICATE"}
           </button>
         </form>
-        <div className="auth-footer">
-          <span>Accounts are created by an admin.</span>
+        <div className="auth-footer" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, marginTop: 18 }}>
+          <img
+            src="/branding/endorsed-by-ba-dark.svg"
+            alt="An Independent Product by Bhavin Amesara"
+            style={{ width: 175, height: "auto", opacity: 0.9 }}
+          />
+          <span style={{ fontSize: 10, color: "var(--muted)" }}>Private Execution Platform · Authorized Access Only</span>
         </div>
       </div>
     </div>

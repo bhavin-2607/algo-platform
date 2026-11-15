@@ -61,11 +61,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="layout">
       <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
-        <div className="sidebar-brand">
-          <div className="brand-dot" />
-          {!collapsed && <span>ALGO<b>TRADE</b></span>}
-          <button type="button" className="sidebar-toggle" onClick={() => setCollapsed(v => !v)}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+        <div className="sidebar-brand" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <img
+            src="/branding/algo-symbol.svg"
+            alt="Algo Platform"
+            style={{ width: 28, height: 28, borderRadius: 6, flexShrink: 0 }}
+          />
+          {!collapsed && (
+            <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: 1.2 }}>
+              ALGO<b style={{ color: "var(--ba-cyan, #08B6DE)" }}>PLATFORM</b>
+            </span>
+          )}
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
             {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
           </button>
         </div>
@@ -99,6 +111,31 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </>
           )}
         </nav>
+        {/* Endorsement badge */}
+        <div
+          style={{
+            padding: collapsed ? "10px 4px" : "12px 14px",
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          title="An Independent Product by Bhavin Amesara"
+        >
+          {collapsed ? (
+            <img
+              src="/branding/ba-monogram.svg"
+              alt="BA"
+              style={{ width: 22, height: 16, opacity: 0.8 }}
+            />
+          ) : (
+            <img
+              src={theme === "light" ? "/branding/endorsed-by-ba-light.svg" : "/branding/endorsed-by-ba-dark.svg"}
+              alt="An Independent Product by Bhavin Amesara"
+              style={{ width: "100%", maxWidth: 140, height: "auto", opacity: 0.85 }}
+            />
+          )}
+        </div>
         <button className="logout-btn" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} style={{display:"flex", alignItems:"center", justifyContent:"center", gap:8}}>
           {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
           {!collapsed && <span>{theme === "dark" ? "LIGHT MODE" : "DARK MODE"}</span>}

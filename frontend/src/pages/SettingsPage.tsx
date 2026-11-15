@@ -19,11 +19,47 @@ export default function SettingsPage() {
         </div>
       </div>
       <div className="settings-board">
+        <AboutCard />
         <PasswordCard />
         <BrokerSettingsSection />
         {isAdmin && <TokenRenewalCard qc={qc} />}
       </div>
     </Layout>
+  );
+}
+
+function AboutCard() {
+  return (
+    <div className="settings-card" style={{ gridColumn: "1 / -1", padding: "18px 20px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <img
+            src="/branding/algo-symbol.svg"
+            alt="Algo Platform"
+            style={{ width: 44, height: 44, borderRadius: 10, boxShadow: "0 4px 16px rgba(8, 182, 222, 0.2)" }}
+          />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: 0.5 }}>
+              ALGO PLATFORM
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              High-Frequency Strategy Execution, Quantitative Signals & Risk Management
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <img
+            src="/branding/endorsed-by-ba-dark.svg"
+            alt="An Independent Product by Bhavin Amesara"
+            style={{ height: 28, opacity: 0.9 }}
+          />
+          <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "right", borderLeft: "1px solid var(--border)", paddingLeft: 14 }}>
+            <div>Version: <strong style={{ color: "var(--green)" }}>1.0.0</strong></div>
+            <div>Broker: <strong style={{ color: "var(--yellow)" }}>DhanHQ Live</strong></div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
