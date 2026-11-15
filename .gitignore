@@ -16,8 +16,9 @@ dist/
 
 # Data
 *.db
-backend/celerybeat-schedule
-backend/celerybeat-schedule.*
+*.rdb
+backend/celerybeat-schedule*
+celerybeat-schedule*
 
 # IDE
 .vscode/

@@ -40,6 +40,24 @@ async def init_db():
         await conn.exec_driver_sql(
             "UPDATE terminal_columns SET book = 'shared' WHERE formula IS NULL AND book IS DISTINCT FROM 'shared'"
         )
+        # Migrate any legacy shoonya accounts to dhan
+        await conn.exec_driver_sql(
+            "UPDATE broker_accounts SET broker = 'dhan' WHERE broker::text = 'shoonya'"
+        )
+        # Clean up any duplicate terminal columns in DB
+        await conn.exec_driver_sql("""
+            DELETE FROM terminal_columns
+            WHERE id IN (
+                SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY user_id, lower(name), coalesce(book, 'shared')
+                        ORDER BY created_at DESC, id
+                    ) as rnum
+                    FROM terminal_columns
+                ) t
+                WHERE t.rnum > 1
+            )
+        """)
 
 
 async def get_db():

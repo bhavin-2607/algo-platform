@@ -38,11 +38,11 @@ async def lifespan(app: FastAPI):
         mgr = get_auth_manager()
         if not mgr.is_token_valid():
             logger.error(
-                "❌ Dhan token EXPIRED — Go to web.dhan.co → My Profile → "
-                "Access DhanHQ APIs → Generate Token → Update DHAN_ACCESS_TOKEN in .env"
+                "[ERROR] Dhan token EXPIRED — Go to web.dhan.co -> My Profile -> "
+                "Access DhanHQ APIs -> Generate Token -> Update DHAN_ACCESS_TOKEN in .env"
             )
         else:
-            logger.info("✅ Dhan token valid on startup")
+            logger.info("[OK] Dhan token valid on startup")
     except Exception as e:
         logger.warning(f"Startup token check: {e}")
     yield
@@ -92,3 +92,31 @@ async def health():
         "status": "ok",
         "live_trading_enabled": settings.LIVE_TRADING_ENABLED,
     }
+
+
+# ── Serve Built Frontend SPA (Standalone Mode) ────────────────────────────────
+import os
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
+
+_frontend_dist = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+)
+if os.path.exists(_frontend_dist):
+    _assets_dir = os.path.join(_frontend_dist, "assets")
+    if os.path.exists(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api/") or full_path.startswith("metrics"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        file_path = os.path.join(_frontend_dist, full_path)
+        if full_path and os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        index_file = os.path.join(_frontend_dist, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="Frontend index.html not found")
+

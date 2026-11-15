@@ -32,9 +32,9 @@ export default function ChartsPage() {
         {/* Top toolbar */}
         <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
           <div className="tab-switcher">
-            <button className={`tab-btn${tab==="chart"    ?" active":""}`} onClick={()=>setTab("chart")}>📈 CHART</button>
-            <button className={`tab-btn${tab==="backtest" ?" active":""}`} onClick={()=>setTab("backtest")}>⚡ BACKTEST</button>
-            <button className={`tab-btn${tab==="signals"  ?" active":""}`} onClick={()=>setTab("signals")}>📡 SIGNALS</button>
+            <button className={`tab-btn${tab==="chart"    ?" active":""}`} onClick={()=>setTab("chart")}>CHART</button>
+            <button className={`tab-btn${tab==="backtest" ?" active":""}`} onClick={()=>setTab("backtest")}>BACKTEST</button>
+            <button className={`tab-btn${tab==="signals"  ?" active":""}`} onClick={()=>setTab("signals")}>SIGNALS</button>
           </div>
 
           <div style={{ width:1, height:24, background:"var(--border)" }} />
@@ -81,8 +81,8 @@ export default function ChartsPage() {
               watchlist={watchlist}
               selected={symbol}
               onSelect={setSymbol}
-              onAdd={(s)=>!watchlist.includes(s)&&setWatchlist(w=>[...w,s])}
-              onRemove={(s)=>setWatchlist(w=>w.filter(x=>x!==s))}
+              onAdd={(s: any)=>!watchlist.includes(s)&&setWatchlist(w=>[...w,s])}
+              onRemove={(s: any)=>setWatchlist(w=>w.filter(x=>x!==s))}
             />
           </div>
 
@@ -100,8 +100,8 @@ export default function ChartsPage() {
             <AlertsPanel
               symbol={symbol}
               alerts={alerts}
-              onAdd={(a)=>setAlerts(prev=>[...prev,a])}
-              onRemove={(i)=>setAlerts(prev=>prev.filter((_,idx)=>idx!==i))}
+              onAdd={(a: any)=>setAlerts(prev=>[...prev,a])}
+              onRemove={(i: any)=>setAlerts(prev=>prev.filter((_,idx)=>idx!==i))}
               showForm={showAlertForm}
               setShowForm={setShowAlertForm}
             />
@@ -225,7 +225,7 @@ function AlertsPanel({ symbol, alerts, onAdd, onRemove, showForm, setShowForm }:
         <span style={{fontSize:10,letterSpacing:2,color:"var(--muted)"}}>PRICE ALERTS</span>
         <button className="connect-btn" style={{padding:"4px 10px",fontSize:10}}
           onClick={()=>setShowForm((v:boolean)=>!v)}>
-          {showForm?"✕":"+ ALERT"}
+          {showForm?"×":"+ ALERT"}
         </button>
       </div>
 
@@ -547,7 +547,7 @@ function ManualSignals({ symbol }: { symbol:string }) {
               background:sent?"var(--green)":form.direction==="SELL"?"rgba(255,68,102,0.85)":form.direction==="EXIT"?"rgba(255,208,96,0.85)":undefined,
               color:sent||(form.direction!=="BUY")?"var(--bg)":undefined,
             }}>
-            {sent?"✓ SENT!":loading?"SENDING…":`SEND ${form.direction} →`}
+            {sent?"SENT!":loading?"SENDING…":`SEND ${form.direction} →`}
           </button>
         </div>
       </div>

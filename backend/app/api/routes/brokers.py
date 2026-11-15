@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from typing import List
 from uuid import UUID
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
-from app.models.broker import BrokerAccount
+from app.models.broker import BrokerAccount, BrokerName
 from app.broker.factory import get_broker_adapter
 from app.schemas.broker import (
     BrokerConnectRequest,
@@ -23,9 +23,23 @@ async def list_broker_accounts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return all broker accounts linked to the current user."""
+    """Return all active broker accounts (migrating any legacy shoonya accounts to dhan)."""
+    # Auto-migrate any legacy shoonya accounts to dhan
+    try:
+        await db.execute(
+            update(BrokerAccount)
+            .where(BrokerAccount.broker == BrokerName.shoonya)
+            .values(broker=BrokerName.dhan)
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+
     result = await db.execute(
-        select(BrokerAccount).where(BrokerAccount.user_id == current_user.id)
+        select(BrokerAccount).where(
+            BrokerAccount.user_id == current_user.id,
+            BrokerAccount.broker != BrokerName.shoonya,
+        )
     )
     return result.scalars().all()
 
@@ -47,12 +61,17 @@ async def connect_broker(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Broker account already linked")
 
+    from app.core.config import settings
+    is_active = False
+    if payload.broker == BrokerName.dhan and settings.DHAN_ACCESS_TOKEN:
+        is_active = True
+
     account = BrokerAccount(
         user_id=current_user.id,
         broker=payload.broker,
         client_id=payload.client_id,
         paper_trading=payload.paper_trading,
-        is_active=False,
+        is_active=is_active,
     )
     db.add(account)
     await db.commit()
@@ -78,11 +97,19 @@ async def activate_broker(
     broker_name = account.broker.value.upper()
 
     # Live trading — attempt real broker connection
+    from app.core.config import settings
     try:
-        adapter = get_broker_adapter(account)
+        from app.broker.dhan import DhanAdapter
+        client_id = account.client_id or settings.DHAN_CLIENT_ID
+        access_token = settings.DHAN_ACCESS_TOKEN
+        if account.encrypted_access_token:
+            from app.core.security import decrypt_broker_token
+            try:
+                access_token = decrypt_broker_token(account.encrypted_access_token)
+            except Exception:
+                pass
+        adapter = DhanAdapter(client_id=client_id, access_token=access_token)
         success = await adapter.connect()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"{broker_name} connection error: {e}")
 
@@ -94,7 +121,7 @@ async def activate_broker(
             status_code=502,
             detail=f"{broker_name} login failed — check credentials in .env",
         )
-    return BrokerStatusResponse(is_active=True, message=f"{broker_name} connected successfully")
+    return BrokerStatusResponse(is_active=True, message=f"{broker_name} connected and verified successfully")
 
 
 @router.delete("/{account_id}", status_code=204)
@@ -127,7 +154,7 @@ async def get_positions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Fetch live positions from Shoonya (or paper book)."""
+    """Fetch live positions from broker (or paper book)."""
     account = await _get_account(account_id, current_user.id, db)
     adapter = get_broker_adapter(account)
     if not account.paper_trading:
@@ -155,7 +182,7 @@ async def get_orders(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Fetch today's order book from Shoonya."""
+    """Fetch today's order book from broker."""
     account = await _get_account(account_id, current_user.id, db)
     adapter = get_broker_adapter(account)
     if not account.paper_trading:

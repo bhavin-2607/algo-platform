@@ -100,7 +100,7 @@ export default function MarketPage() {
           </p>
         </div>
         <button className="connect-btn" onClick={()=>setShowAdd(v=>!v)}>
-          {showAdd ? "✕ CLOSE" : "+ ADD SYMBOL"}
+          {showAdd ? "CLOSE" : "+ ADD SYMBOL"}
         </button>
       </div>
 
@@ -152,7 +152,7 @@ export default function MarketPage() {
                     style={{padding:"4px 8px",marginRight:6,background:"transparent",
                       border:"none",color:"var(--muted)",cursor:"pointer",fontSize:12,
                       opacity:0.4}}
-                    title="Remove">✕</button>
+                    title="Remove">×</button>
                 </div>
               );
             })}
@@ -219,8 +219,8 @@ export default function MarketPage() {
                 <span style={{marginLeft:"auto",
                   color:selectedQuote.source==="dhan_live"?"var(--green)":"var(--yellow)"}}>
                   {selectedQuote.source==="dhan_live"
-                    ? isLive?"✓ WebSocket live":"✓ REST live"
-                    : "⚠ Simulated"}
+                    ? isLive?"WebSocket live":"REST live"
+                    : "Simulated"}
                 </span>
               </div>
             )}
@@ -277,7 +277,7 @@ export default function MarketPage() {
                       <td>
                         <button onClick={e=>{e.stopPropagation();removeMutation.mutate(sym);}}
                           style={{background:"transparent",border:"none",color:"var(--muted)",
-                            cursor:"pointer",fontSize:11,opacity:0.4}}>✕</button>
+                            cursor:"pointer",fontSize:11,opacity:0.4}}>×</button>
                       </td>
                     </tr>
                   );

@@ -1,0 +1,41 @@
+# ==============================================================================
+# Algo Platform — Mac Startup Commands (iTerm2 Tabs)
+# ==============================================================================
+# Machine Path:  /Users/bhavinamesara/Projects/algo-platform
+# Python venv:   /Users/bhavinamesara/Projects/algo-platform/backend/.venv
+# Node/npm:      /opt/homebrew/bin
+#
+# ── Quick Launch (Opens all 4 services in iTerm2 tabs automatically) ───────────
+# Run from terminal:
+#   cd /Users/bhavinamesara/Projects/algo-platform && ./start.sh
+#
+# ── Step 0: One-Time Python Virtual Environment Setup (Python 3.12 Recommended)
+# If your backend .venv is not yet set up or was created with Python 3.15:
+#   brew install python@3.12
+#   rm -rf /Users/bhavinamesara/Projects/algo-platform/backend/.venv
+#   /opt/homebrew/opt/python@3.12/bin/python3 -m venv /Users/bhavinamesara/Projects/algo-platform/backend/.venv
+#   /Users/bhavinamesara/Projects/algo-platform/backend/.venv/bin/pip install --upgrade pip setuptools wheel
+#   /Users/bhavinamesara/Projects/algo-platform/backend/.venv/bin/pip install -r /Users/bhavinamesara/Projects/algo-platform/backend/requirements.txt
+#
+# ── Step 1: Start Background Services (PostgreSQL & Redis) ────────────────────
+# Option A — Local Homebrew services:
+#   brew services start redis
+#   brew services start postgresql@16
+#
+# Option B — Docker Compose:
+#   cd /Users/bhavinamesara/Projects/algo-platform && docker compose up -d postgres redis
+# ==============================================================================
+
+# ── Manual iTerm2 Tabs (or run ./start.sh to launch all automatically) ─────────
+
+# iTerm2 Tab 1 — Backend (FastAPI Server)
+cd /Users/bhavinamesara/Projects/algo-platform/backend && export PATH="/opt/homebrew/bin:$PATH" && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# iTerm2 Tab 2 — Celery Worker (macOS requires solo pool & fork safety flag)
+cd /Users/bhavinamesara/Projects/algo-platform/backend && export PATH="/opt/homebrew/bin:$PATH" && source .venv/bin/activate && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES celery -A app.worker.celery_app worker --loglevel=info -P solo
+
+# iTerm2 Tab 3 — Frontend (Vite React UI)
+cd /Users/bhavinamesara/Projects/algo-platform/frontend && export PATH="/opt/homebrew/bin:$PATH" && npm run dev
+
+# iTerm2 Tab 4 — Celery Beat (Periodic Scheduler)
+cd /Users/bhavinamesara/Projects/algo-platform/backend && export PATH="/opt/homebrew/bin:$PATH" && source .venv/bin/activate && celery -A app.worker.celery_app beat --loglevel=info

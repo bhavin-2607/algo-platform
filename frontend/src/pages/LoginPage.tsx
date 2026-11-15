@@ -27,7 +27,7 @@ export default function LoginPage() {
     } catch (err: any) {
       if (err.response?.headers?.["x-mfa-required"]) {
         setNeedsMfa(true);
-        toast("Enter your MFA code", { icon: "🔐" });
+        toast("Enter your MFA code");
       } else {
         toast.error(err.response?.data?.detail || "Login failed");
       }

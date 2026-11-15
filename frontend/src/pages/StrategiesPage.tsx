@@ -127,7 +127,7 @@ function StrategyCard({ strategy: s, onStart, onStop, starting, stopping }: {
           <h3 className="strategy-name">{s.strategy_name}</h3>
         </div>
         <div className={`status-pill ${active ? "running" : "stopped"}`}>
-          {runtime.killed ? "⚠ KILLED" : active ? "● RUNNING" : "○ STOPPED"}
+          {runtime.killed ? "KILLED" : active ? "RUNNING" : "STOPPED"}
         </div>
       </div>
 
@@ -161,7 +161,7 @@ function StrategyCard({ strategy: s, onStart, onStop, starting, stopping }: {
       {/* Kill switch warning */}
       {runtime.killed && (
         <div className="info-box" style={{ marginBottom: 12, borderColor: "rgba(255,68,102,0.3)", background: "rgba(255,68,102,0.05)" }}>
-          <div className="info-icon" style={{ color: "var(--red)" }}>⚠</div>
+          <div className="info-icon" style={{ color: "var(--red)" }}>!</div>
           <div>
             <div className="info-title" style={{ color: "var(--red)" }}>KILL SWITCH ACTIVE</div>
             <div className="info-body">Max consecutive losses reached. Restart to resume.</div>
@@ -171,8 +171,8 @@ function StrategyCard({ strategy: s, onStart, onStop, starting, stopping }: {
 
       <div className="strategy-actions">
         {active
-          ? <button className="strategy-btn btn-stop"  onClick={onStop}  disabled={stopping}>⏹ {stopping ? "STOPPING..." : "STOP"}</button>
-          : <button className="strategy-btn btn-start" onClick={onStart} disabled={starting}>▶ {starting ? "STARTING..." : "START"}</button>
+          ? <button className="strategy-btn btn-stop"  onClick={onStop}  disabled={stopping}>{stopping ? "STOPPING..." : "STOP"}</button>
+          : <button className="strategy-btn btn-start" onClick={onStart} disabled={starting}>{starting ? "STARTING..." : "START"}</button>
         }
       </div>
     </div>

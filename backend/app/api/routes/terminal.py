@@ -486,16 +486,28 @@ COLUMN_PRESETS = [
 ]
 
 
+@router.get("/column-batches")
+async def list_column_batches(current_user: User = Depends(get_current_user)):
+    """List available formula batches."""
+    from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+    return [
+        {"id": "fibonacci", "name": "Fibonacci Formula", "description": "19 Fibonacci percentage target & strategy formulas", "columns": len(FIBONACCI_FORMULA_COLUMNS)},
+        {"id": "bsa", "name": "BSA", "description": "28 BSA formula batch with Gann, KD, Signals, and BT/ST Targets", "columns": len(BSA_FORMULA_COLUMNS)},
+    ]
+
+
 @router.get("/column-presets")
 async def list_column_presets(
     book: str = "equity",
+    batch: str = "fibonacci",
     current_user: User = Depends(require_admin),
 ):
-    """House column templates. Admin only, so the expressions stay out of the trader bundle."""
+    """House column templates by batch. Admin only."""
     from app.strategy.excel_formula_engine import formula_for_book
 
     if book not in ("equity", "option"):
         raise HTTPException(status_code=400, detail="book must be equity or option")
+
     return [
         {**preset, "formula": formula_for_book(preset["name"], preset["formula"], book)}
         for preset in COLUMN_PRESETS
@@ -527,6 +539,9 @@ class ColumnValueTick(BaseModel):
     oi: Optional[float] = None
     vwap: Optional[float] = None
     atp: Optional[float] = None
+    p_close: Optional[float] = None
+    p_high: Optional[float] = None
+    p_low: Optional[float] = None
 
 
 class ColumnValueRequest(BaseModel):
@@ -534,21 +549,51 @@ class ColumnValueRequest(BaseModel):
     book: str = "equity"
 
 
-async def _column_for_editor(db: AsyncSession, col_id: UUID, current_user: User):
-    """Admins share one column set, so any admin can edit a column owned by another admin."""
-    from app.models.terminal_column import TerminalColumn
+async def _column_for_editor(db: AsyncSession, col_id: str, current_user: User):
+    """Admins and traders share columns; looks up by UUID or column key/name."""
+    from app.models.terminal_column import TerminalColumn, DEFAULT_COLUMNS
+    import uuid
 
-    result = await db.execute(select(TerminalColumn).where(TerminalColumn.id == col_id))
-    col = result.scalar_one_or_none()
+    col = None
+    try:
+        uid = uuid.UUID(str(col_id))
+        result = await db.execute(select(TerminalColumn).where(TerminalColumn.id == uid))
+        col = result.scalar_one_or_none()
+    except (ValueError, TypeError):
+        pass
+
+    if not col:
+        result = await db.execute(
+            select(TerminalColumn).where(
+                (TerminalColumn.col_key == str(col_id).lower()) |
+                (TerminalColumn.name == str(col_id).upper())
+            )
+        )
+        col = result.scalars().first()
+
+    if not col:
+        # Create from DEFAULT_COLUMNS if matching default column definition
+        target_def = next((d for d in DEFAULT_COLUMNS if d["col_key"] == str(col_id).lower() or d["name"] == str(col_id).upper()), None)
+        if target_def:
+            col = TerminalColumn(
+                user_id=current_user.id,
+                name=target_def["name"],
+                col_key=target_def["col_key"],
+                col_type=target_def["col_type"],
+                formula=target_def.get("formula"),
+                col_order=target_def["col_order"],
+                width=target_def["width"],
+                is_visible=True,
+                color_rules=target_def.get("color_rules"),
+                book="shared",
+            )
+            db.add(col)
+            await db.commit()
+            await db.refresh(col)
+
     if not col:
         raise HTTPException(status_code=404, detail="Column not found")
-    if col.user_id == current_user.id:
-        return col
-    if current_user.role == UserRole.admin:
-        owner = await db.get(User, col.user_id)
-        if owner and owner.role == UserRole.admin:
-            return col
-    raise HTTPException(status_code=404, detail="Column not found")
+    return col
 
 
 async def _shared_columns(db: AsyncSession, current_user: User):
@@ -561,16 +606,19 @@ async def _shared_columns(db: AsyncSession, current_user: User):
     admin_ids = [row[0] for row in admins.all()]
     cols = []
     if admin_ids:
+        # Use primary admin's columns or deduplicate across admins
         result = await db.execute(
             select(TerminalColumn)
             .where(TerminalColumn.user_id.in_(admin_ids))
             .order_by(TerminalColumn.col_order)
         )
         cols = list(result.scalars().all())
-    if not cols and current_user.role == UserRole.admin:
+
+    if not cols:
+        owner_id = admin_ids[0] if admin_ids else current_user.id
         for d in DEFAULT_COLUMNS:
             db.add(TerminalColumn(
-                user_id=current_user.id,
+                user_id=owner_id,
                 name=d["name"],
                 col_key=d["col_key"],
                 col_type=d["col_type"],
@@ -584,43 +632,70 @@ async def _shared_columns(db: AsyncSession, current_user: User):
         await db.commit()
         result = await db.execute(
             select(TerminalColumn)
-            .where(TerminalColumn.user_id == current_user.id)
+            .where(TerminalColumn.user_id == owner_id)
             .order_by(TerminalColumn.col_order)
         )
         cols = list(result.scalars().all())
+
     cols = await _ensure_option_formulas(db, cols)
-    return cols
+
+    # Strictly deduplicate columns by (key/name, book) to prevent duplicate columns in table
+    seen = set()
+    deduped = []
+    for c in cols:
+        k = ((c.col_key or c.name).lower().strip(), (c.book or "shared").lower().strip())
+        if k not in seen:
+            seen.add(k)
+            deduped.append(c)
+    return deduped
 
 
 async def _ensure_option_formulas(db: AsyncSession, cols: list):
-    """Copy equity formulas into the options book once. Later edits stay on the book that was saved."""
+    """Copy equity formulas into the options book once without creating duplicates."""
     from app.models.terminal_column import TerminalColumn
     from app.strategy.excel_formula_engine import formula_for_book
 
     equity = [col for col in cols if col.formula and (col.book or "equity") == "equity"]
-    if not equity or any(col.book == "option" for col in cols):
-        return cols
+    existing_option_names = {col.name.upper() for col in cols if (col.book or "").lower() == "option"}
+
+    to_add = []
     for src in equity:
-        db.add(TerminalColumn(
-            user_id=src.user_id,
-            name=src.name,
-            col_key=src.col_key,
-            col_type=src.col_type,
-            formula=formula_for_book(src.name, src.formula, "option"),
-            col_order=src.col_order,
-            width=src.width,
-            is_visible=src.is_visible,
-            color_rules=src.color_rules,
-            book="option",
-        ))
-    await db.commit()
-    owner_ids = {col.user_id for col in cols}
-    result = await db.execute(
-        select(TerminalColumn)
-        .where(TerminalColumn.user_id.in_(owner_ids))
-        .order_by(TerminalColumn.col_order)
-    )
-    return list(result.scalars().all())
+        if src.name.upper() not in existing_option_names:
+            to_add.append(TerminalColumn(
+                user_id=src.user_id,
+                name=src.name,
+                col_key=src.col_key,
+                col_type=src.col_type,
+                formula=formula_for_book(src.name, src.formula, "option"),
+                col_order=src.col_order,
+                width=src.width,
+                is_visible=src.is_visible,
+                color_rules=src.color_rules,
+                book="option",
+            ))
+            existing_option_names.add(src.name.upper())
+
+    if to_add:
+        for item in to_add:
+            db.add(item)
+        await db.commit()
+        owner_ids = {col.user_id for col in cols}
+        result = await db.execute(
+            select(TerminalColumn)
+            .where(TerminalColumn.user_id.in_(owner_ids))
+            .order_by(TerminalColumn.col_order)
+        )
+        cols = list(result.scalars().all())
+
+    # Strictly deduplicate before returning
+    seen = set()
+    deduped = []
+    for c in cols:
+        k = ((c.col_key or c.name).lower().strip(), (c.book or "shared").lower().strip())
+        if k not in seen:
+            seen.add(k)
+            deduped.append(c)
+    return deduped
 
 
 @router.post("/column-values")
@@ -749,7 +824,7 @@ async def create_column(
 
 @router.patch("/columns/{col_id}/visibility")
 async def toggle_column_visibility(
-    col_id: UUID,
+    col_id: str,
     body: dict,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -848,6 +923,520 @@ async def validate_column_formula(
     from app.strategy.excel_formula_engine import validate_formula_excel
     ok, msg = validate_formula_excel(body.get("formula", ""))
     return {"valid": ok, "message": msg}
+
+
+# ── Batch Switching ──────────────────────────────────────────────────────────
+
+class ApplyBatchRequest(BaseModel):
+    batch: str   # "BSA" or "Fibonacci Formula"
+    book: str = "both"  # "equity", "option", or "both"
+
+
+@router.post("/columns/apply-batch")
+async def apply_formula_batch(
+    payload: ApplyBatchRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Apply a complete formula batch (BSA or Fibonacci Formula) across terminal tables.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from sqlalchemy import delete as sa_delete
+    from app.models.terminal_column import TerminalColumn, DEFAULT_COLUMNS, FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+    from app.strategy.excel_formula_engine import formula_for_book
+
+    books = ["equity", "option"] if payload.book == "both" else [payload.book]
+
+    # Clear existing columns for current user and books
+    await db.execute(
+        sa_delete(TerminalColumn).where(
+            TerminalColumn.user_id == current_user.id,
+            TerminalColumn.book.in_(books + ["shared"]),
+        )
+    )
+
+    batch_key = "bsa" if "bsa" in payload.batch.lower() else "fibonacci"
+
+    if batch_key == "bsa":
+        # Apply BSA Formula batch (28 columns in exact sequence A=SYMBOL to AB=VOLUME)
+        default_cols = [c for c in BSA_FORMULA_COLUMNS if c.get("col_type") == "default"]
+        for d in default_cols:
+            db.add(TerminalColumn(
+                user_id     = current_user.id,
+                name        = d["name"],
+                col_key     = d["col_key"],
+                col_type    = d["col_type"],
+                col_order   = d["col_order"],
+                width       = d["width"],
+                is_visible  = True,
+                color_rules = d.get("color_rules"),
+                book        = "shared",
+            ))
+        formula_cols = [c for c in BSA_FORMULA_COLUMNS if c.get("col_type") != "default"]
+        for b in books:
+            for d in formula_cols:
+                db.add(TerminalColumn(
+                    user_id     = current_user.id,
+                    name        = d["name"],
+                    col_key     = d.get("col_key") or d["name"].lower(),
+                    col_type    = "custom",
+                    formula     = d["formula"],
+                    col_order   = d["col_order"],
+                    width       = d.get("width", 85),
+                    is_visible  = True,
+                    color_rules = d.get("color_rules"),
+                    book        = b,
+                ))
+    else:
+        # Apply Fibonacci Formula batch: Default columns + Fibonacci strategy formulas
+        for d in DEFAULT_COLUMNS:
+            db.add(TerminalColumn(
+                user_id     = current_user.id,
+                name        = d["name"],
+                col_key     = d["col_key"],
+                col_type    = d["col_type"],
+                col_order   = d["col_order"],
+                width       = d["width"],
+                is_visible  = True,
+                color_rules = d["color_rules"],
+                book        = "shared",
+            ))
+        for b in books:
+            for d in FIBONACCI_FORMULA_COLUMNS:
+                formula_text = formula_for_book(d["name"], d["formula"], b)
+                db.add(TerminalColumn(
+                    user_id     = current_user.id,
+                    name        = d["name"],
+                    col_key     = d.get("col_key") or d["name"].lower(),
+                    col_type    = "custom",
+                    formula     = formula_text,
+                    col_order   = d["col_order"],
+                    width       = d.get("width", 80),
+                    is_visible  = True,
+                    color_rules = d.get("color_rules"),
+                    book        = b,
+                ))
+
+    await db.commit()
+    return {"status": "ok", "applied_batch": batch_key, "books": books}
+
+
+# ── BSA Algo Window Routes ───────────────────────────────────────────────────
+
+class BsaAlgoRowCreate(BaseModel):
+    symbol:           str
+    exchange:         str = "NSE"
+    segment:          str = "NSE_EQ"
+    token:            Optional[str] = None
+    quantity:         int = 1
+    number_of_trades: int = 1
+    target_type:      str = "TGT1"
+
+
+class BsaAlgoRowUpdate(BaseModel):
+    is_algo_active:   Optional[bool] = None
+    quantity:         Optional[int] = None
+    number_of_trades: Optional[int] = None
+    target_type:      Optional[str] = None
+
+
+class BsaManualOrderPayload(BaseModel):
+    side:       str  # BUY or SELL
+    quantity:   Optional[int] = None
+    price:      Optional[float] = None
+
+
+@router.get("/algo-rows")
+async def list_algo_rows(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return all scripts in the Algo Trading Window for current user,
+    enriched with live market data and real-time Fibonacci formula calculations.
+    """
+    from app.models.algo_row import BsaAlgoRow
+    from app.market.market_poller import get_poller
+    from app.strategy.excel_formula_engine import evaluate_columns_in_order
+    from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+
+    result = await db.execute(
+        select(BsaAlgoRow)
+        .where(BsaAlgoRow.user_id == current_user.id)
+        .order_by(BsaAlgoRow.created_at)
+    )
+    rows = result.scalars().all()
+
+    poller = get_poller()
+    cached_quotes = {t["symbol"]: t for t in (poller._last_data or [])}
+
+    out = []
+    for r in rows:
+        live = cached_quotes.get(r.symbol, {})
+        ltp = float(live.get("ltp") or r.buy_price or 0)
+
+        # Compute live formula outputs
+        tick_data = {
+            "symbol":  r.symbol,
+            "ltp":     ltp,
+            "open":    live.get("open"),
+            "high":    live.get("high"),
+            "low":     live.get("low"),
+            "close":   live.get("close"),
+            "volume":  live.get("volume"),
+            "vwap":    live.get("vwap") or live.get("atp"),
+            "p_close": live.get("p_close") or live.get("close"),
+            "p_high":  live.get("p_high") or live.get("high"),
+            "p_low":   live.get("p_low") or live.get("low"),
+        }
+        fib_vals = evaluate_columns_in_order(FIBONACCI_FORMULA_COLUMNS, tick_data)
+        bsa_vals = evaluate_columns_in_order(BSA_FORMULA_COLUMNS, tick_data)
+
+        # Current trade PnL
+        live_pnl = r.pnl
+        if r.status == "IN_POSITION" and r.buy_price and ltp > 0:
+            live_pnl = round((ltp - r.buy_price) * r.quantity, 2)
+
+        out.append({
+            "id":               str(r.id),
+            "symbol":           r.symbol,
+            "exchange":         r.exchange,
+            "segment":          r.segment,
+            "token":            r.token,
+            "is_algo_active":   r.is_algo_active,
+            "quantity":         r.quantity,
+            "number_of_trades": r.number_of_trades,
+            "trades_completed": r.trades_completed,
+            "status":           r.status,
+            "buy_price":        r.buy_price,
+            "sell_tgt":         r.sell_tgt,
+            "stop_loss":        r.stop_loss,
+            "entry_level":      r.entry_level,
+            "target_type":      r.target_type or "TGT1",
+            "pnl":              live_pnl,
+            "ltp":              ltp if ltp > 0 else None,
+            "signal":           bsa_vals.get("intrasignal") or bsa_vals.get("s_signal") or fib_vals.get("signal") or fib_vals.get("ssig") or "—",
+            "entry":            bsa_vals.get("entry") or fib_vals.get("entry"),
+            "sl":               bsa_vals.get("sl") or fib_vals.get("sl"),
+            "t11_8":            fib_vals.get("t11.8") or fib_vals.get("t11_8"),
+            "t23_8":            fib_vals.get("t23.8") or fib_vals.get("t23_8"),
+            "t38_2":            fib_vals.get("t38.2") or fib_vals.get("t38_2"),
+            "t50":              fib_vals.get("t50"),
+            "t61_8":            fib_vals.get("t61.8") or fib_vals.get("t61_8"),
+            "t78_6":            fib_vals.get("t78.6") or fib_vals.get("t78_6"),
+            "t100":             fib_vals.get("t100"),
+            "t1_618":           fib_vals.get("t1.618") or fib_vals.get("t1_618"),
+            "t2_618":           fib_vals.get("t2.618") or fib_vals.get("t2_618"),
+            "tgt1":             bsa_vals.get("tgt1") or fib_vals.get("t11.8") or fib_vals.get("t11_8"),
+            "tgt2":             bsa_vals.get("tgt2") or fib_vals.get("t23.8") or fib_vals.get("t23_8"),
+            "tgt3":             bsa_vals.get("tgt3") or fib_vals.get("t38.2") or fib_vals.get("t38_2"),
+            "bt1":              bsa_vals.get("bt1"),
+            "bt2":              bsa_vals.get("bt2"),
+            "bt3":              bsa_vals.get("bt3"),
+            "diff":             bsa_vals.get("diff"),
+            "gann":             bsa_vals.get("gann"),
+            "kd":               bsa_vals.get("kd"),
+        })
+    return out
+
+
+@router.post("/algo-rows")
+async def add_algo_row(
+    payload: BsaAlgoRowCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Add a symbol to the Algo Trading Window (e.g. from Equity/Options table '+ ALGO' button).
+    """
+    from app.models.algo_row import BsaAlgoRow
+    from app.market.market_poller import get_poller
+
+    sym = payload.symbol.upper().strip()
+
+    # Check existing row
+    res = await db.execute(
+        select(BsaAlgoRow).where(
+            BsaAlgoRow.user_id == current_user.id,
+            BsaAlgoRow.symbol == sym,
+        )
+    )
+    existing = res.scalars().first()
+    if existing:
+        return {"status": "exists", "id": str(existing.id), "symbol": existing.symbol}
+
+    # Ensure symbol is watched in market poller
+    poller = get_poller()
+    if payload.token:
+        poller.add_symbol(sym, payload.token, payload.segment or "NSE_EQ")
+
+    new_row = BsaAlgoRow(
+        user_id           = current_user.id,
+        symbol            = sym,
+        exchange          = payload.exchange or "NSE",
+        segment           = payload.segment or "NSE_EQ",
+        token             = payload.token,
+        quantity          = max(1, payload.quantity),
+        number_of_trades  = max(1, min(5, payload.number_of_trades)),
+        is_algo_active    = False,  # Default to ALGO OFF (manual mode)
+        status            = "IDLE",
+        target_type       = payload.target_type or "TGT1",
+    )
+    db.add(new_row)
+    await db.commit()
+    await db.refresh(new_row)
+    return {"status": "created", "id": str(new_row.id), "symbol": new_row.symbol}
+
+
+@router.patch("/algo-rows/{row_id}")
+async def update_algo_row(
+    row_id: UUID,
+    payload: BsaAlgoRowUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update settings for an algo row: toggle ALGO ON/OFF, quantity, trades (1-5), target type (acting as kill switch)."""
+    from app.models.algo_row import BsaAlgoRow
+
+    row = await db.get(BsaAlgoRow, row_id)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Algo row not found")
+
+    if payload.is_algo_active is not None:
+        row.is_algo_active = payload.is_algo_active
+        if payload.is_algo_active and row.status in ("COMPLETED", "STOPPED_SL"):
+            row.status = "IDLE"
+            row.trades_completed = 0
+
+    if payload.quantity is not None:
+        row.quantity = max(1, payload.quantity)
+
+    if payload.number_of_trades is not None:
+        # Strictly enforce 1 to 5 only
+        row.number_of_trades = max(1, min(5, payload.number_of_trades))
+
+    if payload.target_type is not None:
+        tt = payload.target_type.upper().strip()
+        if tt in ("KILL", "EXIT_NOW", "STOP"):
+            # Instant Kill Switch: exit position immediately and turn off automated trading
+            row.is_algo_active = False
+            if row.status == "IN_POSITION":
+                from app.services.bsa_algo_engine import algo_engine
+                from app.market.market_poller import get_poller
+                poller = get_poller()
+                live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
+                ltp = float(live.get("ltp") or row.buy_price or 0.0)
+                exit_fill = await algo_engine._execute_order(row, side="SELL", price=ltp, db=db)
+                if exit_fill:
+                    row.trades_completed += 1
+                    if row.buy_price:
+                        row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
+                    row.status = "COMPLETED"
+            else:
+                row.status = "IDLE"
+        else:
+            row.target_type = payload.target_type
+            # Dynamically recalculate and update sell_tgt based on the new target selection
+            from app.market.market_poller import get_poller
+            from app.strategy.excel_formula_engine import evaluate_columns_in_order
+            from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+            poller = get_poller()
+            live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
+            ltp = float(live.get("ltp") or row.buy_price or 0.0)
+            tick_data = {
+                "symbol": row.symbol, "ltp": ltp,
+                "open": live.get("open") or ltp, "high": live.get("high") or ltp,
+                "low": live.get("low") or ltp, "close": live.get("close") or ltp,
+                "p_close": live.get("p_close") or live.get("close") or ltp,
+                "p_high": live.get("p_high") or live.get("high") or ltp,
+                "p_low": live.get("p_low") or live.get("low") or ltp,
+            }
+            fib_vals = evaluate_columns_in_order(FIBONACCI_FORMULA_COLUMNS, tick_data)
+            bsa_vals = evaluate_columns_in_order(BSA_FORMULA_COLUMNS, tick_data)
+            target_map = {
+                "TGT1":   float(bsa_vals.get("tgt1") or fib_vals.get("t11.8") or fib_vals.get("t11_8") or 0),
+                "TGT2":   float(bsa_vals.get("tgt2") or fib_vals.get("t23.8") or fib_vals.get("t23_8") or 0),
+                "TGT3":   float(bsa_vals.get("tgt3") or fib_vals.get("t38.2") or fib_vals.get("t38_2") or 0),
+                "T11.8":  float(fib_vals.get("t11.8") or fib_vals.get("t11_8") or 0),
+                "T23.8":  float(fib_vals.get("t23.8") or fib_vals.get("t23_8") or 0),
+                "T38.2":  float(fib_vals.get("t38.2") or fib_vals.get("t38_2") or 0),
+                "T50":    float(fib_vals.get("t50") or 0),
+                "T61.8":  float(fib_vals.get("t61.8") or fib_vals.get("t61_8") or 0),
+                "T78.6":  float(fib_vals.get("t78.6") or fib_vals.get("t78_6") or 0),
+                "T100":   float(fib_vals.get("t100") or 0),
+                "T1.618": float(fib_vals.get("t1.618") or fib_vals.get("t1_618") or 0),
+                "T2.618": float(fib_vals.get("t2.618") or fib_vals.get("t2_618") or 0),
+            }
+            new_tgt = target_map.get(payload.target_type)
+            if new_tgt and new_tgt > 0:
+                row.sell_tgt = new_tgt
+
+            # If in position and market price already exceeds the newly chosen target, exit immediately!
+            if row.status == "IN_POSITION" and row.sell_tgt and ltp >= row.sell_tgt:
+                from app.services.bsa_algo_engine import algo_engine
+                exit_fill = await algo_engine._execute_order(row, side="SELL", price=ltp, db=db)
+                if exit_fill:
+                    row.trades_completed += 1
+                    if row.buy_price:
+                        row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
+                    if row.trades_completed >= row.number_of_trades:
+                        row.status = "COMPLETED"
+                        row.is_algo_active = False
+                    else:
+                        row.status = "WAITING_RETURN"
+
+    await db.commit()
+    return {"status": "updated", "id": str(row.id), "is_algo_active": row.is_algo_active, "target_type": row.target_type, "sell_tgt": row.sell_tgt}
+
+
+@router.post("/algo-rows/{row_id}/kill")
+async def kill_algo_row(
+    row_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Emergency Kill Switch: instantly exits any open position at market price
+    and deactivates automated trading.
+    """
+    from app.models.algo_row import BsaAlgoRow
+    from app.services.bsa_algo_engine import algo_engine
+    from app.market.market_poller import get_poller
+
+    row = await db.get(BsaAlgoRow, row_id)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Algo row not found")
+
+    poller = get_poller()
+    live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
+    ltp = float(live.get("ltp") or row.buy_price or 0.0)
+
+    row.is_algo_active = False
+
+    if row.status == "IN_POSITION":
+        exit_fill = await algo_engine._execute_order(row, side="SELL", price=ltp, db=db)
+        if exit_fill:
+            row.trades_completed += 1
+            if row.buy_price:
+                row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
+            row.status = "COMPLETED"
+    else:
+        row.status = "IDLE"
+
+    await db.commit()
+    return {"status": "killed", "id": str(row.id), "symbol": row.symbol, "is_algo_active": False}
+
+
+@router.delete("/algo-rows/{row_id}")
+async def delete_algo_row(
+    row_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a script from the Algo Trading Window."""
+    from app.models.algo_row import BsaAlgoRow
+
+    row = await db.get(BsaAlgoRow, row_id)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Algo row not found")
+
+    await db.delete(row)
+    await db.commit()
+    return {"status": "deleted", "id": str(row_id)}
+
+
+@router.post("/algo-rows/{row_id}/reset")
+async def reset_algo_row(
+    row_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset trade cycle counter and levels for an algo script."""
+    from app.models.algo_row import BsaAlgoRow
+
+    row = await db.get(BsaAlgoRow, row_id)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Algo row not found")
+
+    row.trades_completed = 0
+    row.status           = "IDLE"
+    row.buy_price        = None
+    row.sell_tgt         = None
+    row.stop_loss        = None
+    row.pnl              = 0.0
+    row.last_order_id    = None
+    await db.commit()
+    return {"status": "reset", "id": str(row.id)}
+
+
+@router.post("/algo-rows/{row_id}/manual-order")
+async def manual_algo_order(
+    row_id: UUID,
+    payload: BsaManualOrderPayload,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Execute a manual BUY or SELL order for an algo script row (when ALGO is OFF).
+    """
+    from app.models.algo_row import BsaAlgoRow
+    from app.services.bsa_algo_engine import algo_engine
+
+    row = await db.get(BsaAlgoRow, row_id)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Algo row not found")
+
+    side = payload.side.upper().strip()
+    if side not in ("BUY", "SELL"):
+        raise HTTPException(status_code=400, detail="Invalid order side")
+
+    order_qty = payload.quantity or row.quantity
+    order_price = payload.price or 0.0
+
+    fill = await algo_engine._execute_order(row, side=side, price=order_price, db=db)
+    if not fill:
+        raise HTTPException(status_code=502, detail="Broker order execution failed")
+
+    if side == "BUY":
+        row.buy_price = fill
+        row.status = "IN_POSITION"
+        # Populate Fibonacci target and SL if not already calculated
+        if not row.sell_tgt:
+            from app.market.market_poller import get_poller
+            from app.strategy.excel_formula_engine import evaluate_columns_in_order
+            from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS
+            poller = get_poller()
+            live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
+            tick_data = {
+                "symbol": row.symbol,
+                "ltp": fill,
+                "open": live.get("open") or fill,
+                "high": live.get("high") or fill,
+                "low": live.get("low") or fill,
+                "close": live.get("close") or fill,
+            }
+            fib_vals = evaluate_columns_in_order(FIBONACCI_FORMULA_COLUMNS, tick_data)
+            row.sell_tgt = float(fib_vals.get("t11.8") or fib_vals.get("t11_8") or (fill * 1.00118))
+            row.stop_loss = float(fib_vals.get("sl") or (fill * 0.995))
+            row.entry_level = float(fib_vals.get("entry") or fill)
+    elif side == "SELL":
+        row.trades_completed += 1
+        if row.buy_price:
+            row.pnl = round((fill - row.buy_price) * row.quantity, 2)
+        row.status = "COMPLETED" if row.trades_completed >= row.number_of_trades else "WAITING_RETURN"
+
+    await db.commit()
+    return {
+        "status": "executed",
+        "side": side,
+        "symbol": row.symbol,
+        "quantity": order_qty,
+        "fill_price": fill,
+        "trades_completed": row.trades_completed,
+    }
 
 
 

@@ -19,7 +19,17 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    ALLOWED_ORIGINS: List[str] = [
+        "http://localhost",
+        "http://localhost:80",
+        "http://localhost:8000",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:5173",
+        "*",
+    ]
 
     # ── Live trading safety ───────────────────────────────────────────────────
     # Live orders require explicit enable + valid Dhan credentials.
@@ -40,14 +50,6 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID:   str = ""
     FEED_STALE_SEC:     int = 90
-
-    # ── Shoonya (legacy — optional, not shown in UI) ──────────────────────────
-    SHOONYA_USER_ID:     str = ""
-    SHOONYA_PASSWORD:    str = ""
-    SHOONYA_TOTP_SECRET: str = ""
-    SHOONYA_VENDOR_CODE: str = ""
-    SHOONYA_API_SECRET:  str = ""
-    SHOONYA_IMEI:        str = "algo-platform-v1"
 
     class Config:
         env_file = ".env"

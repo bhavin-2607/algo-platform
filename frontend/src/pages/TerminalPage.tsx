@@ -6,7 +6,7 @@
  *   Row 1: Account summary (Cash, Margin, Overall PnL, Order Type, Trade Mode)
  *   Row 3+: Per-symbol rows with OHLC, VWAP, Best Buy/Sell, LTP, signals, entry/exit, T/SL, PnL
  */
-import { memo, useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { memo, useState, useEffect, useRef, useMemo, useCallback, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
@@ -210,11 +210,34 @@ export default function TerminalPage() {
     queryKey: ["terminal-columns"],
     queryFn: () => api.get("/terminal/columns").then(r => r.data),
   });
-  const visibleCols = (allCols ?? [])
-    .filter((c:any) => c.is_visible)
-    .sort((a:any, b:any) => a.col_order - b.col_order);
-  const colsFor = (book: string) => visibleCols.filter((c: any) => !c.formula || (c.book || "equity") === book);
-  const customCols  = (allCols ?? []).filter((c:any) => c.col_type === "custom" && c.is_visible);
+  const [viewMode, setViewMode] = useState<"all" | "equity" | "options" | "algo">("all");
+
+  const visibleCols = useMemo(() => {
+    return (allCols ?? [])
+      .filter((c: any) => c.is_visible)
+      .sort((a: any, b: any) => a.col_order - b.col_order);
+  }, [allCols]);
+
+  const colsFor = useCallback((book: string) => {
+    const forBook = visibleCols.filter((c: any) => {
+      const colBook = (c.book || "equity").toLowerCase();
+      if (!c.formula) return true; // default columns (open, high, ltp, etc.) are shared
+      return colBook === book || colBook === "shared";
+    });
+
+    // Strictly deduplicate by col_key or name to prevent duplicate columns in table
+    const seen = new Set<string>();
+    return forBook.filter((c: any) => {
+      const key = (c.col_key || c.name || "").toLowerCase().trim();
+      if (!key || key === "symbol" || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [visibleCols]);
+
+  const customCols = useMemo(() => {
+    return (allCols ?? []).filter((c: any) => c.col_type === "custom" && c.is_visible);
+  }, [allCols]);
 
   const segmentOf = (sym: string) =>
     instrMap[sym]?.segment || (SECURITY_IDS as Record<string, {segment: string}>)[sym]?.segment || "NSE_EQ";
@@ -235,6 +258,9 @@ export default function TerminalPage() {
         high: q.high ?? null,
         low: q.low ?? null,
         close: q.close ?? null,
+        p_close: q.p_close ?? q.close ?? null,
+        p_high: q.p_high ?? q.high ?? null,
+        p_low: q.p_low ?? q.low ?? null,
         volume: q.volume ?? null,
         oi: q.oi ?? null,
         vwap: q.vwap ?? q.atp ?? null,
@@ -315,6 +341,91 @@ export default function TerminalPage() {
     onError: () => toast.error("No active position"),
   });
 
+  // ── Algo Trading Window Queries & Mutations ──────────────────────────────
+  const { data: brokerAccounts } = useQuery({
+    queryKey: ["broker-accounts"],
+    queryFn: () => api.get("/brokers").then(r => r.data).catch(() => []),
+    staleTime: 30_000,
+  });
+  const activeBroker = (brokerAccounts || []).find((b: any) => b.is_active);
+  const isPaperMode = !activeBroker || Boolean(activeBroker.paper_trading);
+
+  const { data: algoRows } = useQuery({
+    queryKey: ["algo-rows"],
+    queryFn: () => api.get("/terminal/algo-rows").then(r => r.data as any[]),
+    refetchInterval: 2000,
+  });
+
+  const addAlgoRowMutation = useMutation({
+    mutationFn: (symbol: string) => api.post("/terminal/algo-rows", { symbol }),
+    onSuccess: (res: any) => {
+      toast.success(`Added ${res.data?.symbol || "symbol"} to Algo Window`);
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+    onError: () => toast.error("Failed to add to Algo Window"),
+  });
+
+  const toggleAlgoMutation = useMutation({
+    mutationFn: ({ id, is_algo_active }: { id: string; is_algo_active: boolean }) =>
+      api.patch(`/terminal/algo-rows/${id}`, { is_algo_active }),
+    onSuccess: (res: any) => {
+      const active = res.data?.is_algo_active;
+      toast.success(active ? "Automated Trading: ON" : "Manual Mode: ON (Algo OFF)");
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+    onError: () => toast.error("Failed to update Algo state"),
+  });
+
+  const updateAlgoRowMutation = useMutation({
+    mutationFn: ({ id, updates }: { id: string; updates: any }) =>
+      api.patch(`/terminal/algo-rows/${id}`, updates),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["algo-rows"] }),
+  });
+
+  const deleteAlgoRowMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/terminal/algo-rows/${id}`),
+    onSuccess: () => {
+      toast.success("Script removed from Algo Window");
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+  });
+
+  const resetAlgoRowMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/terminal/algo-rows/${id}/reset`),
+    onSuccess: () => {
+      toast.success("Trade cycle reset");
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+  });
+
+  const manualAlgoOrderMutation = useMutation({
+    mutationFn: ({ id, side }: { id: string; side: "BUY" | "SELL" }) =>
+      api.post(`/terminal/algo-rows/${id}/manual-order`, { side }),
+    onSuccess: (res: any) => {
+      toast.success(`Manual ${res.data?.side} executed @ ₹${res.data?.fill_price}`);
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail || "Manual order execution failed"),
+  });
+
+  const killAlgoMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/terminal/algo-rows/${id}/kill`),
+    onSuccess: () => {
+      toast.success("Kill switch activated — trade closed & algo stopped");
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail || "Failed to activate kill switch"),
+  });
+
+  const applyBatchMutation = useMutation({
+    mutationFn: (batch: string) => api.post("/terminal/columns/apply-batch", { batch, book: "both" }),
+    onSuccess: (res: any) => {
+      toast.success(`Applied ${res.data?.applied_batch || "formula"} batch`);
+      qc.invalidateQueries({ queryKey: ["terminal-columns"] });
+    },
+    onError: () => toast.error("Failed to apply formula batch"),
+  });
+
 
   const isLive = wsStatus === "live";
   const screenRows = (termRows ?? []).filter((r: any) => watchlist.includes(r.symbol));
@@ -368,15 +479,53 @@ export default function TerminalPage() {
             {tokenOffline ? "OFFLINE" : isLive ? "LIVE" : "POLLING"}
           </div>
           {isAdmin && (
-            <button className="exit-btn" style={{fontSize:11, padding:"6px 14px",
-              color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
-              onClick={() => setShowColumns(true)}>
-              ⚙ COLUMNS
-            </button>
+            <>
+              <button
+                className="exit-btn"
+                style={{
+                  fontSize: 11,
+                  padding: "6px 14px",
+                  color: "var(--green)",
+                  borderColor: "rgba(0,230,118,0.3)",
+                  background: "rgba(0,230,118,0.06)",
+                }}
+                onClick={() => {
+                  if (confirm("Apply Fibonacci Formula batch across tables?")) {
+                    applyBatchMutation.mutate("Fibonacci Formula");
+                  }
+                }}
+                title="Apply Fibonacci Formula Batch"
+              >
+                FIBONACCI BATCH
+              </button>
+              <button
+                className="exit-btn"
+                style={{
+                  fontSize: 11,
+                  padding: "6px 14px",
+                  color: "var(--yellow)",
+                  borderColor: "rgba(255,183,3,0.3)",
+                  background: "rgba(255,183,3,0.06)",
+                }}
+                onClick={() => {
+                  if (confirm("Apply BSA Formula batch (28 columns A=SYMBOL to AB=VOLUME) across tables?")) {
+                    applyBatchMutation.mutate("BSA");
+                  }
+                }}
+                title="Apply BSA Formula Batch (28 Columns: A=SYMBOL to AB=VOLUME)"
+              >
+                BSA BATCH (28 COLS)
+              </button>
+            </>
           )}
+          <button className="exit-btn" style={{fontSize:11, padding:"6px 14px",
+            color:"var(--yellow)", borderColor:"rgba(255,183,3,0.3)"}}
+            onClick={() => setShowColumns(true)}>
+            COLUMNS
+          </button>
           <button className="connect-btn" style={{fontSize:11, padding:"6px 14px"}}
             onClick={() => { setShowAdd(v => !v); }}>
-            {showAdd ? "✕ CANCEL" : "+ ADD SYMBOL"}
+            {showAdd ? "CANCEL" : "+ ADD SYMBOL"}
           </button>
         </div>
       </div>
@@ -391,8 +540,8 @@ export default function TerminalPage() {
       )}
 
       {/* ── Column Manager Modal ──────────────────────────────────────────── */}
-      {isAdmin && showColumns && (
-        <AdminColumnManager onClose={() => setShowColumns(false)} />
+      {showColumns && (
+        <AdminColumnManager isAdmin={isAdmin} onClose={() => setShowColumns(false)} />
       )}
 
       {orderPanel && (
@@ -414,18 +563,109 @@ export default function TerminalPage() {
           setShowAdd(false);
         }} />
       )}
+      {/* ── Watchlist View Selector ─────────────────────────────────────── */}
+      {watchlist.length > 0 && (
+        <div style={{
+          display:"flex", alignItems:"center", justifyContent:"space-between",
+          margin:"14px 0 12px", flexWrap:"wrap", gap:10
+        }}>
+          <div className="tab-switcher" style={{margin:0}}>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "all" ? "active" : ""}`}
+              onClick={() => setViewMode("all")}
+            >
+              ALL WATCHLISTS ({watchlist.length})
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "equity" ? "active" : ""}`}
+              onClick={() => setViewMode("equity")}
+            >
+              EQUITY ({equitySymbols.length})
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "options" ? "active" : ""}`}
+              onClick={() => setViewMode("options")}
+            >
+              OPTIONS ({optionSymbols.length})
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "algo" ? "active" : ""}`}
+              onClick={() => setViewMode("algo")}
+            >
+              ALGO WINDOW ({(algoRows ?? []).length})
+            </button>
+          </div>
+          <div style={{fontSize:11, color:"var(--muted)", display:"flex", alignItems:"center", gap:6}}>
+            <span style={{width:6, height:6, borderRadius:"50%", background:"var(--green)", display:"inline-block"}} />
+            <span>DHAN LIVE FEED</span>
+          </div>
+        </div>
+      )}
+
       {watchlist.length === 0 && (
         <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
           fontSize:13,border:"1px solid var(--border)",background:"var(--surface)"}}>
           No symbols — click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to start
         </div>
       )}
-      {equitySymbols.length > 0 && (
-        <TerminalTable title="EQUITY" onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={equitySymbols} liveData={liveData} termRowMap={termRowMap} visibleCols={colsFor("equity")} columnValues={columnValues ?? {}} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} />
+      {(viewMode === "all" || viewMode === "equity") && equitySymbols.length > 0 && (
+        <TerminalTable
+          title="EQUITY"
+          onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
+          onAddToAlgo={(sym) => addAlgoRowMutation.mutate(sym)}
+          instrMap={instrMap}
+          signalMap={signalMap}
+          strategyNames={strategyNames}
+          watchlist={equitySymbols}
+          liveData={liveData}
+          termRowMap={termRowMap}
+          visibleCols={colsFor("equity")}
+          columnValues={columnValues ?? {}}
+          isAdmin={isAdmin}
+          onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
+          onExitRow={(id)=>exitRowMutation.mutate(id)}
+          onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
+        />
       )}
-      {optionSymbols.length > 0 && (
-        <div style={{marginTop: equitySymbols.length ? 18 : 0}}>
-          <TerminalTable title="OPTIONS" onOrder={(sym, inst) => setOrderPanel({symbol:sym, ...inst})} instrMap={instrMap} signalMap={signalMap} strategyNames={strategyNames} watchlist={optionSymbols} liveData={liveData} termRowMap={termRowMap} visibleCols={colsFor("option")} columnValues={columnValues ?? {}} isAdmin={isAdmin} onRemoveSymbol={(sym)=>removeMutation.mutate(sym)} onExitRow={(id)=>exitRowMutation.mutate(id)} onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})} />
+      {(viewMode === "all" || viewMode === "options") && optionSymbols.length > 0 && (
+        <div style={{marginTop: (viewMode === "all" && equitySymbols.length) ? 18 : 0}}>
+          <TerminalTable
+            title="OPTIONS"
+            onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
+            onAddToAlgo={(sym) => addAlgoRowMutation.mutate(sym)}
+            instrMap={instrMap}
+            signalMap={signalMap}
+            strategyNames={strategyNames}
+            watchlist={optionSymbols}
+            liveData={liveData}
+            termRowMap={termRowMap}
+            visibleCols={colsFor("option")}
+            columnValues={columnValues ?? {}}
+            isAdmin={isAdmin}
+            onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
+            onExitRow={(id)=>exitRowMutation.mutate(id)}
+            onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
+          />
+        </div>
+      )}
+
+      {/* ── Algo Trading Window Table ────────────────────────────────────── */}
+      {(viewMode === "all" || viewMode === "algo") && (
+        <div style={{marginTop: 18}}>
+          <AlgoWindowTable
+            algoRows={algoRows ?? []}
+            isPaper={isPaperMode}
+            onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
+            onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
+            onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
+            onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
+            onManualOrder={(id, side) => manualAlgoOrderMutation.mutate({ id, side })}
+            onKillRow={(id) => killAlgoMutation.mutate(id)}
+          />
         </div>
       )}
 
@@ -619,7 +859,7 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
           </div>
           <button onClick={onClose}
             style={{background:"transparent",border:"none",color:"var(--muted)",
-              cursor:"pointer",fontSize:18}}>✕</button>
+              cursor:"pointer",fontSize:18}}>×</button>
         </div>
 
         {/* Preset shortcuts */}
@@ -743,7 +983,7 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
 }
 
 // ── Admin Column Manager ──────────────────────────────────────────────────────
-export function AdminColumnManager({ onClose }: { onClose: () => void }) {
+export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const emptyForm = (book: "equity" | "option") => ({
     name: "", formula: "", col_order: 0, width: 80, color_rules: "", book,
@@ -758,7 +998,36 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
     queryKey: ["terminal-columns"],
     queryFn: () => api.get("/terminal/columns").then(r => r.data),
   });
-  const listed = (columns ?? []).filter((col: any) => col.formula && (col.book || "equity") === form.book);
+  const defaultCols = useMemo(() => {
+    const raw = (columns ?? []).filter((col: any) => !col.formula || col.col_type === "default");
+    const seen = new Set<string>();
+    return raw.filter((col: any) => {
+      const k = (col.col_key || col.name || "").toLowerCase().trim();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [columns]);
+
+  const listed = useMemo(() => {
+    const raw = (columns ?? []).filter((col: any) => col.formula && (col.book || "equity") === form.book);
+    const seen = new Set<string>();
+    return raw.filter((col: any) => {
+      const k = (col.name || "").toLowerCase().trim();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [columns, form.book]);
+
+  const toggleVisibilityMutation = useMutation({
+    mutationFn: ({ id, is_visible }: { id: string; is_visible: boolean }) =>
+      api.patch(`/terminal/columns/${id}/visibility`, { is_visible }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["terminal-columns"] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to toggle visibility"),
+  });
 
   const validateMutation = useMutation({
     mutationFn: (formula: string) =>
@@ -840,10 +1109,125 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
           </div>
           <button onClick={onClose}
             style={{background:"transparent",border:"none",
-              color:"var(--muted)",cursor:"pointer",fontSize:18}}>✕</button>
+              color:"var(--muted)",cursor:"pointer",fontSize:18}}>×</button>
         </div>
 
         <div style={{padding:"20px"}}>
+          {/* Formula Batch Selection */}
+          <div style={{
+            marginBottom: 20, padding: "14px 16px",
+            border: "1px solid rgba(0, 230, 118, 0.3)", background: "rgba(0, 230, 118, 0.04)",
+            borderRadius: 4
+          }}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+              <div>
+                <div style={{fontSize:11, fontWeight:700, color:"var(--green)", letterSpacing:1}}>
+                  FORMULA BATCH PRESETS
+                </div>
+                <div style={{fontSize:10, color:"var(--muted)", marginTop:2}}>
+                  Apply pre-configured formula batches in sequence
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex", gap:10, flexWrap:"wrap"}}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm("Apply Fibonacci Formula batch? This configures default columns and Fibonacci target columns.")) {
+                    api.post("/terminal/columns/apply-batch", { batch: "Fibonacci Formula", book: "both" })
+                      .then(() => { toast.success("Applied Fibonacci Formula batch"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                      .catch(() => toast.error("Failed to apply batch"));
+                  }
+                }}
+                style={{
+                  padding:"8px 16px", fontSize:11, cursor:"pointer",
+                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
+                  background:"rgba(0, 230, 118, 0.15)", border:"1px solid var(--green)",
+                  color:"var(--green)", borderRadius:3,
+                }}
+              >
+                APPLY FIBONACCI BATCH
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm("Apply BSA Formula batch? This configures all 28 columns in exact sequence A=SYMBOL to AB=VOLUME.")) {
+                    api.post("/terminal/columns/apply-batch", { batch: "BSA", book: "both" })
+                      .then(() => { toast.success("Applied BSA Formula batch (28 columns)"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                      .catch(() => toast.error("Failed to apply batch"));
+                  }
+                }}
+                style={{
+                  padding:"8px 16px", fontSize:11, cursor:"pointer",
+                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
+                  background:"rgba(255, 183, 3, 0.15)", border:"1px solid var(--yellow)",
+                  color:"var(--yellow)", borderRadius:3,
+                }}
+              >
+                APPLY BSA BATCH (28 COLS)
+              </button>
+            </div>
+          </div>
+
+          {/* Default columns toggle section */}
+          <div style={{
+            marginBottom: 20, padding: "14px 16px",
+            border: "1px solid var(--border)", background: "rgba(0,0,0,0.2)",
+            borderRadius: 4
+          }}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+              <div>
+                <div style={{fontSize:11, fontWeight:700, color:"var(--green)", letterSpacing:1}}>
+                  DEFAULT COLUMNS (PRICE & MARKET DATA)
+                </div>
+                <div style={{fontSize:10, color:"var(--muted)", marginTop:2}}>
+                  Click any column badge to toggle visibility in the terminal table
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm("Reset columns to defaults?")) {
+                    api.post("/terminal/columns/reset")
+                      .then(() => { toast.success("Reset"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                      .catch(() => toast.error("Failed"));
+                  }
+                }}
+                style={{
+                  padding:"4px 10px", fontSize:10, cursor:"pointer",
+                  background:"transparent", border:"1px solid var(--border)",
+                  color:"var(--muted)", fontFamily:"var(--font)"
+                }}>
+                ↺ RESET ALL
+              </button>
+            </div>
+            <div style={{display:"flex", flexWrap:"wrap", gap:8}}>
+              {defaultCols.map((col: any) => {
+                const isVis = col.is_visible !== false;
+                return (
+                  <button
+                    key={col.id || col.col_key || col.name}
+                    type="button"
+                    onClick={() => toggleVisibilityMutation.mutate({ id: col.id || col.col_key, is_visible: !isVis })}
+                    style={{
+                      display:"inline-flex", alignItems:"center", gap:6,
+                      padding:"6px 12px", fontSize:11, cursor:"pointer",
+                      fontFamily:"var(--font)", fontWeight:600,
+                      background: isVis ? "rgba(47, 158, 143, 0.16)" : "rgba(255,255,255,0.03)",
+                      border: `1px solid ${isVis ? "var(--green)" : "var(--border)"}`,
+                      color: isVis ? "var(--green)" : "var(--muted)",
+                      borderRadius: 3, transition: "all 0.15s",
+                    }}
+                    title={isVis ? `Click to hide ${col.name}` : `Click to show ${col.name}`}
+                  >
+                    <span>{isVis ? "●" : "○"}</span>
+                    <span>{columnTitle(col.name)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div style={{display:"flex", gap:8, marginBottom:16}}>
             {(["equity", "option"] as const).map((book) => (
               <button key={book} type="button"
@@ -943,14 +1327,14 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
                   border:"1px solid var(--border)",
                   color:"var(--muted)",
                 }}>
-                {validateMutation.isPending ? "..." : "✓ VALIDATE"}
+                {validateMutation.isPending ? "..." : "VALIDATE"}
               </button>
               {validMsg && (
                 <span style={{
                   fontSize:11,
                   color: validOk ? "var(--green)" : "var(--red)",
                 }}>
-                  {validOk ? "✓ " : "✗ "}{validMsg}
+                  {validOk ? "VALID: " : "ERROR: "}{validMsg}
                 </span>
               )}
             </div>
@@ -990,7 +1374,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)"}}>
-                  {form.book === "equity" ? "EQUITY" : "OPTIONS"} FORMULAS — click ✕ to remove, eye to show/hide
+                  {form.book === "equity" ? "EQUITY" : "OPTIONS"} FORMULAS — click × to remove, eye to show/hide
                 </div>
                 <button
                   onClick={() => { if(confirm("Remove equity and options formulas and restore the price columns?")) api.post("/terminal/columns/reset").then(()=>{toast.success("Reset");qc.invalidateQueries({queryKey:["terminal-columns"]});}).catch(()=>toast.error("Failed")); }}
@@ -1038,7 +1422,7 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
                       title="Remove column"
                       style={{background:"transparent",border:"none",
                         color:"rgba(255,68,102,0.5)",cursor:"pointer",
-                        fontSize:10,padding:0}}>✕</button>
+                        fontSize:10,padding:0}}>×</button>
                   </div>
                 ))}
               </div>
@@ -1056,40 +1440,519 @@ export function AdminColumnManager({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Algo Trading Window Table (BSA Automation) ───────────────────────────────
+function AlgoWindowTable({
+  algoRows,
+  isPaper = true,
+  onToggleAlgo,
+  onUpdateRow,
+  onDeleteRow,
+  onResetRow,
+  onManualOrder,
+  onKillRow,
+}: {
+  algoRows: any[];
+  isPaper?: boolean;
+  onToggleAlgo: (id: string, currentActive: boolean) => void;
+  onUpdateRow: (id: string, updates: any) => void;
+  onDeleteRow: (id: string) => void;
+  onResetRow: (id: string) => void;
+  onManualOrder: (id: string, side: "BUY" | "SELL") => void;
+  onKillRow: (id: string) => void;
+}) {
+  const activeCount = algoRows.filter((r) => r.is_algo_active).length;
+
+  return (
+    <div style={{ border: "1px solid var(--border)", background: "var(--surface)", marginBottom: 16 }}>
+      {/* Header bar */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "rgba(0, 230, 118, 0.04)"
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "var(--green)" }}>
+            ALGO TRADING WINDOW (BSA & FIBONACCI AUTOMATION)
+          </span>
+          <span className={`badge ${isPaper ? "badge-yellow" : "badge-green"}`} style={{ fontSize: 10, fontWeight: 700 }}>
+            {isPaper ? "PAPER TRADING (SIMULATION)" : "LIVE DHAN BROKER"}
+          </span>
+          <span className="badge badge-green" style={{ fontSize: 10 }}>
+            {activeCount} AUTOMATED ACTIVE
+          </span>
+          <span className="badge badge-gray" style={{ fontSize: 10 }}>
+            {algoRows.length} SCRIPTS
+          </span>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", alignItems: "center", gap: 8 }}>
+          <span>ALGO ON = Automated Trading</span>
+          <span>·</span>
+          <span>Target Selection acts as Live / Kill Switch</span>
+        </div>
+      </div>
+
+      {algoRows.length === 0 ? (
+        <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+          No scripts in Algo Window. Click <strong style={{ color: "var(--green)" }}>+ ALGO</strong> on any symbol in the Equity or Options table above to add.
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontFamily: "var(--font)" }}>
+            <thead>
+              <tr style={{ background: "var(--surface)", borderBottom: "2px solid var(--border)" }}>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}>#</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "left", minWidth: 105 }}>SCRIPT</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 80 }}>LTP</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 75 }}>ENTRY</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--yellow)", textAlign: "right", minWidth: 65 }}>TGT1</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--yellow)", textAlign: "right", minWidth: 65 }}>TGT2</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--yellow)", textAlign: "right", minWidth: 65 }}>TGT3</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T11.8</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T23.8</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T38.2</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T50</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T61.8</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T78.6</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T100</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T1.618</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T2.618</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 130 }}>TARGET / KILL SWITCH</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>ALGO ON/OFF</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 85 }}>TRADES</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 80 }}>BUYPRICE</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 80 }}>SELL TGT</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 150 }}>ACTIONS</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 140 }}>STATUS</th>
+                <th style={{ padding: "8px 4px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {algoRows.map((r, idx) => {
+                const isAuto = r.is_algo_active;
+                const inPos = r.status === "IN_POSITION";
+                const rowBg = inPos ? "rgba(0,230,118,0.04)" : "transparent";
+                const activeTgt = r.target_type || "TGT1";
+
+                const targets = [
+                  { key: "TGT1",  val: r.tgt1 },
+                  { key: "TGT2",  val: r.tgt2 },
+                  { key: "TGT3",  val: r.tgt3 },
+                  { key: "T11.8", val: r.t11_8 },
+                  { key: "T23.8", val: r.t23_8 },
+                  { key: "T38.2", val: r.t38_2 },
+                  { key: "T50",   val: r.t50 },
+                  { key: "T61.8", val: r.t61_8 },
+                  { key: "T78.6", val: r.t78_6 },
+                  { key: "T100",  val: r.t100 },
+                  { key: "T1.618", val: r.t1_618 },
+                  { key: "T2.618", val: r.t2_618 },
+                ];
+
+                return (
+                  <tr
+                    key={r.id}
+                    style={{
+                      borderBottom: "1px solid var(--border)",
+                      background: rowBg,
+                      borderLeft: isAuto ? "2px solid var(--green)" : "2px solid transparent",
+                    }}
+                  >
+                    <td style={{ padding: "8px 6px", fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
+                      {idx + 1}
+                    </td>
+                    <td style={{ padding: "8px 8px", fontWeight: 700, color: "var(--text)" }}>
+                      <div style={{ color: "var(--green)", fontSize: 12 }}>{r.symbol}</div>
+                      <div style={{ fontSize: 9, color: "var(--muted)" }}>{r.segment || "NSE_EQ"}</div>
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 700, fontSize: 12, color: "var(--text)" }}>
+                      {r.ltp != null ? `₹${Number(r.ltp).toLocaleString()}` : "—"}
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                      <span className={`badge ${r.signal === "BUY" ? "badge-green" : r.signal === "SELL" ? "badge-red" : "badge-gray"}`} style={{ fontSize: 9, fontWeight: 700, minWidth: 38, textAlign: "center" }}>
+                        {r.signal || "—"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: "var(--text)", fontSize: 12 }}>
+                      {r.entry != null ? `₹${Number(r.entry).toLocaleString()}` : "—"}
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: "var(--red)", fontSize: 12 }}>
+                      {r.sl != null ? `₹${Number(r.sl).toLocaleString()}` : "—"}
+                    </td>
+
+                    {/* All 9 Target Columns */}
+                    {targets.map((tgt) => {
+                      const isArmed = activeTgt === tgt.key;
+                      return (
+                        <td
+                          key={tgt.key}
+                          style={{
+                            padding: "8px 6px",
+                            textAlign: "right",
+                            fontSize: 12,
+                            color: isArmed ? "var(--green)" : "rgba(255,255,255,0.7)",
+                            fontWeight: isArmed ? 700 : 400,
+                            background: isArmed ? "rgba(0, 230, 118, 0.08)" : "transparent",
+                            borderRight: isArmed ? "1px solid rgba(0, 230, 118, 0.25)" : "none",
+                            borderLeft: isArmed ? "1px solid rgba(0, 230, 118, 0.25)" : "none",
+                          }}
+                          title={isArmed ? `Armed Target: ${tgt.key}` : tgt.key}
+                        >
+                          {tgt.val != null ? `₹${Number(tgt.val).toLocaleString()}` : "—"}
+                        </td>
+                      );
+                    })}
+
+                    {/* Active Target Selector / Kill Switch Dropdown */}
+                    <td style={{ padding: "8px 8px", textAlign: "center" }}>
+                      <select
+                        value={r.target_type || "T11.8"}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "KILL") {
+                            if (confirm(`Activate KILL SWITCH for ${r.symbol}? This will immediately exit open positions at market price and turn off algo.`)) {
+                              onKillRow(r.id);
+                            }
+                          } else {
+                            onUpdateRow(r.id, { target_type: val });
+                          }
+                        }}
+                        style={{
+                          padding: "3px 6px",
+                          fontSize: 11,
+                          background: r.target_type === "KILL" ? "rgba(255,40,80,0.2)" : "rgba(0,0,0,0.3)",
+                          border: `1px solid ${r.target_type === "KILL" ? "var(--red)" : "var(--border)"}`,
+                          color: r.target_type === "KILL" ? "var(--red)" : "var(--yellow)",
+                          borderRadius: 3,
+                          cursor: "pointer",
+                          fontWeight: 700,
+                        }}
+                        title="Select active target level or trigger instant Kill Switch"
+                      >
+                        <option value="TGT1">TGT1 (BSA BT1/ST1)</option>
+                        <option value="TGT2">TGT2 (BSA BT2/ST2)</option>
+                        <option value="TGT3">TGT3 (BSA BT3/ST3)</option>
+                        <option value="T11.8">T11.8 (+0.118%)</option>
+                        <option value="T23.8">T23.8 (+0.238%)</option>
+                        <option value="T38.2">T38.2 (+0.382%)</option>
+                        <option value="T50">T50 (+0.500%)</option>
+                        <option value="T61.8">T61.8 (+0.618%)</option>
+                        <option value="T78.6">T78.6 (+0.786%)</option>
+                        <option value="T100">T100 (+1.000%)</option>
+                        <option value="T1.618">T1.618 (+1.618%)</option>
+                        <option value="T2.618">T2.618 (+2.618%)</option>
+                        <option value="KILL" style={{ color: "var(--red)", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
+                      </select>
+                    </td>
+
+                    {/* ALGO ON/OFF Button */}
+                    <td style={{ padding: "8px 8px", textAlign: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => onToggleAlgo(r.id, r.is_algo_active)}
+                        style={{
+                          padding: "4px 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: 0.5,
+                          borderRadius: 3,
+                          cursor: "pointer",
+                          background: isAuto ? "rgba(0, 230, 118, 0.18)" : "rgba(255, 255, 255, 0.05)",
+                          border: `1px solid ${isAuto ? "var(--green)" : "var(--border)"}`,
+                          color: isAuto ? "var(--green)" : "var(--muted)",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        {isAuto ? "ALGO ON" : "ALGO OFF"}
+                      </button>
+                    </td>
+
+                    {/* QTY */}
+                    <td style={{ padding: "8px 4px", textAlign: "center" }}>
+                      <input
+                        type="number"
+                        min={1}
+                        value={r.quantity}
+                        onChange={(e) => onUpdateRow(r.id, { quantity: Number(e.target.value) })}
+                        style={{
+                          width: 48,
+                          padding: "3px 4px",
+                          fontSize: 11,
+                          background: "rgba(0,0,0,0.3)",
+                          border: "1px solid var(--border)",
+                          color: "var(--text)",
+                          borderRadius: 3,
+                          textAlign: "center",
+                        }}
+                      />
+                    </td>
+
+                    {/* NUMBER OF TRADE 1 to 5 */}
+                    <td style={{ padding: "8px 4px", textAlign: "center" }}>
+                      <select
+                        value={r.number_of_trades}
+                        onChange={(e) => onUpdateRow(r.id, { number_of_trades: Number(e.target.value) })}
+                        style={{
+                          padding: "3px 4px",
+                          fontSize: 11,
+                          background: "var(--surface)",
+                          border: "1px solid var(--border)",
+                          color: "var(--yellow)",
+                          borderRadius: 3,
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <option key={n} value={n}>{n} {n === 1 ? "TRD" : "TRDS"}</option>
+                        ))}
+                      </select>
+                    </td>
+
+                    {/* BUYPRICE */}
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: r.buy_price ? "var(--green)" : "var(--muted)", fontSize: 12 }}>
+                      {r.buy_price != null ? `₹${Number(r.buy_price).toLocaleString()}` : "—"}
+                    </td>
+
+                    {/* SELL TGT */}
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: r.sell_tgt ? "var(--green)" : "var(--muted)", fontSize: 12 }}>
+                      {r.sell_tgt != null ? `₹${Number(r.sell_tgt).toLocaleString()}` : "—"}
+                    </td>
+
+                    {/* ACTIONS: Manual BUY/SELL + Instant Kill Switch */}
+                    <td style={{ padding: "8px 8px", textAlign: "center", whiteSpace: "nowrap" }}>
+                      <div style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
+                        {isAuto ? (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              padding: "3px 6px",
+                              fontSize: 9,
+                              fontWeight: 700,
+                              color: "var(--green)",
+                              background: "rgba(0, 230, 118, 0.08)",
+                              border: "1px solid rgba(0, 230, 118, 0.3)",
+                              borderRadius: 3,
+                            }}
+                          >
+                            <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--green)" }} />
+                            AUTO
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => onManualOrder(r.id, "BUY")}
+                              style={{
+                                padding: "3px 6px",
+                                fontSize: 9,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                background: "rgba(0, 230, 118, 0.16)",
+                                border: "1px solid var(--green)",
+                                color: "var(--green)",
+                                borderRadius: 3,
+                              }}
+                              title={`Manual Buy ${r.symbol}`}
+                            >
+                              BUY
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onManualOrder(r.id, "SELL")}
+                              style={{
+                                padding: "3px 6px",
+                                fontSize: 9,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                background: "rgba(255, 59, 87, 0.16)",
+                                border: "1px solid var(--red)",
+                                color: "var(--red)",
+                                borderRadius: 3,
+                              }}
+                              title={`Manual Sell ${r.symbol}`}
+                            >
+                              SELL
+                            </button>
+                          </>
+                        )}
+
+                        {/* Dedicated Red KILL Switch Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Activate KILL SWITCH for ${r.symbol}? This will immediately exit open positions at market price and turn off algo.`)) {
+                              onKillRow(r.id);
+                            }
+                          }}
+                          style={{
+                            padding: "3px 6px",
+                            fontSize: 9,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                            background: "rgba(255, 40, 80, 0.18)",
+                            border: "1px solid var(--red)",
+                            color: "var(--red)",
+                            borderRadius: 3,
+                            letterSpacing: 0.5,
+                          }}
+                          title={`Emergency Kill Switch for ${r.symbol} (Exits trade & turns algo off)`}
+                        >
+                          KILL
+                        </button>
+                      </div>
+                    </td>
+
+                    {/* STATUS / PROGRESS */}
+                    <td style={{ padding: "8px 8px", textAlign: "center" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <span
+                          className={`badge ${
+                            r.status === "IN_POSITION"
+                              ? "badge-green"
+                              : r.status === "WAITING_RETURN"
+                              ? "badge-yellow"
+                              : r.status === "COMPLETED"
+                              ? "badge-gray"
+                              : "badge-gray"
+                          }`}
+                          style={{ fontSize: 9, letterSpacing: 0.5 }}
+                        >
+                          {r.status === "IN_POSITION"
+                            ? `IN BUY (${r.trades_completed + 1}/${r.number_of_trades})`
+                            : r.status === "WAITING_RETURN"
+                            ? `WAIT RET (${r.trades_completed}/${r.number_of_trades})`
+                            : r.status === "COMPLETED"
+                            ? `DONE (${r.trades_completed}/${r.number_of_trades})`
+                            : `IDLE (0/${r.number_of_trades})`}
+                        </span>
+                        {r.trades_completed > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onResetRow(r.id)}
+                            style={{
+                              padding: "2px 4px",
+                              fontSize: 9,
+                              background: "transparent",
+                              border: "1px solid var(--border)",
+                              color: "var(--muted)",
+                              cursor: "pointer",
+                              borderRadius: 2,
+                            }}
+                            title="Reset trade counter"
+                          >
+                            RESET
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    {/* Delete button */}
+                    <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteRow(r.id)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--muted)",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          opacity: 0.6,
+                        }}
+                        title="Remove from Algo Window"
+                      >
+                        x
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Terminal Table ────────────────────────────────────────────────────────────
 function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
-  onRemoveSymbol, onExitRow, onFormulaRow, onOrder, instrMap, signalMap, strategyNames }: {
+  onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, instrMap, signalMap, strategyNames }: {
   title: string;
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; columnValues: Record<string, Record<string, any>>; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
   onFormulaRow:(id:string,sym:string)=>void;
-  onOrder:(sym:string,inst:{security_id:string,segment:string})=>void;
+  onOrder:(sym:string,inst:{security_id:string,segment:string},prefillSide?:string,prefillPrice?:number|null)=>void;
+  onAddToAlgo:(sym:string)=>void;
   instrMap: Record<string,{security_id:string,segment:string}>;
   signalMap: Record<string,Record<string,any>>;
   strategyNames: string[];
 }) {
+  const signalColIdx = visibleCols.findIndex((col: any) => col.name?.toUpperCase() === "SIGNAL");
+
   return (
-    <div>
-      <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)",margin:"0 0 8px 4px"}}>{title}</div>
-    <div style={{overflowX:"auto"}}>
+    <div style={{border:"1px solid var(--border)", background:"var(--surface)", marginBottom:16}}>
+      <div style={{
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"10px 14px", borderBottom:"1px solid var(--border)", background:"rgba(0,0,0,0.18)"
+      }}>
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <span style={{
+            fontSize:11, fontWeight:700, letterSpacing:1.5,
+            color: title === "OPTIONS" ? "var(--yellow)" : "var(--green)"
+          }}>
+            {title === "OPTIONS" ? "OPTIONS WATCHLIST" : "EQUITY WATCHLIST"}
+          </span>
+          <span className="badge badge-gray" style={{fontSize:10}}>
+            {watchlist.length} {title === "OPTIONS" ? "CONTRACTS" : "SYMBOLS"}
+          </span>
+        </div>
+      </div>
+      <div style={{overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:"var(--font)"}}>
         <thead>
           <tr style={{background:"var(--surface)",borderBottom:"2px solid var(--border)"}}>
-            <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
-              borderRight:"1px solid var(--border)",minWidth:30}}>#</th>
-            <th style={{padding:"8px 10px",fontSize:10,letterSpacing:1.5,color:"var(--muted)",
-              borderRight:"1px solid var(--border)",minWidth:140,textAlign:"left"}}>SYMBOL</th>
-            {visibleCols.map((col:any) => (
-              <th key={col.id} style={{
-                padding:"8px 8px",fontSize:10,letterSpacing:1.5,whiteSpace:"nowrap",
-                color:col.col_type==="custom"||col.col_type==="formula"?"var(--yellow)":"var(--muted)",
-                borderRight:"1px solid var(--border)",minWidth:col.width||80,textAlign:"left",
-              }}>
-                <span>{columnTitle(col.name)}</span>
-              </th>
-            ))}
-            <th style={{padding:"8px 6px",fontSize:9,color:"var(--muted)",minWidth:90}}></th>
+            <th style={{
+              position:"sticky", left:0, zIndex:20,
+              background:"var(--surface)",
+              padding:"8px 10px", fontSize:10, letterSpacing:1.5, color:"var(--muted)",
+              borderRight:"1px solid var(--border)", width:44, minWidth:44, maxWidth:44, textAlign:"center"
+            }}>#</th>
+            <th style={{
+              position:"sticky", left:44, zIndex:20,
+              background:"var(--surface)",
+              padding:"8px 10px", fontSize:10, letterSpacing:1.5, color:"var(--muted)",
+              borderRight:"2px solid var(--border)", width:140, minWidth:140, maxWidth:140, textAlign:"left",
+              boxShadow:"3px 0 6px -2px rgba(0,0,0,0.35)"
+            }}>SYMBOL</th>
+            {visibleCols.map((col:any, cIdx:number) => {
+              const isSignalCol = cIdx === signalColIdx;
+              return (
+                <Fragment key={col.id || col.col_key || cIdx}>
+                  {isSignalCol && (
+                    <th key="order-col-header" style={{
+                      padding:"8px 10px", fontSize:10, letterSpacing:1.5,
+                      color:"var(--muted)", borderRight:"1px solid var(--border)",
+                      minWidth:110, textAlign:"center"
+                    }}>
+                      ORDER
+                    </th>
+                  )}
+                  <th style={{
+                    padding:"8px 8px", fontSize:10, letterSpacing:1.5, whiteSpace:"nowrap",
+                    color:col.col_type==="custom"||col.col_type==="formula"?"var(--yellow)":"var(--muted)",
+                    borderRight:"1px solid var(--border)", minWidth:col.width||80, textAlign:"left",
+                  }}>
+                    <span>{columnTitle(col.name)}</span>
+                  </th>
+                </Fragment>
+              );
+            })}
+            <th style={{padding:"8px 6px",fontSize:9,color:"var(--muted)",minWidth:70,textAlign:"center"}}>ACTIONS</th>
           </tr>
         </thead>
         <tbody>
@@ -1100,6 +1963,7 @@ function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, co
             const chg   = live.change_pct ?? null;
             const pos   = (chg ?? 0) >= 0;
             const inPos = trow?.status === "active";
+            const rowBg = inPos ? "rgba(0,255,136,0.06)" : "var(--surface)";
             const pnl   = trow?.pnl ?? null;
 
             function getCellValue(col: any): {color:string, formatted:string} {
@@ -1115,6 +1979,9 @@ function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, co
                   case "high":       value=live.high; color="var(--green)"; break;
                   case "low":        value=live.low;  color="var(--red)"; break;
                   case "close":      value=live.close; break;
+                  case "p_close":    value=live.p_close ?? live.prev_close ?? null; break;
+                  case "p_high":     value=live.p_high ?? null; break;
+                  case "p_low":      value=live.p_low ?? null; break;
                   case "vwap":       value=live.vwap||live.atp||null; break;
                   case "bp1":        value=live.bp1; color="var(--green)"; break;
                   case "sp1":        value=live.sp1; color="var(--red)"; break;
@@ -1155,50 +2022,120 @@ function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, co
                 onMouseEnter={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.06)":"rgba(255,255,255,0.02)")}
                 onMouseLeave={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.03)":"transparent")}
               >
-                <td style={{padding:"6px 10px",fontSize:12,color:"var(--muted)",
-                  borderRight:"1px solid var(--border)",textAlign:"center",fontWeight:600}}>
+                <td style={{
+                  position:"sticky", left:0, zIndex:10,
+                  background:rowBg,
+                  padding:"6px 10px", fontSize:12, color:"var(--muted)",
+                  borderRight:"1px solid var(--border)", width:44, minWidth:44, maxWidth:44,
+                  textAlign:"center", fontWeight:600
+                }}>
                   {idx+1}
                 </td>
-                <td style={{padding:"6px 10px",borderRight:"1px solid var(--border)"}}>
+                <td style={{
+                  position:"sticky", left:44, zIndex:10,
+                  background:rowBg,
+                  padding:"6px 10px", borderRight:"2px solid var(--border)",
+                  width:140, minWidth:140, maxWidth:140,
+                  boxShadow:"3px 0 6px -2px rgba(0,0,0,0.35)"
+                }}>
                   <div style={{fontWeight:700,color:"var(--green)",fontSize:13}}>{sym}</div>
                   <div style={{fontSize:10,color:"var(--muted)"}}>{trow?.strategy_label??"WATCHLIST"}</div>
                 </td>
-                {visibleCols.map((col:any) => {
+                {visibleCols.map((col:any, cIdx:number) => {
                   const {color, formatted} = getCellValue(col);
+                  const isSignalCol = cIdx === signalColIdx;
                   return (
-                    <td key={col.id} style={{
-                      padding:"7px 10px", color,
-                      borderRight:"1px solid var(--border)",
-                      fontWeight:col.col_key==="ltp"?"700":"400",
-                      fontSize:col.col_key==="ltp"?"14px":"13px",
-                    }}>
-                      {formatted}
-                    </td>
+                    <Fragment key={col.id || col.col_key || cIdx}>
+                      {isSignalCol && (
+                        <td key="order-col-cell" style={{
+                          padding:"4px 8px", borderRight:"1px solid var(--border)",
+                          textAlign:"center", whiteSpace:"nowrap"
+                        }}>
+                          <div style={{display:"inline-flex", gap:5, alignItems:"center"}}>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const inst = (typeof instrMap !== "undefined" ? instrMap[sym] : null) || SECURITY_IDS[sym];
+                                if (inst) onOrder(sym, inst, "BUY", ltp);
+                              }}
+                              style={{
+                                padding:"3px 9px", fontSize:10, fontWeight:700, cursor:"pointer",
+                                background:"rgba(47, 158, 143, 0.16)", border: "1px solid var(--green)",
+                                color:"var(--green)", borderRadius:3, transition:"all 0.15s",
+                              }}
+                              title={`Buy ${sym}`}
+                            >
+                              BUY
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const inst = (typeof instrMap !== "undefined" ? instrMap[sym] : null) || SECURITY_IDS[sym];
+                                if (inst) onOrder(sym, inst, "SELL", ltp);
+                              }}
+                              style={{
+                                padding:"3px 9px", fontSize:10, fontWeight:700, cursor:"pointer",
+                                background:"rgba(225, 91, 100, 0.16)", border: "1px solid var(--red)",
+                                color:"var(--red)", borderRadius:3, transition:"all 0.15s",
+                              }}
+                              title={`Sell ${sym}`}
+                            >
+                              SELL
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                      <td style={{
+                        padding:"7px 10px", color,
+                        borderRight:"1px solid var(--border)",
+                        fontWeight:col.col_key==="ltp"?"700":"400",
+                        fontSize:col.col_key==="ltp"?"14px":"13px",
+                      }}>
+                        {formatted}
+                      </td>
+                    </Fragment>
                   );
                 })}
                 <td style={{padding:"6px 8px"}}>
-                  <div style={{display:"flex",gap:4}}>
+                  <div style={{display:"flex",gap:4, alignItems:"center"}}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddToAlgo(sym);
+                      }}
+                      style={{
+                        padding:"2px 7px", fontSize:10, fontWeight:700, cursor:"pointer",
+                        background:"rgba(0,230,118,0.12)", border:"1px solid var(--green)",
+                        color:"var(--green)", borderRadius:3, fontFamily:"var(--font)",
+                      }}
+                      title={`Add ${sym} to Algo Trading Window`}
+                    >
+                      + ALGO
+                    </button>
                     {inPos&&trow&&(
                       <button className="exit-btn"
                         style={{padding:"2px 7px",fontSize:10,color:"var(--red)",
                           borderColor:"rgba(255,68,102,0.4)"}}
                         onClick={()=>onExitRow(trow.id)}>EXIT</button>
                     )}
-                    {(() => {
+                    {signalColIdx === -1 && (() => {
                         const inst = (typeof instrMap !== "undefined" ? instrMap[sym] : null) || SECURITY_IDS[sym];
                         if (!inst) return null;
                         return <>
-                          <button onClick={e=>{e.stopPropagation();onOrder(sym, inst);}}
+                          <button onClick={e=>{e.stopPropagation();onOrder(sym, inst, "BUY", ltp);}}
                             style={{padding:"2px 8px",fontSize:10,cursor:"pointer",fontWeight:700,
                               background:"rgba(0,255,136,0.1)",border:"1px solid rgba(0,255,136,0.3)",
                               color:"var(--green)",fontFamily:"var(--font)"}}>B</button>
-                          <button onClick={e=>{e.stopPropagation();onOrder(sym, inst);}}
+                          <button onClick={e=>{e.stopPropagation();onOrder(sym, inst, "SELL", ltp);}}
                             style={{padding:"2px 8px",fontSize:10,cursor:"pointer",fontWeight:700,
                               background:"rgba(255,68,102,0.1)",border:"1px solid rgba(255,68,102,0.3)",
                               color:"var(--red)",fontFamily:"var(--font)"}}>S</button>
                         </>;
                       })()}
-                      {isAdmin&&trow&&(
+                    {isAdmin&&trow&&(
                       <button onClick={()=>onFormulaRow(trow.id,sym)}
                         style={{padding:"2px 5px",fontSize:10,cursor:"pointer",
                           background:"rgba(255,208,96,0.1)",border:"1px solid rgba(255,208,96,0.3)",
@@ -1207,7 +2144,7 @@ function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, co
                     )}
                     <button onClick={()=>onRemoveSymbol(sym)}
                       style={{padding:"2px 5px",fontSize:11,background:"transparent",
-                        border:"none",color:"var(--muted)",cursor:"pointer",opacity:0.5}}>✕</button>
+                        border:"none",color:"var(--muted)",cursor:"pointer",opacity:0.5}}>×</button>
                   </div>
                 </td>
               </tr>
@@ -1246,7 +2183,7 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
       price:            orderType === "LIMIT" ? parseFloat(price) : 0,
     }),
     onSuccess: (res: any) => {
-      toast.success(`✅ ${side} order placed — ID: ${res.data?.order_id}`);
+      toast.success(`${side} order placed — ID: ${res.data?.order_id}`);
       qc.invalidateQueries({queryKey:["orderbook"]});
       onClose();
     },
@@ -1282,7 +2219,7 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
           <button onClick={onClose} style={{
             background:"transparent", border:"none",
             color:"var(--muted)", cursor:"pointer", fontSize:18,
-          }}>✕</button>
+          }}>×</button>
         </div>
 
         <div style={{padding:"20px"}}>
@@ -1397,7 +2334,7 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
                 border:"1px solid rgba(255,208,96,0.3)",
                 color:"var(--yellow)", textAlign:"center",
               }}>
-                ⚠ Confirm {side} {qty} shares of {symbol}
+                Confirm {side} {qty} shares of {symbol}
                 {orderType==="LIMIT" ? ` @ ₹${price}` : " at MARKET price"}?
               </div>
               <div style={{display:"flex", gap:8}}>

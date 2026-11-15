@@ -89,7 +89,7 @@ function LeaderTab() {
               fontFamily: "var(--font)", fontSize: 11, cursor: "pointer",
               letterSpacing: 1, transition: "all 0.15s", flexShrink: 0,
             }}>
-              {copied ? "✓ COPIED" : "COPY"}
+              {copied ? "COPIED" : "COPY"}
             </button>
           </div>
 
@@ -211,8 +211,7 @@ function FollowingTab() {
         const data = JSON.parse(e.data);
         if (data.type === "signal") {
           setLiveSignal(data);
-          toast(`📡 Signal: ${data.direction} ${data.symbol}`, {
-            icon: data.direction === "BUY" ? "🟢" : "🔴",
+          toast(`Signal: ${data.direction} ${data.symbol}`, {
             duration: 5000,
           });
         }
@@ -249,7 +248,7 @@ function FollowingTab() {
         <div className="card-header">
           <span className="card-title">LEADERS YOU FOLLOW</span>
           <button className="connect-btn" onClick={() => setShowForm(v => !v)}>
-            {showForm ? "✕ CANCEL" : "+ FOLLOW LEADER"}
+            {showForm ? "CANCEL" : "+ FOLLOW LEADER"}
           </button>
         </div>
 
@@ -301,7 +300,7 @@ function FollowingTab() {
                     borderColor: form.auto_execute ? "rgba(0,255,136,0.4)" : "var(--border)",
                     color: form.auto_execute ? "var(--green)" : "var(--muted)",
                   }}>
-                  ⚡ AUTO-EXECUTE
+                  AUTO-EXECUTE
                 </button>
                 <button type="button"
                   onClick={() => setForm(f => ({ ...f, auto_execute: false }))}
@@ -312,7 +311,7 @@ function FollowingTab() {
                     borderColor: !form.auto_execute ? "rgba(255,208,96,0.4)" : "var(--border)",
                     color: !form.auto_execute ? "var(--yellow)" : "var(--muted)",
                   }}>
-                  🔔 NOTIFY ONLY
+                  NOTIFY ONLY
                 </button>
               </div>
             </div>

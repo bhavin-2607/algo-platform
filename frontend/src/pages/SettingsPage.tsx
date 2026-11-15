@@ -40,7 +40,7 @@ function TokenRenewalCard({qc}: {qc: any}) {
   const updateMutation = useMutation({
     mutationFn: () => api.post("/settings/dhan-token", {access_token: newToken}),
     onSuccess: (res: any) => {
-      toast.success(res.data?.valid ? "✅ Token updated & verified" : "Token saved (verify failed)");
+      toast.success(res.data?.valid ? "Token updated & verified" : "Token saved (verify failed)");
       qc.invalidateQueries({queryKey:["settings-status"]});
       qc.invalidateQueries({queryKey:["dhan-credentials"]});
       setNewToken("");
@@ -51,7 +51,7 @@ function TokenRenewalCard({qc}: {qc: any}) {
   const renewMutation = useMutation({
     mutationFn: () => api.post("/settings/dhan-renew"),
     onSuccess: (res: any) => {
-      toast.success(`✅ Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
+      toast.success(`Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
       qc.invalidateQueries({queryKey:["settings-status"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed"),
@@ -180,7 +180,12 @@ function BrokerSettingsSection() {
       }
       return res;
     }),
-    onSuccess: () => { toast.success("Broker added"); qc.invalidateQueries({queryKey:["brokers"]}); setShowForm(false); },
+    onSuccess: () => {
+      toast.success("Broker added and verified");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+      setShowForm(false);
+    },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
   });
 
@@ -189,19 +194,29 @@ function BrokerSettingsSection() {
     onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({queryKey:["brokers"]}); },
   });
 
+  const activateMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/brokers/${id}/activate`),
+    onSuccess: (res: any) => {
+      toast.success(res.data?.message || "Broker activated successfully");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to activate broker"),
+  });
+
   const deactivateMutation = useMutation({
     mutationFn: (id: string) => api.patch(`/brokers/${id}/deactivate`),
     onSuccess: () => { toast.success("Deactivated"); qc.invalidateQueries({queryKey:["brokers"]}); },
   });
 
-  const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker !== "shoonya");
+  const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker === "dhan" || b.broker === "paper");
 
   return (
     <div className="card settings-card">
         <div className="card-header">
           <span className="card-title">CONNECTED BROKERS</span>
           <button className="connect-btn" onClick={() => setShowForm(v=>!v)}>
-            {showForm ? "✕ CANCEL" : "+ ADD BROKER"}
+            {showForm ? "CANCEL" : "+ ADD BROKER"}
           </button>
         </div>
 
@@ -261,6 +276,7 @@ function BrokerSettingsSection() {
 
         {visibleBrokers.map((b: any) => (
           <BrokerRow key={b.id} broker={b} qc={qc}
+            onActivate={()=>activateMutation.mutate(b.id)}
             onRemove={()=>removeMutation.mutate(b.id)}
             onDeactivate={()=>deactivateMutation.mutate(b.id)}
           />
@@ -269,7 +285,7 @@ function BrokerSettingsSection() {
   );
 }
 
-function BrokerRow({ broker: b, onRemove, onDeactivate }: any) {
+function BrokerRow({ broker: b, onActivate, onRemove, onDeactivate }: any) {
 
   return (
     <div style={{borderTop:"1px solid var(--border)"}}>
@@ -291,12 +307,19 @@ function BrokerRow({ broker: b, onRemove, onDeactivate }: any) {
             {b.paper_trading?"PAPER":"LIVE"}
           </span>
           <span className={`badge ${b.is_active?"badge-green":"badge-gray"}`}>
-            {b.is_active?"● ACTIVE":"○ INACTIVE"}
+            {b.is_active?"ACTIVE":"INACTIVE"}
           </span>
+          {!b.is_active && (
+            <button className="auth-btn"
+              style={{padding:"5px 12px", fontSize:11, width:"auto"}}
+              onClick={onActivate}>
+              ACTIVATE
+            </button>
+          )}
           {b.is_active && (
             <button className="exit-btn"
               style={{padding:"5px 12px", fontSize:10, color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
-              onClick={onDeactivate}>⏸ DEACTIVATE</button>
+              onClick={onDeactivate}>DEACTIVATE</button>
           )}
           <button className="exit-btn" onClick={onRemove}>REMOVE</button>
         </div>

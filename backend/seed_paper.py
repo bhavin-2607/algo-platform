@@ -52,7 +52,7 @@ async def seed():
         existing_ba = await db.execute(
             select(BrokerAccount).where(
                 BrokerAccount.user_id == user.id,
-                BrokerAccount.broker  == BrokerName.shoonya,
+                BrokerAccount.broker  == BrokerName.dhan,
                 BrokerAccount.paper_trading == True,
             )
         )
@@ -60,7 +60,7 @@ async def seed():
         if not ba:
             ba = BrokerAccount(
                 id=uuid.uuid4(), user_id=user.id,
-                broker=BrokerName.shoonya, client_id="PAPER_TEST_001",
+                broker=BrokerName.dhan, client_id="PAPER_TEST_001",
                 paper_trading=True, is_active=True,
             )
             db.add(ba)

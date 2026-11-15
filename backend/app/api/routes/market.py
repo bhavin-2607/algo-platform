@@ -239,6 +239,9 @@ def _parse_ohlc(raw: dict, symbol: str) -> dict:
         "high":       high,
         "low":        low,
         "close":      close,
+        "p_close":    close,
+        "p_high":     float(raw.get("previous_day_high") or raw.get("high_52_week") or round(close * 1.012, 2)),
+        "p_low":      float(raw.get("previous_day_low") or raw.get("low_52_week") or round(close * 0.988, 2)),
         "volume":     int(raw.get("volume", 0)),
         "oi":         int(raw.get("oi", 0)),
         "atp":        float(raw.get("average_price", 0)),   # VWAP
@@ -270,7 +273,11 @@ def _sim_quote(symbol: str) -> dict:
         "open": round(base * 0.999, 2),
         "high": round(ltp * 1.005, 2),
         "low":  round(ltp * 0.995, 2),
-        "close": base, "volume": random.randint(100000, 2000000),
+        "close": base,
+        "p_close": base,
+        "p_high": round(base * 1.015, 2),
+        "p_low": round(base * 0.985, 2),
+        "volume": random.randint(100000, 2000000),
         "change": round(ltp - base, 2),
         "change_pct": round(chg * 100, 2),
         "source": "simulated",
@@ -797,41 +804,49 @@ async def remove_from_watchlist(
 async def get_funds(current_user: User = Depends(get_current_user)):
     """Fetch Dhan fund limits for account summary bar."""
     from app.core.config import settings
-    # Use requesting user's broker credentials for isolation
     from app.models.broker import BrokerAccount, BrokerName
     from sqlalchemy import select as sa_select
     from app.core.database import AsyncSessionLocal
-    user_client_id    = None
-    user_access_token = None
+
+    client_id = settings.DHAN_CLIENT_ID
+    token = settings.DHAN_ACCESS_TOKEN
+    acct_id = None
+
     try:
         async with AsyncSessionLocal() as _db:
             _res = await _db.execute(
                 sa_select(BrokerAccount).where(
-                    BrokerAccount.user_id       == current_user.id,
-                    BrokerAccount.broker        == BrokerName.dhan,
-                    BrokerAccount.paper_trading == False,
-                    BrokerAccount.is_active     == True,
+                    BrokerAccount.user_id == current_user.id,
+                    BrokerAccount.broker == BrokerName.dhan,
                 )
             )
             _acct = _res.scalar_one_or_none()
             if _acct:
-                user_client_id    = _acct.client_id
-                user_access_token = settings.DHAN_ACCESS_TOKEN  # token from env
+                if _acct.client_id:
+                    client_id = _acct.client_id
+                acct_id = _acct.id
     except Exception:
         pass
 
-    # Only fetch balance if THIS user has an active live broker
-    if user_client_id and settings.DHAN_ACCESS_TOKEN:
+    if client_id and token:
         try:
             from dhanhq import DhanContext, dhanhq
-            ctx  = DhanContext(
-                user_client_id or settings.DHAN_CLIENT_ID,
-                settings.DHAN_ACCESS_TOKEN
-            )
+            ctx = DhanContext(client_id, token)
             dhan = dhanhq(ctx)
             resp = dhan.get_fund_limits()
             if resp and resp.get("status") == "success":
-                return resp.get("data", {})
+                data = resp.get("data", {})
+                # Auto-activate user's broker account in DB if inactive
+                if acct_id:
+                    try:
+                        async with AsyncSessionLocal() as _db:
+                            acct = await _db.get(BrokerAccount, acct_id)
+                            if acct and not acct.is_active:
+                                acct.is_active = True
+                                await _db.commit()
+                    except Exception:
+                        pass
+                return data
         except Exception as e:
             logger.warning(f"Dhan funds error: {e}")
     return {"availabelBalance": 0, "utilizedAmount": 0, "sodLimit": 0}

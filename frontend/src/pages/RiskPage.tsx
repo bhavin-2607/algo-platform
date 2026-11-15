@@ -37,7 +37,7 @@ function RiskOverview() {
     return (
       <div className="card">
         <div style={{ padding: "48px 24px", textAlign: "center" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>⚠</div>
+          <div style={{ fontSize: 28, marginBottom: 12, color: "var(--yellow)" }}>!</div>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>No active strategies</div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>
             Assign and start a strategy to manage its risk settings here.
@@ -158,13 +158,13 @@ function StrategyRiskCard({ data, name }: { data: any; name: string }) {
           <span className={`badge ${data.paper_trading ? "badge-yellow" : "badge-red"}`}>
             {data.paper_trading ? "PAPER" : "LIVE"}
           </span>
-          {killed && <span className="badge badge-red">⚠ KILLED</span>}
+          {killed && <span className="badge badge-red">KILLED</span>}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {killed ? (
             <button className="connect-btn" onClick={() => resetMutation.mutate()}
               disabled={resetMutation.isPending}>
-              {resetMutation.isPending ? "RESETTING..." : "↺ RESET"}
+              {resetMutation.isPending ? "RESETTING..." : "RESET"}
             </button>
           ) : (
             <button onClick={() => killMutation.mutate()} disabled={killMutation.isPending}
@@ -174,11 +174,11 @@ function StrategyRiskCard({ data, name }: { data: any; name: string }) {
                 fontFamily: "var(--font)", fontSize: 11, letterSpacing: 1,
                 cursor: "pointer", transition: "all 0.15s",
               }}>
-              {killMutation.isPending ? "..." : "⏹ KILL"}
+              {killMutation.isPending ? "..." : "KILL"}
             </button>
           )}
           <button className="connect-btn" onClick={() => setEditing(v => !v)}>
-            {editing ? "✕ CANCEL" : "⚙ CONFIGURE"}
+            {editing ? "CANCEL" : "CONFIGURE"}
           </button>
         </div>
       </div>
@@ -225,16 +225,16 @@ function StrategyRiskCard({ data, name }: { data: any; name: string }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
               <RiskInput label="DAILY LOSS LIMIT (₹)" value={form.daily_loss_limit}
-                onChange={v => set("daily_loss_limit")(parseFloat(v))}
+                onChange={(v: any) => set("daily_loss_limit")(parseFloat(v))}
                 help="Stop trading after losing this much today" />
               <RiskInput label="MAX EXPOSURE (₹)" value={form.max_exposure}
-                onChange={v => set("max_exposure")(parseFloat(v))}
+                onChange={(v: any) => set("max_exposure")(parseFloat(v))}
                 help="Max value of a single order" />
               <RiskInput label="MAX QUANTITY" value={form.max_quantity}
-                onChange={v => set("max_quantity")(parseInt(v))}
+                onChange={(v: any) => set("max_quantity")(parseInt(v))}
                 help="Max shares/lots per order" />
               <RiskInput label="MAX CONSECUTIVE LOSSES" value={form.max_consecutive_losses}
-                onChange={v => set("max_consecutive_losses")(parseInt(v))}
+                onChange={(v: any) => set("max_consecutive_losses")(parseInt(v))}
                 help="Trigger kill switch after N losses in a row" />
             </div>
 

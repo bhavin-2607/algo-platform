@@ -104,7 +104,7 @@ function UsersTab() {
       <div className="card-header">
         <span className="card-title">ALL USERS ({users?.length??0})</span>
         <button className="connect-btn" onClick={()=>setShowForm(v=>!v)}>
-          {showForm?"✕ CANCEL":"+ CREATE USER"}
+          {showForm?"CANCEL":"+ CREATE USER"}
         </button>
       </div>
 
@@ -271,7 +271,7 @@ function StrategiesTab() {
         <div className="card-header">
           <span className="card-title">STRATEGIES ({strats?.length??0})</span>
           <button className="connect-btn" onClick={()=>setShowForm(v=>!v)}>
-            {showForm?"✕ CANCEL":"+ ADD STRATEGY"}
+            {showForm?"CANCEL":"+ ADD STRATEGY"}
           </button>
         </div>
 
@@ -313,7 +313,7 @@ function StrategiesTab() {
                     <button className="connect-btn"
                       style={{padding:"4px 12px", fontSize:10}}
                       onClick={()=>{ setAssigning(assigningId===s.id?null:s.id); setAssignForm({user_id:"",broker_account_id:""}); setUserBrokers([]); }}>
-                      {assigningId===s.id?"✕ CANCEL":"+ ASSIGN"}
+                      {assigningId===s.id?"CANCEL":"+ ASSIGN"}
                     </button>
                   </td>
                 </tr>
@@ -341,7 +341,7 @@ function StrategiesTab() {
                               onChange={e=>setAssignForm(f=>({...f,broker_account_id:e.target.value}))}
                               style={{background:"var(--surface)",color:"var(--text)",fontFamily:"var(--font)"}}>
                               <option value="">-- Select broker --</option>
-                              {userBrokers.filter((b:any)=>b.broker!=="shoonya").map((b:any)=>(
+                              {userBrokers.map((b:any)=>(
                                 <option key={b.id} value={b.id}>
                                   {b.broker.toUpperCase()} — {b.paper_trading?"PAPER":"LIVE"}
                                 </option>
@@ -350,7 +350,7 @@ function StrategiesTab() {
                           </div>
                         )}
                         {assignForm.user_id && userBrokers.length === 0 && (
-                          <div style={{fontSize:11,color:"var(--yellow)"}}>⚠ User has no broker connected</div>
+                          <div style={{fontSize:11,color:"var(--yellow)"}}>User has no broker connected</div>
                         )}
                         <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>
                           Runs on every symbol in that user's terminal watchlist.

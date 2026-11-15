@@ -106,7 +106,7 @@ function StrategiesTab() {
     <div>
       <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:16 }}>
         <button className="connect-btn" onClick={()=>{ setEditing(null); setShowForm(v=>!v); }}>
-          {showForm ? "✕ CANCEL" : "+ NEW FORMULA STRATEGY"}
+          {showForm ? "CANCEL" : "+ NEW FORMULA STRATEGY"}
         </button>
       </div>
 
@@ -133,16 +133,16 @@ function StrategiesTab() {
                   {s.paper_trading?"PAPER":"LIVE"}
                 </span>
                 <span className={`badge ${s.is_running?"badge-green":"badge-gray"}`}>
-                  {s.is_running?"● RUNNING":"○ IDLE"}
+                  {s.is_running?"RUNNING":"IDLE"}
                 </span>
               </div>
               <div style={{display:"flex",gap:8}}>
                 <button className="exit-btn" onClick={()=>{setEditing(s);setShowForm(false);}}>EDIT</button>
                 {s.is_running
                   ? <button className="strategy-btn btn-stop" style={{flex:"none",padding:"4px 14px"}}
-                      onClick={()=>stopMutation.mutate(s.id)}>⏹ STOP</button>
+                      onClick={()=>stopMutation.mutate(s.id)}>STOP</button>
                   : <button className="strategy-btn btn-start" style={{flex:"none",padding:"4px 14px"}}
-                      onClick={()=>startMutation.mutate(s.id)}>▶ START</button>
+                      onClick={()=>startMutation.mutate(s.id)}>START</button>
                 }
                 <button className="exit-btn" style={{color:"var(--red)",borderColor:"rgba(255,68,102,0.3)"}}
                   onClick={()=>deleteMutation.mutate(s.id)}>DELETE</button>
@@ -234,8 +234,8 @@ function FormulaForm({ brokers, initial, onSaved, onCancel }: any) {
     if (!expr) return;
     try {
       const res = await api.post("/formula/validate-formula", { expression: expr });
-      setValidating(v=>({...v,[field]:res.data.valid?"✓":"✗ "+res.data.error}));
-    } catch { setValidating(v=>({...v,[field]:"✗ error"})); }
+      setValidating(v=>({...v,[field]:res.data.valid?"VALID":"ERROR: "+res.data.error}));
+    } catch { setValidating(v=>({...v,[field]:"ERROR: validation failed"})); }
   }
 
   function applyExample(ex: any) {
@@ -269,14 +269,14 @@ function FormulaForm({ brokers, initial, onSaved, onCancel }: any) {
       const message = typeof detail === "string" ? detail : "Save failed";
       setSaveError(message);
       const match = typeof detail === "string" ? detail.match(/Invalid formula \[(\w+)\]: (.*)/) : null;
-      if (match) setValidating(v => ({...v, [match[1]]: "✗ " + match[2]}));
+      if (match) setValidating(v => ({...v, [match[1]]: "ERROR: " + match[2]}));
       toast.error(message);
     },
   });
 
   async function previewEntry() {
     if (!form.entry_long) {
-      setValidating(v => ({...v, entry_long: "✗ Expression cannot be empty"}));
+      setValidating(v => ({...v, entry_long: "ERROR: Expression cannot be empty"}));
       return;
     }
     setPreviewing(true);
@@ -291,9 +291,9 @@ function FormulaForm({ brokers, initial, onSaved, onCancel }: any) {
       });
       setPreview(res.data);
       if (!res.data.valid) {
-        setValidating(v => ({...v, entry_long: "✗ " + (res.data.error || "invalid")}));
+        setValidating(v => ({...v, entry_long: "ERROR: " + (res.data.error || "invalid")}));
       } else {
-        setValidating(v => ({...v, entry_long: "✓"}));
+        setValidating(v => ({...v, entry_long: "VALID"}));
       }
     } catch (e: any) {
       const detail = e.response?.data?.detail || "Preview failed";
@@ -609,8 +609,8 @@ function FInput({label,value,onChange,type="text",placeholder,help}:any) {
 
 function FormulaField({label,value,onChange,onBlur,validation,placeholder,color}:any) {
   const c = color==="green"?"var(--green)":color==="red"?"var(--red)":"var(--muted)";
-  const isValid = validation?.startsWith("✓");
-  const isError = validation?.startsWith("✗");
+  const isValid = validation?.startsWith("VALID");
+  const isError = validation?.startsWith("ERROR");
   return (
     <div className="field">
       <label className="field-label" style={{color:c}}>{label}</label>
