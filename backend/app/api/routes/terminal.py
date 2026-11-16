@@ -990,6 +990,13 @@ async def apply_formula_batch(
     """
     Apply a complete formula batch (BSA or Fibonacci Formula) across terminal tables or algo window.
     """
+    batch_key = "bsa" if "bsa" in payload.batch.lower() else "fibonacci"
+
+    # If applying to algo window only, persist preference and return (available to all users)
+    if payload.book == "algo":
+        await _save_batch_preset(current_user.id, "algo", payload.batch)
+        return {"status": "ok", "applied_batch": batch_key, "book": "algo"}
+
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
@@ -1001,13 +1008,6 @@ async def apply_formula_batch(
         BSA_FORMULA_COLUMNS,
     )
     from app.strategy.excel_formula_engine import formula_for_book
-
-    batch_key = "bsa" if "bsa" in payload.batch.lower() else "fibonacci"
-
-    # If applying to algo window only, persist preference and return
-    if payload.book == "algo":
-        await _save_batch_preset(current_user.id, "algo", payload.batch)
-        return {"status": "ok", "applied_batch": batch_key, "book": "algo"}
 
     books = ["equity", "option"] if payload.book == "both" else [payload.book]
     await _save_batch_preset(current_user.id, payload.book, payload.batch)

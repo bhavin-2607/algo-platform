@@ -350,9 +350,14 @@ export default function TerminalPage() {
   const activeBroker = (brokerAccounts || []).find((b: any) => b.is_active);
   const isPaperMode = !activeBroker || Boolean(activeBroker.paper_trading);
 
+  const { data: batchPresets } = useQuery({
+    queryKey: ["batch-presets"],
+    queryFn: () => api.get("/terminal/batch-presets").then(r => r.data as { equity: string; option: string; algo: string }),
+  });
+
   const { data: algoRows } = useQuery({
-    queryKey: ["algo-rows"],
-    queryFn: () => api.get("/terminal/algo-rows").then(r => r.data as any[]),
+    queryKey: ["algo-rows", batchPresets?.algo],
+    queryFn: () => api.get(`/terminal/algo-rows?batch=${batchPresets?.algo || "bsa"}`).then(r => r.data as any[]),
     refetchInterval: 2000,
   });
 
@@ -415,11 +420,6 @@ export default function TerminalPage() {
       qc.invalidateQueries({ queryKey: ["algo-rows"] });
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail || "Failed to activate kill switch"),
-  });
-
-  const { data: batchPresets } = useQuery({
-    queryKey: ["batch-presets"],
-    queryFn: () => api.get("/terminal/batch-presets").then(r => r.data as { equity: string; option: string; algo: string }),
   });
 
   const applyBatchMutation = useMutation({
@@ -1458,10 +1458,12 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
   );
 }
 
-// ── Algo Trading Window Table (BSA Automation & Custom Target) ───────────────
+// ── Algo Trading Window Table (BSA & Fibonacci Automation + Custom Target) ───
 function AlgoWindowTable({
   algoRows,
   isPaper = true,
+  activeBatch = "bsa",
+  onSelectBatch,
   onToggleAlgo,
   onUpdateRow,
   onDeleteRow,
@@ -1482,11 +1484,28 @@ function AlgoWindowTable({
 }) {
   const activeCount = algoRows.filter((r) => r.is_algo_active).length;
 
-  const bsaTargetCols = [
-    { key: "TGT1", label: "TGT1", desc: "TGT1 (BSA BT1/ST1)", color: "var(--yellow)" },
-    { key: "TGT2", label: "TGT2", desc: "TGT2 (BSA BT2/ST2)", color: "var(--yellow)" },
-    { key: "TGT3", label: "TGT3", desc: "TGT3 (BSA BT3/ST3)", color: "var(--yellow)" },
+  const isBsa = (activeBatch || "bsa").toLowerCase() === "bsa";
+  const isFib = (activeBatch || "bsa").toLowerCase() === "fibonacci";
+
+  const allTargetCols = [
+    { key: "TGT1",  label: "TGT1",  desc: "TGT1 (BSA BT1/ST1)",  type: "bsa", color: "var(--yellow)" },
+    { key: "TGT2",  label: "TGT2",  desc: "TGT2 (BSA BT2/ST2)",  type: "bsa", color: "var(--yellow)" },
+    { key: "TGT3",  label: "TGT3",  desc: "TGT3 (BSA BT3/ST3)",  type: "bsa", color: "var(--yellow)" },
+    { key: "T11.8", label: "T11.8", desc: "T11.8 (+0.118%)",     type: "fib", color: "var(--green)" },
+    { key: "T23.8", label: "T23.8", desc: "T23.8 (+0.238%)",     type: "fib", color: "var(--green)" },
+    { key: "T38.2", label: "T38.2", desc: "T38.2 (+0.382%)",     type: "fib", color: "var(--green)" },
+    { key: "T50",   label: "T50",   desc: "T50 (+0.500%)",       type: "fib", color: "var(--green)" },
+    { key: "T61.8", label: "T61.8", desc: "T61.8 (+0.618%)",     type: "fib", color: "var(--green)" },
+    { key: "T78.6", label: "T78.6", desc: "T78.6 (+0.786%)",     type: "fib", color: "var(--green)" },
+    { key: "T100",  label: "T100",  desc: "T100 (+1.000%)",      type: "fib", color: "var(--green)" },
+    { key: "T1.618", label: "T1.618", desc: "T1.618 (+1.618%)",  type: "fib", color: "var(--green)" },
+    { key: "T2.618", label: "T2.618", desc: "T2.618 (+2.618%)",  type: "fib", color: "var(--green)" },
   ];
+
+  const visibleTargetCols = allTargetCols.filter((tc) => {
+    if (isFib) return tc.type === "fib";
+    return tc.type === "bsa";
+  });
 
   return (
     <div style={{ border: "1px solid var(--border)", background: "var(--surface)", marginBottom: 16 }}>
@@ -1500,9 +1519,6 @@ function AlgoWindowTable({
           <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "var(--green)" }}>
             ALGO TRADING WINDOW
           </span>
-          <span className="badge badge-yellow" style={{ fontSize: 10, fontWeight: 700 }}>
-            BSA ENGINE
-          </span>
           <span className={`badge ${isPaper ? "badge-yellow" : "badge-green"}`} style={{ fontSize: 10, fontWeight: 700 }}>
             {isPaper ? "PAPER TRADING (SIMULATION)" : "LIVE DHAN BROKER"}
           </span>
@@ -1513,6 +1529,52 @@ function AlgoWindowTable({
             {algoRows.length} SCRIPTS
           </span>
         </div>
+
+        {/* Separate formula buttons for Algo Window */}
+        {onSelectBatch && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9, letterSpacing: 1, color: "var(--muted)", fontWeight: 600, marginRight: 2 }}>
+              ALGO FORMULA:
+            </span>
+            {[
+              { id: "bsa", label: "BSA FORMULA", batch: "BSA" },
+              { id: "fibonacci", label: "FIBONACCI FORMULA", batch: "Fibonacci Formula" },
+            ].map((item) => {
+              const isCur = (activeBatch || "bsa").toLowerCase() === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelectBatch(item.batch)}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 0.8,
+                    padding: "4px 10px",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    border: isCur
+                      ? "1px solid var(--green)"
+                      : "1px solid var(--border)",
+                    background: isCur
+                      ? "rgba(0, 230, 118, 0.15)"
+                      : "rgba(255,255,255,0.03)",
+                    color: isCur
+                      ? "var(--green)"
+                      : "var(--muted)",
+                    boxShadow: isCur
+                      ? "0 0 8px rgba(0,230,118,0.25)"
+                      : "none",
+                  }}
+                  title={`Set Algo Window formulas to ${item.label}`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {algoRows.length === 0 ? (
@@ -1530,8 +1592,8 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 75 }}>ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
-                {bsaTargetCols.map((tc) => (
-                  <th key={tc.key} style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: tc.color, textAlign: "right", minWidth: 75 }}>
+                {visibleTargetCols.map((tc) => (
+                  <th key={tc.key} style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: tc.color, textAlign: "right", minWidth: 65 }}>
                     {tc.label}
                   </th>
                 ))}
@@ -1551,11 +1613,22 @@ function AlgoWindowTable({
                 const isAuto = r.is_algo_active;
                 const inPos = r.status === "IN_POSITION";
                 const rowBg = inPos ? "rgba(0,230,118,0.04)" : "transparent";
+                const defaultTgt = isBsa ? "TGT1" : "T11.8";
+                const activeTgt = r.target_type || defaultTgt;
 
                 const targetValues: Record<string, any> = {
-                  "TGT1": r.tgt1,
-                  "TGT2": r.tgt2,
-                  "TGT3": r.tgt3,
+                  "TGT1":  r.tgt1,
+                  "TGT2":  r.tgt2,
+                  "TGT3":  r.tgt3,
+                  "T11.8": r.t11_8,
+                  "T23.8": r.t23_8,
+                  "T38.2": r.t38_2,
+                  "T50":   r.t50,
+                  "T61.8": r.t61_8,
+                  "T78.6": r.t78_6,
+                  "T100":  r.t100,
+                  "T1.618": r.t1_618,
+                  "T2.618": r.t2_618,
                 };
 
                 return (
@@ -1589,9 +1662,9 @@ function AlgoWindowTable({
                       {r.sl != null ? `₹${Number(r.sl).toLocaleString()}` : "—"}
                     </td>
 
-                    {/* BSA Target Columns TGT1, TGT2, TGT3 */}
-                    {bsaTargetCols.map((tc) => {
-                      const isArmed = r.target_type === tc.key || (!r.target_type && tc.key === "TGT1");
+                    {/* Target Columns for Active Batch */}
+                    {visibleTargetCols.map((tc) => {
+                      const isArmed = activeTgt === tc.key;
                       const val = targetValues[tc.key];
                       return (
                         <td
@@ -1616,7 +1689,7 @@ function AlgoWindowTable({
                     {/* Active Target Selector / Kill Switch Dropdown + Custom Target */}
                     <td style={{ padding: "8px 8px", textAlign: "center", minWidth: 145 }}>
                       <select
-                        value={r.target_type || "TGT1"}
+                        value={r.target_type || defaultTgt}
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val === "KILL") {
@@ -1624,7 +1697,7 @@ function AlgoWindowTable({
                               onKillRow(r.id);
                             }
                           } else if (val === "CUSTOM") {
-                            const initCustom = r.custom_target || r.sell_tgt || r.tgt1 || 0;
+                            const initCustom = r.custom_target || r.sell_tgt || (isBsa ? r.tgt1 : r.t11_8) || 0;
                             onUpdateRow(r.id, { target_type: "CUSTOM", custom_target: initCustom, sell_tgt: initCustom });
                           } else {
                             onUpdateRow(r.id, { target_type: val });
@@ -1635,8 +1708,8 @@ function AlgoWindowTable({
                           padding: "5px 8px",
                           fontSize: 11,
                           background: r.target_type === "KILL" ? "rgba(255,40,80,0.25)" : "#141923",
-                          border: `1px solid ${r.target_type === "KILL" ? "var(--red)" : r.target_type === "CUSTOM" ? "#38bdf8" : "rgba(255, 183, 3, 0.4)"}`,
-                          color: r.target_type === "KILL" ? "#ff4d6d" : r.target_type === "CUSTOM" ? "#38bdf8" : "#fcd34d",
+                          border: `1px solid ${r.target_type === "KILL" ? "var(--red)" : r.target_type === "CUSTOM" ? "#38bdf8" : isBsa ? "rgba(255, 183, 3, 0.4)" : "rgba(0, 230, 118, 0.4)"}`,
+                          color: r.target_type === "KILL" ? "#ff4d6d" : r.target_type === "CUSTOM" ? "#38bdf8" : isBsa ? "#fcd34d" : "#4ade80",
                           borderRadius: 3,
                           cursor: "pointer",
                           fontWeight: 700,
@@ -1644,9 +1717,11 @@ function AlgoWindowTable({
                         }}
                         title="Select active target level or trigger instant Kill Switch"
                       >
-                        <option value="TGT1" style={{ background: "#141923", color: "#fcd34d" }}>TGT1 (BSA BT1/ST1)</option>
-                        <option value="TGT2" style={{ background: "#141923", color: "#fcd34d" }}>TGT2 (BSA BT2/ST2)</option>
-                        <option value="TGT3" style={{ background: "#141923", color: "#fcd34d" }}>TGT3 (BSA BT3/ST3)</option>
+                        {visibleTargetCols.map((tc) => (
+                          <option key={tc.key} value={tc.key} style={{ background: "#141923", color: isBsa ? "#fcd34d" : "#4ade80" }}>
+                            {tc.desc}
+                          </option>
+                        ))}
                         <option value="CUSTOM" style={{ background: "#141923", color: "#38bdf8", fontWeight: 700 }}>CUSTOM TARGET</option>
                         <option value="KILL" style={{ background: "#2a1215", color: "#ff4d6d", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
                       </select>
