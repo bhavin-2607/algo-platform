@@ -2,10 +2,10 @@ import unittest
 from unittest.mock import AsyncMock, patch, MagicMock
 import uuid
 
-from app.strategy.excel_formula_engine import evaluate_columns_in_order
-from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+from app.strategy.excel_formula_engine import evaluate_columns_in_order, formula_for_book
+from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS
 from app.models.algo_row import BsaAlgoRow
-from app.services.bsa_algo_engine import BsaAlgoEngine
+from app.services.bsa_algo_engine import BsaAlgoEngine, is_option_symbol
 from app.broker.base import OrderRequest
 
 
@@ -42,6 +42,129 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
         self.assertTrue(res.get("t23.8") > res.get("t11.8"))
         self.assertTrue(res.get("t38.2") > res.get("t23.8"))
 
+    def test_options_target_scaling_and_algo_matching(self):
+        """
+        Verify that option contracts (such as AUBANK 23 NOV 950 CALL) scale targets
+        properly (100x equity percentage), yielding exact matches between Watchlist and Algo Window.
+        """
+        # Symbol detection
+        self.assertTrue(is_option_symbol("AUBANK 23 NOV 950 CALL"))
+        self.assertTrue(is_option_symbol("NIFTY 17 NOV 25300 CALL"))
+        self.assertTrue(is_option_symbol("NIFTY 17 NOV 25300 PUT"))
+        self.assertTrue(is_option_symbol("BHARTIARTL 23 NOV 2200 CALL"))
+        self.assertTrue(is_option_symbol("NIFTY 25000 CE"))
+        self.assertTrue(is_option_symbol("BANKNIFTY 52000 PE"))
+        self.assertFalse(is_option_symbol("RELIANCE"))
+        self.assertFalse(is_option_symbol("ICICI BANK"))
+        self.assertFalse(is_option_symbol("NIFTY"))
+
+        # Option contract tick data for AUBANK 23 NOV 950 CALL from user screenshot
+        aubank_tick = {
+            "symbol": "AUBANK 23 NOV 950 CALL",
+            "open": 24.35,
+            "high": 26.45,
+            "low": 22.08,
+            "close": 24.50,
+            "ltp": 26.45,
+        }
+
+        # Apply option scaling to Fibonacci formulas
+        option_cols = [
+            {**c, "formula": formula_for_book(c["name"], c["formula"], "option")}
+            for c in FIBONACCI_FORMULA_COLUMNS
+        ]
+        res = evaluate_columns_in_order(option_cols, aubank_tick)
+
+        # Check values matching user screenshot:
+        # SIGNAL: BUY
+        self.assertEqual(res.get("signal"), "BUY")
+        # ENTRY: 24.5
+        self.assertEqual(res.get("entry"), 24.5)
+        # SL: 24.38
+        self.assertEqual(res.get("sl"), 24.38)
+
+        # Targets T1 through T9:
+        # T1 (11.8%): 24.5 * 1.118 = 27.391 -> 27.39
+        self.assertEqual(res.get("t11.8"), 27.39)
+        # T2 (23.8%): 24.5 * 1.238 = 30.331 -> 30.33
+        self.assertEqual(res.get("t23.8"), 30.33)
+        # T3 (38.2%): 24.5 * 1.382 = 33.859 -> 33.86
+        self.assertEqual(res.get("t38.2"), 33.86)
+        # T4 (50.0%): 24.5 * 1.500 = 36.75
+        self.assertEqual(res.get("t50"), 36.75)
+        # T5 (61.8%): 24.5 * 1.618 = 39.641 -> 39.64
+        self.assertEqual(res.get("t61.8"), 39.64)
+        # T6 (78.6%): 24.5 * 1.786 = 43.757 -> 43.76
+        self.assertEqual(res.get("t78.6"), 43.76)
+        # T7 (100%): 24.5 * 2.000 = 49.00
+        self.assertEqual(res.get("t100"), 49.00)
+        # T8 (161.8%): 24.5 * 2.618 = 64.141 -> 64.14
+        self.assertEqual(res.get("t1.618"), 64.14)
+        # T9 (261.8%): 24.5 * 3.618 = 88.641 -> 88.64
+        self.assertEqual(res.get("t2.618"), 88.64)
+
+        # Verify that BsaAlgoEngine process_row sets sell_tgt to 27.39 when T1 is selected
+        import asyncio
+        engine = BsaAlgoEngine.get_instance()
+        row = BsaAlgoRow(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            symbol="AUBANK 23 NOV 950 CALL",
+            exchange="NFO",
+            segment="NSE_FNO",
+            is_algo_active=True,
+            target_type="T1",
+        )
+        fake_db = AsyncMock()
+        asyncio.run(
+            engine._process_row(
+                row=row,
+                ltp=26.45,
+                signal="BUY",
+                entry_calc=24.5,
+                sl_calc=24.38,
+                t1=res.get("t11.8"),
+                t2=res.get("t23.8"),
+                t3=res.get("t38.2"),
+                t4=res.get("t50"),
+                t5=res.get("t61.8"),
+                t6=res.get("t78.6"),
+                t7=res.get("t100"),
+                t8=res.get("t1.618"),
+                t9=res.get("t2.618"),
+                db=fake_db,
+            )
+        )
+        self.assertEqual(row.sell_tgt, 27.39)
+
+    def test_options_sell_signal_directional_targets(self):
+        """Verify SELL signal decrements targets below entry, matching user screenshot for NIFTY 17 NOV 25300 CALL."""
+        nifty_sell_tick = {
+            "symbol": "NIFTY 17 NOV 25300 CALL",
+            "open": 85.45,
+            "high": 92.85,
+            "low": 64.03,
+            "close": 85.17,
+            "ltp": 81.15,
+        }
+        option_cols = [
+            {**c, "formula": formula_for_book(c["name"], c["formula"], "option")}
+            for c in FIBONACCI_FORMULA_COLUMNS
+        ]
+        res = evaluate_columns_in_order(option_cols, nifty_sell_tick)
+        self.assertEqual(res.get("signal"), "SELL")
+        self.assertEqual(res.get("entry"), 85.17)
+        self.assertEqual(res.get("sl"), 85.6)
+        self.assertEqual(res.get("t11.8"), 75.12)
+        self.assertEqual(res.get("t23.8"), 64.9)
+        self.assertEqual(res.get("t38.2"), 52.64)
+        self.assertEqual(res.get("t50"), 42.59)
+        self.assertEqual(res.get("t61.8"), 32.53)
+        self.assertEqual(res.get("t78.6"), 18.23)
+        self.assertEqual(res.get("t100"), 0.0)
+        self.assertEqual(res.get("t1.618"), -52.64)
+        self.assertEqual(res.get("t2.618"), -137.81)
+
     def test_fibonacci_algo_engine_state_transitions(self):
         """Verify state transitions for Fibonacci Algo Engine: entry, exit, repeat return constraint."""
         import asyncio
@@ -58,7 +181,7 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
             number_of_trades=2,
             trades_completed=0,
             status="IDLE",
-            target_type="T11.8",
+            target_type="T1",
         )
 
         fake_db = AsyncMock()
@@ -73,11 +196,11 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
                     signal="BUY",
                     entry_calc=2015.0,
                     sl_calc=2000.0,
-                    t11_8=2030.0,
-                    t23_8=2040.0,
-                    t38_2=2050.0,
-                    t50=2060.0,
-                    t100=2070.0,
+                    t1=2030.0,
+                    t2=2040.0,
+                    t3=2050.0,
+                    t4=2060.0,
+                    t7=2070.0,
                     db=fake_db,
                 )
             )
@@ -87,7 +210,7 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
         self.assertEqual(row.sell_tgt, 2030.0)
         self.assertEqual(row.stop_loss, 2000.0)
 
-        # Step 2: Price reaches Target T11.8 (2030) -> exits position
+        # Step 2: Price reaches Target T1 (2030) -> exits position
         with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = 2030.0
             asyncio.run(
@@ -97,11 +220,11 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
                     signal="BUY",
                     entry_calc=2015.0,
                     sl_calc=2000.0,
-                    t11_8=2030.0,
-                    t23_8=2040.0,
-                    t38_2=2050.0,
-                    t50=2060.0,
-                    t100=2070.0,
+                    t1=2030.0,
+                    t2=2040.0,
+                    t3=2050.0,
+                    t4=2060.0,
+                    t7=2070.0,
                     db=fake_db,
                 )
             )
@@ -119,11 +242,11 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
                     signal="BUY",
                     entry_calc=2015.0,
                     sl_calc=2000.0,
-                    t11_8=2030.0,
-                    t23_8=2040.0,
-                    t38_2=2050.0,
-                    t50=2060.0,
-                    t100=2070.0,
+                    t1=2030.0,
+                    t2=2040.0,
+                    t3=2050.0,
+                    t4=2060.0,
+                    t7=2070.0,
                     db=fake_db,
                 )
             )
@@ -138,11 +261,11 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
                 signal="BUY",
                 entry_calc=2015.0,
                 sl_calc=2000.0,
-                t11_8=2030.0,
-                t23_8=2040.0,
-                t38_2=2050.0,
-                t50=2060.0,
-                t100=2070.0,
+                t1=2030.0,
+                t2=2040.0,
+                t3=2050.0,
+                t4=2060.0,
+                t7=2070.0,
                 db=fake_db,
             )
         )
@@ -191,26 +314,26 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
             quantity=10,
             status="IN_POSITION",
             buy_price=2000.0,
-            target_type="T61.8",
+            target_type="T5",
             sell_tgt=2060.0,
         )
         fake_db = AsyncMock()
 
         # Target map levels
         t_levels = {
-            "t11_8": 2010.0,
-            "t23_8": 2020.0,
-            "t38_2": 2035.0,
-            "t50": 2050.0,
-            "t61_8": 2060.0,
-            "t78_6": 2075.0,
-            "t100": 2100.0,
-            "t1_618": 2150.0,
-            "t2_618": 2200.0,
+            "t1": 2010.0,
+            "t2": 2020.0,
+            "t3": 2035.0,
+            "t4": 2050.0,
+            "t5": 2060.0,
+            "t6": 2075.0,
+            "t7": 2100.0,
+            "t8": 2150.0,
+            "t9": 2200.0,
         }
 
-        # Price is at 2040. If target is changed to T38.2 (2035), LTP 2040 >= 2035 -> should trigger exit
-        row.target_type = "T38.2"
+        # Price is at 2040. If target is changed to T3 (2035), LTP 2040 >= 2035 -> should trigger exit
+        row.target_type = "T3"
         with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = 2040.0
             asyncio.run(
@@ -227,105 +350,6 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
             mock_exec.assert_called_once()
         self.assertEqual(row.status, "COMPLETED")
         self.assertEqual(row.trades_completed, 1)
-
-    def test_bsa_column_presets_sequence(self):
-        """Verify BSA batch has exactly 28 columns in the exact sequence requested."""
-        expected_names = [
-            "SYMBOL", "OPEN", "HIGH", "LOW", "P.CLOSE", "P.HIGH", "P.LOW", "LTP",
-            "TREND", "GANN", "KD", "S-SIGNAL", "OHLSIG", "INTRASIGNAL", "ENTRY", "SL",
-            "TGT1", "TGT2", "TGT3", "BT1", "BT2", "BT3", "DIFF", "ST1", "ST2", "ST3",
-            "VWAP", "VOLUME"
-        ]
-        self.assertEqual(len(BSA_FORMULA_COLUMNS), 28)
-        actual_names = [c["name"] for c in BSA_FORMULA_COLUMNS]
-        self.assertEqual(actual_names, expected_names)
-
-    def test_bsa_formulas_evaluation(self):
-        """Verify calculation of all BSA formulas including GANN, KD, INTRASIGNAL, DIFF, BT1-3, ST1-3, TGT1-3."""
-        sample_tick = {
-            "open": 2000.0,
-            "high": 2040.0,
-            "low": 1980.0,
-            "close": 2010.0,
-            "ltp": 2015.0,
-            "volume": 800000,
-            "p_close": 2005.0,
-            "p_high": 2030.0,
-            "p_low": 1970.0,
-        }
-        res = evaluate_columns_in_order(BSA_FORMULA_COLUMNS, sample_tick)
-
-        # GANN = (high + low) / 2 = (2040 + 1980) / 2 = 2010
-        self.assertEqual(res.get("gann"), 2010.0)
-
-        # KD = (ltp - low) / (high - low) * 100 = (2015 - 1980) / (2040 - 1980) * 100 = 35 / 60 * 100 = 58.33
-        self.assertEqual(res.get("kd"), 58.33)
-
-        # INTRASIGNAL = IF(ltp > open, "BUY", "SELL") = 2015 > 2000 -> "BUY"
-        self.assertEqual(res.get("intrasignal"), "BUY")
-
-        # DIFF = p_high - p_low = 2030 - 1970 = 60
-        self.assertEqual(res.get("diff"), 60.0)
-
-        # BT1 = (open + 0.5) + (diff / 3) = 2000.5 + 20 = 2020.5
-        self.assertEqual(res.get("bt1"), 2020.5)
-
-        # BT2 = (open + 0.01) + (diff / 2) = 2000.01 + 30 = 2030.01
-        self.assertEqual(res.get("bt2"), 2030.01)
-
-        # BT3 = (open + 0.5) + diff = 2000.5 + 60 = 2060.5
-        self.assertEqual(res.get("bt3"), 2060.5)
-
-        # TGT1 for BUY = BT1 = 2020.5
-        self.assertEqual(res.get("tgt1"), 2020.5)
-        # TGT2 for BUY = BT2 = 2030.01
-        self.assertEqual(res.get("tgt2"), 2030.01)
-        # TGT3 for BUY = BT3 = 2060.5
-        self.assertEqual(res.get("tgt3"), 2060.5)
-
-        # ST1 = (open - 0.55) - (diff / 3) = 1999.45 - 20 = 1979.45
-        self.assertEqual(res.get("st1"), 1979.45)
-
-    def test_bsa_algo_target_selection(self):
-        """Verify that BsaAlgoRow configured with BSA target TGT1 uses BSA target and BSA entry correctly."""
-        import asyncio
-
-        engine = BsaAlgoEngine.get_instance()
-        row = BsaAlgoRow(
-            id=uuid.uuid4(),
-            user_id=uuid.uuid4(),
-            symbol="INFY",
-            exchange="NSE",
-            segment="NSE_EQ",
-            is_algo_active=True,
-            quantity=5,
-            number_of_trades=1,
-            trades_completed=0,
-            status="IDLE",
-            target_type="TGT1",
-        )
-        fake_db = AsyncMock()
-
-        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
-            mock_exec.return_value = 1502.0
-            asyncio.run(
-                engine._process_row(
-                    row=row,
-                    ltp=1502.0,
-                    signal="BUY",
-                    entry_calc=1502.25,
-                    sl_calc=1494.74,
-                    tgt1=1510.50,
-                    tgt2=1515.20,
-                    tgt3=1525.00,
-                    db=fake_db,
-                )
-            )
-
-        self.assertEqual(row.status, "IN_POSITION")
-        self.assertEqual(row.buy_price, 1502.0)
-        self.assertEqual(row.sell_tgt, 1510.50)
-        self.assertEqual(row.stop_loss, 1494.74)
 
     def test_bsa_algo_custom_target(self):
         """Verify that BsaAlgoRow with target_type='CUSTOM' executes and exits at custom target price."""
@@ -358,9 +382,9 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
                     signal="BUY",
                     entry_calc=3501.50,
                     sl_calc=3483.99,
-                    tgt1=3520.0,
-                    tgt2=3530.0,
-                    tgt3=3540.0,
+                    t1=3520.0,
+                    t2=3530.0,
+                    t3=3540.0,
                     db=fake_db,
                 )
             )
@@ -379,9 +403,9 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
                     signal="BUY",
                     entry_calc=3501.50,
                     sl_calc=3483.99,
-                    tgt1=3520.0,
-                    tgt2=3530.0,
-                    tgt3=3540.0,
+                    t1=3520.0,
+                    t2=3530.0,
+                    t3=3540.0,
                     db=fake_db,
                 )
             )

@@ -104,6 +104,21 @@ const T_HEADERS: Record<string, string> = {
   "T78.6": "T6", "T100": "T7", "T1.618": "T8", "T2.618": "T9",
 };
 
+function isOptionScript(symbol: string, segment?: string): boolean {
+  const seg = (segment || "").toUpperCase().trim();
+  if (["NSE_FNO", "NFO", "BSE_FNO", "BFO", "MCX", "OPTIDX", "OPTSTK", "FUTIDX", "FUTSTK"].includes(seg)) {
+    return true;
+  }
+  if (["NSE_EQ", "BSE_EQ", "EQ"].includes(seg)) {
+    return false;
+  }
+  const sym = (symbol || "").toUpperCase().trim();
+  if (/\b(CALL|PUT|CE|PE|FUT|OPT)\b/.test(sym) || /\d+\s*(CE|PE|CALL|PUT)\b/.test(sym)) {
+    return true;
+  }
+  return false;
+}
+
 function columnTitle(name: string) {
   return T_HEADERS[name] ?? name;
 }
@@ -350,19 +365,17 @@ export default function TerminalPage() {
   const activeBroker = (brokerAccounts || []).find((b: any) => b.is_active);
   const isPaperMode = !activeBroker || Boolean(activeBroker.paper_trading);
 
-  const { data: batchPresets } = useQuery({
-    queryKey: ["batch-presets"],
-    queryFn: () => api.get("/terminal/batch-presets").then(r => r.data as { equity: string; option: string; algo: string }),
-  });
-
   const { data: algoRows } = useQuery({
-    queryKey: ["algo-rows", batchPresets?.algo],
-    queryFn: () => api.get(`/terminal/algo-rows?batch=${batchPresets?.algo || "bsa"}`).then(r => r.data as any[]),
+    queryKey: ["algo-rows"],
+    queryFn: () => api.get("/terminal/algo-rows").then(r => r.data as any[]),
     refetchInterval: 2000,
   });
 
   const addAlgoRowMutation = useMutation({
-    mutationFn: (symbol: string) => api.post("/terminal/algo-rows", { symbol }),
+    mutationFn: (payload: string | { symbol: string; segment?: string; exchange?: string }) => {
+      const body = typeof payload === "string" ? { symbol: payload } : payload;
+      return api.post("/terminal/algo-rows", body);
+    },
     onSuccess: (res: any) => {
       toast.success(`Added ${res.data?.symbol || "symbol"} to Algo Window`);
       qc.invalidateQueries({ queryKey: ["algo-rows"] });
@@ -508,24 +521,6 @@ export default function TerminalPage() {
               >
                 FIBONACCI BATCH
               </button>
-              <button
-                className="exit-btn"
-                style={{
-                  fontSize: 11,
-                  padding: "6px 14px",
-                  color: "var(--yellow)",
-                  borderColor: "rgba(255,183,3,0.3)",
-                  background: "rgba(255,183,3,0.06)",
-                }}
-                onClick={() => {
-                  if (confirm("Apply BSA Formula batch (28 columns A=SYMBOL to AB=VOLUME) across tables?")) {
-                    applyBatchMutation.mutate({ batch: "BSA", book: "both" });
-                  }
-                }}
-                title="Apply BSA Formula Batch Across All Tables"
-              >
-                BSA BATCH (28 COLS)
-              </button>
             </>
           )}
           <button className="exit-btn" style={{fontSize:11, padding:"6px 14px",
@@ -626,10 +621,8 @@ export default function TerminalPage() {
         <TerminalTable
           title="EQUITY"
           book="equity"
-          activeBatch={batchPresets?.equity || "bsa"}
-          onSelectBatch={(batch: string) => applyBatchMutation.mutate({ batch, book: "equity" })}
           onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-          onAddToAlgo={(sym) => addAlgoRowMutation.mutate(sym)}
+          onAddToAlgo={(sym, seg, exch) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_EQ", exchange: exch || "NSE" })}
           instrMap={instrMap}
           signalMap={signalMap}
           strategyNames={strategyNames}
@@ -649,10 +642,8 @@ export default function TerminalPage() {
           <TerminalTable
             title="OPTIONS"
             book="option"
-            activeBatch={batchPresets?.option || "bsa"}
-            onSelectBatch={(batch: string) => applyBatchMutation.mutate({ batch, book: "option" })}
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym) => addAlgoRowMutation.mutate(sym)}
+            onAddToAlgo={(sym, seg, exch) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_FNO", exchange: exch || "NFO" })}
             instrMap={instrMap}
             signalMap={signalMap}
             strategyNames={strategyNames}
@@ -675,8 +666,6 @@ export default function TerminalPage() {
           <AlgoWindowTable
             algoRows={algoRows ?? []}
             isPaper={isPaperMode}
-            activeBatch={batchPresets?.algo || "bsa"}
-            onSelectBatch={(batch: string) => applyBatchMutation.mutate({ batch, book: "algo" })}
             onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
             onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
             onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
@@ -1166,24 +1155,6 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               >
                 APPLY FIBONACCI BATCH
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm("Apply BSA Formula batch? This configures all 28 columns in exact sequence A=SYMBOL to AB=VOLUME.")) {
-                    api.post("/terminal/columns/apply-batch", { batch: "BSA", book: "both" })
-                      .then(() => { toast.success("Applied BSA Formula batch (28 columns)"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
-                      .catch(() => toast.error("Failed to apply batch"));
-                  }
-                }}
-                style={{
-                  padding:"8px 16px", fontSize:11, cursor:"pointer",
-                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
-                  background:"rgba(255, 183, 3, 0.15)", border:"1px solid var(--yellow)",
-                  color:"var(--yellow)", borderRadius:3,
-                }}
-              >
-                APPLY BSA BATCH (28 COLS)
-              </button>
             </div>
           </div>
 
@@ -1458,12 +1429,57 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
   );
 }
 
-// ── Algo Trading Window Table (BSA & Fibonacci Automation + Custom Target) ───
+const TARGET_COLS = [
+  { key: "T1",  aliasKey: "t1",  altKey: "t11_8", label: "T1",  pctEquity: "0.118%",  pctOption: "11.8%",  color: "var(--green)" },
+  { key: "T2",  aliasKey: "t2",  altKey: "t23_8", label: "T2",  pctEquity: "0.238%",  pctOption: "23.8%",  color: "var(--green)" },
+  { key: "T3",  aliasKey: "t3",  altKey: "t38_2", label: "T3",  pctEquity: "0.382%",  pctOption: "38.2%",  color: "var(--green)" },
+  { key: "T4",  aliasKey: "t4",  altKey: "t50",   label: "T4",  pctEquity: "0.500%",  pctOption: "50.0%",  color: "var(--green)" },
+  { key: "T5",  aliasKey: "t5",  altKey: "t61_8", label: "T5",  pctEquity: "0.618%",  pctOption: "61.8%",  color: "var(--green)" },
+  { key: "T6",  aliasKey: "t6",  altKey: "t78_6", label: "T6",  pctEquity: "0.786%",  pctOption: "78.6%",  color: "var(--green)" },
+  { key: "T7",  aliasKey: "t7",  altKey: "t100",  label: "T7",  pctEquity: "1.000%",  pctOption: "100.0%", color: "var(--green)" },
+  { key: "T8",  aliasKey: "t8",  altKey: "t1_618", label: "T8", pctEquity: "1.618%", pctOption: "161.8%", color: "var(--green)" },
+  { key: "T9",  aliasKey: "t9",  altKey: "t2_618", label: "T9", pctEquity: "2.618%", pctOption: "261.8%", color: "var(--green)" },
+];
+
+function isTargetArmed(targetType: string, tcKey: string): boolean {
+  const tt = (targetType || "T1").toUpperCase().trim();
+  const k = tcKey.toUpperCase().trim();
+  if (tt === k) return true;
+  const map: Record<string, string> = {
+    "T11.8": "T1", "T11_8": "T1", "TGT1": "T1",
+    "T23.8": "T2", "T23_8": "T2", "TGT2": "T2",
+    "T38.2": "T3", "T38_2": "T3", "TGT3": "T3",
+    "T50": "T4",
+    "T61.8": "T5", "T61_8": "T5",
+    "T78.6": "T6", "T78_6": "T6",
+    "T100": "T7",
+    "T1.618": "T8", "T1_618": "T8",
+    "T2.618": "T9", "T2_618": "T9",
+  };
+  return map[tt] === k;
+}
+
+function normalizeTargetType(targetType: string): string {
+  const tt = (targetType || "T1").toUpperCase().trim();
+  if (tt === "CUSTOM" || tt === "KILL") return tt;
+  const map: Record<string, string> = {
+    "T11.8": "T1", "T11_8": "T1", "TGT1": "T1",
+    "T23.8": "T2", "T23_8": "T2", "TGT2": "T2",
+    "T38.2": "T3", "T38_2": "T3", "TGT3": "T3",
+    "T50": "T4",
+    "T61.8": "T5", "T61_8": "T5",
+    "T78.6": "T6", "T78_6": "T6",
+    "T100": "T7",
+    "T1.618": "T8", "T1_618": "T8",
+    "T2.618": "T9", "T2_618": "T9",
+  };
+  return map[tt] || tt;
+}
+
+// ── Algo Trading Window Table (Fibonacci Automation + Custom Target) ─────────
 function AlgoWindowTable({
   algoRows,
   isPaper = true,
-  activeBatch = "bsa",
-  onSelectBatch,
   onToggleAlgo,
   onUpdateRow,
   onDeleteRow,
@@ -1473,8 +1489,6 @@ function AlgoWindowTable({
 }: {
   algoRows: any[];
   isPaper?: boolean;
-  activeBatch?: string;
-  onSelectBatch?: (b: string) => void;
   onToggleAlgo: (id: string, currentActive: boolean) => void;
   onUpdateRow: (id: string, updates: any) => void;
   onDeleteRow: (id: string) => void;
@@ -1483,29 +1497,6 @@ function AlgoWindowTable({
   onKillRow: (id: string) => void;
 }) {
   const activeCount = algoRows.filter((r) => r.is_algo_active).length;
-
-  const isBsa = (activeBatch || "bsa").toLowerCase() === "bsa";
-  const isFib = (activeBatch || "bsa").toLowerCase() === "fibonacci";
-
-  const allTargetCols = [
-    { key: "TGT1",  label: "TGT1",  desc: "TGT1 (BSA BT1/ST1)",  type: "bsa", color: "var(--yellow)" },
-    { key: "TGT2",  label: "TGT2",  desc: "TGT2 (BSA BT2/ST2)",  type: "bsa", color: "var(--yellow)" },
-    { key: "TGT3",  label: "TGT3",  desc: "TGT3 (BSA BT3/ST3)",  type: "bsa", color: "var(--yellow)" },
-    { key: "T11.8", label: "T11.8", desc: "T11.8 (+0.118%)",     type: "fib", color: "var(--green)" },
-    { key: "T23.8", label: "T23.8", desc: "T23.8 (+0.238%)",     type: "fib", color: "var(--green)" },
-    { key: "T38.2", label: "T38.2", desc: "T38.2 (+0.382%)",     type: "fib", color: "var(--green)" },
-    { key: "T50",   label: "T50",   desc: "T50 (+0.500%)",       type: "fib", color: "var(--green)" },
-    { key: "T61.8", label: "T61.8", desc: "T61.8 (+0.618%)",     type: "fib", color: "var(--green)" },
-    { key: "T78.6", label: "T78.6", desc: "T78.6 (+0.786%)",     type: "fib", color: "var(--green)" },
-    { key: "T100",  label: "T100",  desc: "T100 (+1.000%)",      type: "fib", color: "var(--green)" },
-    { key: "T1.618", label: "T1.618", desc: "T1.618 (+1.618%)",  type: "fib", color: "var(--green)" },
-    { key: "T2.618", label: "T2.618", desc: "T2.618 (+2.618%)",  type: "fib", color: "var(--green)" },
-  ];
-
-  const visibleTargetCols = allTargetCols.filter((tc) => {
-    if (isFib) return tc.type === "fib";
-    return tc.type === "bsa";
-  });
 
   return (
     <div style={{ border: "1px solid var(--border)", background: "var(--surface)", marginBottom: 16 }}>
@@ -1529,52 +1520,6 @@ function AlgoWindowTable({
             {algoRows.length} SCRIPTS
           </span>
         </div>
-
-        {/* Separate formula buttons for Algo Window */}
-        {onSelectBatch && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9, letterSpacing: 1, color: "var(--muted)", fontWeight: 600, marginRight: 2 }}>
-              ALGO FORMULA:
-            </span>
-            {[
-              { id: "bsa", label: "BSA FORMULA", batch: "BSA" },
-              { id: "fibonacci", label: "FIBONACCI FORMULA", batch: "Fibonacci Formula" },
-            ].map((item) => {
-              const isCur = (activeBatch || "bsa").toLowerCase() === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelectBatch(item.batch)}
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    letterSpacing: 0.8,
-                    padding: "4px 10px",
-                    borderRadius: 3,
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                    border: isCur
-                      ? "1px solid var(--green)"
-                      : "1px solid var(--border)",
-                    background: isCur
-                      ? "rgba(0, 230, 118, 0.15)"
-                      : "rgba(255,255,255,0.03)",
-                    color: isCur
-                      ? "var(--green)"
-                      : "var(--muted)",
-                    boxShadow: isCur
-                      ? "0 0 8px rgba(0,230,118,0.25)"
-                      : "none",
-                  }}
-                  title={`Set Algo Window formulas to ${item.label}`}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       {algoRows.length === 0 ? (
@@ -1592,7 +1537,7 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 75 }}>ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
-                {visibleTargetCols.map((tc) => (
+                {TARGET_COLS.map((tc) => (
                   <th key={tc.key} style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: tc.color, textAlign: "right", minWidth: 65 }}>
                     {tc.label}
                   </th>
@@ -1613,23 +1558,8 @@ function AlgoWindowTable({
                 const isAuto = r.is_algo_active;
                 const inPos = r.status === "IN_POSITION";
                 const rowBg = inPos ? "rgba(0,230,118,0.04)" : "transparent";
-                const defaultTgt = isBsa ? "TGT1" : "T11.8";
-                const activeTgt = r.target_type || defaultTgt;
-
-                const targetValues: Record<string, any> = {
-                  "TGT1":  r.tgt1,
-                  "TGT2":  r.tgt2,
-                  "TGT3":  r.tgt3,
-                  "T11.8": r.t11_8,
-                  "T23.8": r.t23_8,
-                  "T38.2": r.t38_2,
-                  "T50":   r.t50,
-                  "T61.8": r.t61_8,
-                  "T78.6": r.t78_6,
-                  "T100":  r.t100,
-                  "T1.618": r.t1_618,
-                  "T2.618": r.t2_618,
-                };
+                const isOpt = isOptionScript(r.symbol, r.segment);
+                const normalizedTgt = normalizeTargetType(r.target_type);
 
                 return (
                   <tr
@@ -1662,10 +1592,10 @@ function AlgoWindowTable({
                       {r.sl != null ? `₹${Number(r.sl).toLocaleString()}` : "—"}
                     </td>
 
-                    {/* Target Columns for Active Batch */}
-                    {visibleTargetCols.map((tc) => {
-                      const isArmed = activeTgt === tc.key;
-                      const val = targetValues[tc.key];
+                    {/* Target Columns T1 through T9 */}
+                    {TARGET_COLS.map((tc) => {
+                      const isArmed = isTargetArmed(r.target_type, tc.key);
+                      const val = r[tc.aliasKey] ?? r[tc.altKey] ?? r[tc.key.toLowerCase()];
                       return (
                         <td
                           key={tc.key}
@@ -1689,7 +1619,7 @@ function AlgoWindowTable({
                     {/* Active Target Selector / Kill Switch Dropdown + Custom Target */}
                     <td style={{ padding: "8px 8px", textAlign: "center", minWidth: 145 }}>
                       <select
-                        value={r.target_type || defaultTgt}
+                        value={normalizedTgt}
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val === "KILL") {
@@ -1697,7 +1627,7 @@ function AlgoWindowTable({
                               onKillRow(r.id);
                             }
                           } else if (val === "CUSTOM") {
-                            const initCustom = r.custom_target || r.sell_tgt || (isBsa ? r.tgt1 : r.t11_8) || 0;
+                            const initCustom = r.custom_target || r.sell_tgt || r.t1 || r.t11_8 || 0;
                             onUpdateRow(r.id, { target_type: "CUSTOM", custom_target: initCustom, sell_tgt: initCustom });
                           } else {
                             onUpdateRow(r.id, { target_type: val });
@@ -1708,8 +1638,8 @@ function AlgoWindowTable({
                           padding: "5px 8px",
                           fontSize: 11,
                           background: r.target_type === "KILL" ? "rgba(255,40,80,0.25)" : "#141923",
-                          border: `1px solid ${r.target_type === "KILL" ? "var(--red)" : r.target_type === "CUSTOM" ? "#38bdf8" : isBsa ? "rgba(255, 183, 3, 0.4)" : "rgba(0, 230, 118, 0.4)"}`,
-                          color: r.target_type === "KILL" ? "#ff4d6d" : r.target_type === "CUSTOM" ? "#38bdf8" : isBsa ? "#fcd34d" : "#4ade80",
+                          border: `1px solid ${r.target_type === "KILL" ? "var(--red)" : r.target_type === "CUSTOM" ? "#38bdf8" : "rgba(0, 230, 118, 0.4)"}`,
+                          color: r.target_type === "KILL" ? "#ff4d6d" : r.target_type === "CUSTOM" ? "#38bdf8" : "#4ade80",
                           borderRadius: 3,
                           cursor: "pointer",
                           fontWeight: 700,
@@ -1717,11 +1647,15 @@ function AlgoWindowTable({
                         }}
                         title="Select active target level or trigger instant Kill Switch"
                       >
-                        {visibleTargetCols.map((tc) => (
-                          <option key={tc.key} value={tc.key} style={{ background: "#141923", color: isBsa ? "#fcd34d" : "#4ade80" }}>
-                            {tc.desc}
-                          </option>
-                        ))}
+                        {TARGET_COLS.map((tc) => {
+                          const sign = r.signal === "SELL" ? "-" : "+";
+                          const pct = isOpt ? tc.pctOption : tc.pctEquity;
+                          return (
+                            <option key={tc.key} value={tc.key} style={{ background: "#141923", color: "#4ade80" }}>
+                              {`${tc.label} (${sign}${pct})`}
+                            </option>
+                          );
+                        })}
                         <option value="CUSTOM" style={{ background: "#141923", color: "#38bdf8", fontWeight: 700 }}>CUSTOM TARGET</option>
                         <option value="KILL" style={{ background: "#2a1215", color: "#ff4d6d", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
                       </select>
@@ -1896,7 +1830,7 @@ function AlgoWindowTable({
                                 fontSize: 9,
                                 fontWeight: 700,
                                 cursor: "pointer",
-                                background: "rgba(255, 59, 87, 0.16)",
+                                background: "rgba(255, 68, 102, 0.16)",
                                 border: "1px solid var(--red)",
                                 color: "var(--red)",
                                 borderRadius: 3,
@@ -1907,92 +1841,86 @@ function AlgoWindowTable({
                             </button>
                           </>
                         )}
-
-                        {/* Dedicated Red KILL Switch Button */}
                         <button
                           type="button"
                           onClick={() => {
-                            if (confirm(`Activate KILL SWITCH for ${r.symbol}? This will immediately exit open positions at market price and turn off algo.`)) {
+                            if (confirm(`Kill position and pause algo for ${r.symbol}?`)) {
                               onKillRow(r.id);
                             }
                           }}
                           style={{
                             padding: "3px 6px",
                             fontSize: 9,
-                            fontWeight: 800,
+                            fontWeight: 700,
                             cursor: "pointer",
-                            background: "rgba(255, 40, 80, 0.18)",
-                            border: "1px solid var(--red)",
+                            background: "rgba(255, 68, 102, 0.12)",
+                            border: "1px solid rgba(255, 68, 102, 0.4)",
                             color: "var(--red)",
                             borderRadius: 3,
-                            letterSpacing: 0.5,
                           }}
-                          title={`Emergency Kill Switch for ${r.symbol} (Exits trade & turns algo off)`}
+                          title={`Emergency exit and stop algo for ${r.symbol}`}
                         >
                           KILL
                         </button>
                       </div>
                     </td>
 
-                    {/* STATUS / PROGRESS */}
+                    {/* STATUS */}
                     <td style={{ padding: "8px 8px", textAlign: "center" }}>
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
                         <span
                           className={`badge ${
                             r.status === "IN_POSITION"
                               ? "badge-green"
+                              : r.status === "COMPLETED"
+                              ? "badge-yellow"
                               : r.status === "WAITING_RETURN"
                               ? "badge-yellow"
-                              : r.status === "COMPLETED"
-                              ? "badge-gray"
                               : "badge-gray"
                           }`}
-                          style={{ fontSize: 9, letterSpacing: 0.5 }}
+                          style={{ fontSize: 9, fontWeight: 700 }}
                         >
-                          {r.status === "IN_POSITION"
-                            ? `IN BUY (${r.trades_completed + 1}/${r.number_of_trades})`
-                            : r.status === "WAITING_RETURN"
-                            ? `WAIT RET (${r.trades_completed}/${r.number_of_trades})`
-                            : r.status === "COMPLETED"
-                            ? `DONE (${r.trades_completed}/${r.number_of_trades})`
-                            : `IDLE (0/${r.number_of_trades})`}
+                          {r.status}
                         </span>
                         {r.trades_completed > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => onResetRow(r.id)}
+                          <span style={{ fontSize: 9, color: "var(--muted)" }}>
+                            {r.trades_completed}/{r.number_of_trades} trades
+                          </span>
+                        )}
+                        {r.pnl != null && r.pnl !== 0 && (
+                          <span
                             style={{
-                              padding: "2px 4px",
-                              fontSize: 9,
-                              background: "transparent",
-                              border: "1px solid var(--border)",
-                              color: "var(--muted)",
-                              cursor: "pointer",
-                              borderRadius: 2,
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: r.pnl >= 0 ? "var(--green)" : "var(--red)",
                             }}
-                            title="Reset trade counter"
                           >
-                            RESET
-                          </button>
+                            {r.pnl >= 0 ? "+" : ""}₹{Number(r.pnl).toLocaleString()}
+                          </span>
                         )}
                       </div>
                     </td>
-                    {/* Delete button */}
-                    <td style={{ padding: "8px 6px", textAlign: "center" }}>
+
+                    {/* Delete Script from Window */}
+                    <td style={{ padding: "8px 4px", textAlign: "center" }}>
                       <button
                         type="button"
-                        onClick={() => onDeleteRow(r.id)}
+                        onClick={() => {
+                          if (confirm(`Remove ${r.symbol} from Algo Window?`)) {
+                            onDeleteRow(r.id);
+                          }
+                        }}
                         style={{
                           background: "transparent",
                           border: "none",
-                          color: "var(--muted)",
+                          color: "rgba(255,68,102,0.6)",
                           cursor: "pointer",
-                          fontSize: 12,
-                          opacity: 0.6,
+                          fontSize: 13,
+                          padding: 2,
                         }}
-                        title="Remove from Algo Window"
+                        title={`Remove ${r.symbol} from Algo Window`}
                       >
-                        x
+                        ×
                       </button>
                     </td>
                   </tr>
@@ -2007,18 +1935,16 @@ function AlgoWindowTable({
 }
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
-function TerminalTable({ title, book = "equity", activeBatch = "bsa", onSelectBatch, watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
+function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
   onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, instrMap, signalMap, strategyNames }: {
   title: string;
   book?: "equity" | "option";
-  activeBatch?: string;
-  onSelectBatch?: (batch: string) => void;
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; columnValues: Record<string, Record<string, any>>; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
   onFormulaRow:(id:string,sym:string)=>void;
   onOrder:(sym:string,inst:{security_id:string,segment:string},prefillSide?:string,prefillPrice?:number|null)=>void;
-  onAddToAlgo:(sym:string)=>void;
+  onAddToAlgo:(sym:string, segment?: string, exchange?: string)=>void;
   instrMap: Record<string,{security_id:string,segment:string}>;
   signalMap: Record<string,Record<string,any>>;
   strategyNames: string[];
@@ -2043,52 +1969,6 @@ function TerminalTable({ title, book = "equity", activeBatch = "bsa", onSelectBa
             {watchlist.length} {title === "OPTIONS" ? "CONTRACTS" : "SYMBOLS"}
           </span>
         </div>
-
-        {/* Separate formula buttons for this watchlist */}
-        {isAdmin && onSelectBatch && (
-          <div style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap"}}>
-            <span style={{fontSize:9, letterSpacing:1, color:"var(--muted)", fontWeight:600, marginRight:2}}>
-              FORMULAS:
-            </span>
-            {[
-              { id: "bsa", label: "BSA (28 COLS)", batch: "BSA" },
-              { id: "fibonacci", label: "FIBONACCI", batch: "Fibonacci Formula" },
-            ].map((item) => {
-              const isCur = (activeBatch || "bsa").toLowerCase() === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelectBatch(item.batch)}
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    letterSpacing: 0.8,
-                    padding: "4px 10px",
-                    borderRadius: 3,
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                    border: isCur
-                      ? `1px solid ${title === "OPTIONS" ? "var(--yellow)" : "var(--green)"}`
-                      : "1px solid var(--border)",
-                    background: isCur
-                      ? (title === "OPTIONS" ? "rgba(255, 183, 3, 0.14)" : "rgba(0, 230, 118, 0.14)")
-                      : "rgba(255,255,255,0.03)",
-                    color: isCur
-                      ? (title === "OPTIONS" ? "var(--yellow)" : "var(--green)")
-                      : "var(--muted)",
-                    boxShadow: isCur
-                      ? (title === "OPTIONS" ? "0 0 8px rgba(255,183,3,0.2)" : "0 0 8px rgba(0,230,118,0.2)")
-                      : "none",
-                  }}
-                  title={`Apply ${item.label} to ${title === "OPTIONS" ? "Options" : "Equity"} Watchlist`}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
       </div>
       <div style={{overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:"var(--font)"}}>
@@ -2282,7 +2162,9 @@ function TerminalTable({ title, book = "equity", activeBatch = "bsa", onSelectBa
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onAddToAlgo(sym);
+                        const seg = book === "option" ? "NSE_FNO" : (instrMap[sym]?.segment || "NSE_EQ");
+                        const exch = book === "option" ? "NFO" : ((instrMap[sym] as any)?.exchange || "NSE");
+                        onAddToAlgo(sym, seg, exch);
                       }}
                       style={{
                         padding:"2px 7px", fontSize:10, fontWeight:700, cursor:"pointer",

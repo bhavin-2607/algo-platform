@@ -1,8 +1,8 @@
 """
-BSA Algo Row Model
-==================
+Algo Row Model
+==============
 Stores symbols added to the automated Algo Trading Window.
-Runs automated or manual trades using the BSA formula batch on DhanHQ.
+Runs automated or manual trades using Fibonacci formulas on DhanHQ.
 """
 from datetime import datetime
 import uuid
@@ -29,7 +29,7 @@ class BsaAlgoRow(Base):
     quantity          = Column(Integer, default=1)
     number_of_trades  = Column(Integer, default=1)       # 1 to 5 only
     trades_completed  = Column(Integer, default=0)
-    target_type       = Column(String, default="TGT1")    # TGT1, TGT2, TGT3, CUSTOM
+    target_type       = Column(String, default="T1")     # T1..T9, CUSTOM
     custom_target     = Column(Float, nullable=True)      # User-defined custom target level
 
     # State tracking
@@ -38,7 +38,7 @@ class BsaAlgoRow(Base):
     sell_tgt          = Column(Float, nullable=True)      # Target exit price
     stop_loss         = Column(Float, nullable=True)      # SL price
     entry_level       = Column(Float, nullable=True)      # Formula calculated entry price level
-    last_signal       = Column(String, nullable=True)     # Last BSA signal seen
+    last_signal       = Column(String, nullable=True)     # Last signal seen
     last_order_id     = Column(String, nullable=True)
     pnl               = Column(Float, nullable=True)
 

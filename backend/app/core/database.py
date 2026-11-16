@@ -40,6 +40,43 @@ async def init_db():
         await conn.exec_driver_sql(
             "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS custom_target FLOAT"
         )
+        # Ensure options contracts in bsa_algo_rows have segment = 'NSE_FNO'
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET segment = 'NSE_FNO'
+            WHERE segment IS DISTINCT FROM 'NSE_FNO'
+              AND (
+                symbol ILIKE '%CALL%' OR symbol ILIKE '%PUT%' OR
+                symbol ILIKE '% CE%' OR symbol ILIKE '% PE%' OR
+                symbol ILIKE '%-CE%' OR symbol ILIKE '%-PE%' OR
+                symbol ILIKE '%OPT%' OR symbol ILIKE '%FUT%'
+              )
+        """)
+        # Migrate legacy BSA target types to Fibonacci T1..T3
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'T1'
+            WHERE target_type = 'TGT1' OR target_type IS NULL OR target_type = ''
+        """)
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'T2'
+            WHERE target_type = 'TGT2'
+        """)
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'T3'
+            WHERE target_type = 'TGT3'
+        """)
+        # Remove legacy BSA formula columns
+        await conn.exec_driver_sql("""
+            DELETE FROM terminal_columns
+            WHERE name IN (
+                'INTRASIGNAL', 'OHLSIG', 'S-SIGNAL', 'DIFF',
+                'BT1', 'BT2', 'BT3', 'ST1', 'ST2', 'ST3',
+                'TGT1', 'TGT2', 'TGT3', 'P.CLOSE', 'P.HIGH', 'P.LOW'
+            )
+        """)
         await conn.exec_driver_sql(
             "UPDATE terminal_columns SET book = 'shared' WHERE formula IS NULL AND book IS DISTINCT FROM 'shared'"
         )
