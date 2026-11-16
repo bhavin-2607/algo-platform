@@ -29,7 +29,8 @@ class BsaAlgoRow(Base):
     quantity          = Column(Integer, default=1)
     number_of_trades  = Column(Integer, default=1)       # 1 to 5 only
     trades_completed  = Column(Integer, default=0)
-    target_type       = Column(String, default="TGT1")    # TGT1, TGT2, TGT3
+    target_type       = Column(String, default="TGT1")    # TGT1, TGT2, TGT3, CUSTOM
+    custom_target     = Column(Float, nullable=True)      # User-defined custom target level
 
     # State tracking
     status            = Column(String, default="IDLE")    # IDLE, WAITING_SIGNAL, IN_POSITION, WAITING_RETURN, COMPLETED, STOPPED_SL

@@ -327,6 +327,69 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
         self.assertEqual(row.sell_tgt, 1510.50)
         self.assertEqual(row.stop_loss, 1494.74)
 
+    def test_bsa_algo_custom_target(self):
+        """Verify that BsaAlgoRow with target_type='CUSTOM' executes and exits at custom target price."""
+        import asyncio
+
+        engine = BsaAlgoEngine.get_instance()
+        row = BsaAlgoRow(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            symbol="TCS",
+            exchange="NSE",
+            segment="NSE_EQ",
+            is_algo_active=True,
+            quantity=10,
+            number_of_trades=1,
+            trades_completed=0,
+            status="IDLE",
+            target_type="CUSTOM",
+            custom_target=3550.0,
+        )
+        fake_db = AsyncMock()
+
+        # Step 1: Entry
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = 3500.0
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=3500.0,
+                    signal="BUY",
+                    entry_calc=3501.50,
+                    sl_calc=3483.99,
+                    tgt1=3520.0,
+                    tgt2=3530.0,
+                    tgt3=3540.0,
+                    db=fake_db,
+                )
+            )
+
+        self.assertEqual(row.status, "IN_POSITION")
+        self.assertEqual(row.buy_price, 3500.0)
+        self.assertEqual(row.sell_tgt, 3550.0)
+
+        # Step 2: Exit when ltp reaches custom target (3550.0)
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = 3550.0
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=3550.0,
+                    signal="BUY",
+                    entry_calc=3501.50,
+                    sl_calc=3483.99,
+                    tgt1=3520.0,
+                    tgt2=3530.0,
+                    tgt3=3540.0,
+                    db=fake_db,
+                )
+            )
+
+        self.assertEqual(row.status, "COMPLETED")
+        self.assertEqual(row.trades_completed, 1)
+        self.assertEqual(row.pnl, 500.0)  # (3550 - 3500) * 10
+
 
 if __name__ == "__main__":
     unittest.main()

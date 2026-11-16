@@ -166,6 +166,10 @@ class BsaAlgoEngine:
         db: AsyncSession = None,
     ):
         target_map = {
+            "TGT1":   tgt1,
+            "TGT2":   tgt2,
+            "TGT3":   tgt3,
+            "CUSTOM": float(row.custom_target or row.sell_tgt or 0.0),
             "T11.8":  t11_8,
             "T23.8":  t23_8,
             "T38.2":  t38_2,
@@ -175,12 +179,13 @@ class BsaAlgoEngine:
             "T100":   t100,
             "T1.618": t1_618,
             "T2.618": t2_618,
-            "TGT1":   tgt1 if tgt1 > 0 else t11_8,
-            "TGT2":   tgt2 if tgt2 > 0 else t23_8,
-            "TGT3":   tgt3 if tgt3 > 0 else t38_2,
         }
-        chosen_target = target_map.get(row.target_type or "T11.8", t11_8)
-        if row.target_type in target_map and chosen_target > 0:
+        if row.target_type == "CUSTOM" and row.custom_target and row.custom_target > 0:
+            chosen_target = float(row.custom_target)
+        else:
+            chosen_target = target_map.get(row.target_type or "TGT1", tgt1)
+
+        if chosen_target > 0:
             row.sell_tgt = chosen_target
 
         # ── 1. Check Entry (State: IDLE or WAITING_SIGNAL) ───────────────────

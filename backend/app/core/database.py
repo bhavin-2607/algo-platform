@@ -38,6 +38,9 @@ async def init_db():
             "ALTER TABLE terminal_columns ADD COLUMN IF NOT EXISTS book VARCHAR DEFAULT 'equity'"
         )
         await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS custom_target FLOAT"
+        )
+        await conn.exec_driver_sql(
             "UPDATE terminal_columns SET book = 'shared' WHERE formula IS NULL AND book IS DISTINCT FROM 'shared'"
         )
         # Migrate any legacy shoonya accounts to dhan

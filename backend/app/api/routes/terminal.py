@@ -1082,6 +1082,7 @@ class BsaAlgoRowCreate(BaseModel):
     quantity:         int = 1
     number_of_trades: int = 1
     target_type:      str = "TGT1"
+    custom_target:    Optional[float] = None
 
 
 class BsaAlgoRowUpdate(BaseModel):
@@ -1089,6 +1090,8 @@ class BsaAlgoRowUpdate(BaseModel):
     quantity:         Optional[int] = None
     number_of_trades: Optional[int] = None
     target_type:      Optional[str] = None
+    custom_target:    Optional[float] = None
+    sell_tgt:         Optional[float] = None
 
 
 class BsaManualOrderPayload(BaseModel):
@@ -1193,6 +1196,7 @@ async def list_algo_rows(
             "stop_loss":        r.stop_loss,
             "entry_level":      r.entry_level,
             "target_type":      r.target_type or "TGT1",
+            "custom_target":    r.custom_target,
             "pnl":              live_pnl,
             "ltp":              ltp if ltp > 0 else None,
             "signal":           sig,
@@ -1261,6 +1265,7 @@ async def add_algo_row(
         is_algo_active    = False,  # Default to ALGO OFF (manual mode)
         status            = "IDLE",
         target_type       = payload.target_type or "TGT1",
+        custom_target     = payload.custom_target,
     )
     db.add(new_row)
     await db.commit()
@@ -1314,12 +1319,20 @@ async def update_algo_row(
                     row.status = "COMPLETED"
             else:
                 row.status = "IDLE"
+        elif tt == "CUSTOM":
+            row.target_type = "CUSTOM"
+            if payload.custom_target is not None:
+                row.custom_target = payload.custom_target
+                row.sell_tgt = payload.custom_target
+            elif payload.sell_tgt is not None:
+                row.custom_target = payload.sell_tgt
+                row.sell_tgt = payload.sell_tgt
         else:
             row.target_type = payload.target_type
             # Dynamically recalculate and update sell_tgt based on the new target selection
             from app.market.market_poller import get_poller
             from app.strategy.excel_formula_engine import evaluate_columns_in_order
-            from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+            from app.models.terminal_column import BSA_FORMULA_COLUMNS
             poller = get_poller()
             live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
             ltp = float(live.get("ltp") or row.buy_price or 0.0)
@@ -1331,21 +1344,12 @@ async def update_algo_row(
                 "p_high": live.get("p_high") or live.get("high") or ltp,
                 "p_low": live.get("p_low") or live.get("low") or ltp,
             }
-            fib_vals = evaluate_columns_in_order(FIBONACCI_FORMULA_COLUMNS, tick_data)
             bsa_vals = evaluate_columns_in_order(BSA_FORMULA_COLUMNS, tick_data)
             target_map = {
-                "TGT1":   float(bsa_vals.get("tgt1") or fib_vals.get("t11.8") or fib_vals.get("t11_8") or 0),
-                "TGT2":   float(bsa_vals.get("tgt2") or fib_vals.get("t23.8") or fib_vals.get("t23_8") or 0),
-                "TGT3":   float(bsa_vals.get("tgt3") or fib_vals.get("t38.2") or fib_vals.get("t38_2") or 0),
-                "T11.8":  float(fib_vals.get("t11.8") or fib_vals.get("t11_8") or 0),
-                "T23.8":  float(fib_vals.get("t23.8") or fib_vals.get("t23_8") or 0),
-                "T38.2":  float(fib_vals.get("t38.2") or fib_vals.get("t38_2") or 0),
-                "T50":    float(fib_vals.get("t50") or 0),
-                "T61.8":  float(fib_vals.get("t61.8") or fib_vals.get("t61_8") or 0),
-                "T78.6":  float(fib_vals.get("t78.6") or fib_vals.get("t78_6") or 0),
-                "T100":   float(fib_vals.get("t100") or 0),
-                "T1.618": float(fib_vals.get("t1.618") or fib_vals.get("t1_618") or 0),
-                "T2.618": float(fib_vals.get("t2.618") or fib_vals.get("t2_618") or 0),
+                "TGT1":   float(bsa_vals.get("tgt1") or 0),
+                "TGT2":   float(bsa_vals.get("tgt2") or 0),
+                "TGT3":   float(bsa_vals.get("tgt3") or 0),
+                "CUSTOM": float(row.custom_target or row.sell_tgt or 0),
             }
             new_tgt = target_map.get(payload.target_type)
             if new_tgt and new_tgt > 0:
@@ -1364,6 +1368,16 @@ async def update_algo_row(
                         row.is_algo_active = False
                     else:
                         row.status = "WAITING_RETURN"
+
+    if payload.custom_target is not None:
+        row.custom_target = payload.custom_target
+        if row.target_type == "CUSTOM":
+            row.sell_tgt = payload.custom_target
+
+    if payload.sell_tgt is not None:
+        row.sell_tgt = payload.sell_tgt
+        if row.target_type == "CUSTOM":
+            row.custom_target = payload.sell_tgt
 
     await db.commit()
     return {"status": "updated", "id": str(row.id), "is_algo_active": row.is_algo_active, "target_type": row.target_type, "sell_tgt": row.sell_tgt}
