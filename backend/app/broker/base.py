@@ -16,6 +16,7 @@ class OrderRequest:
     client_order_id: Optional[str] = None  # stable id for idempotent placement
     side: Optional[str] = None
     product_type: Optional[str] = None
+    segment: Optional[str] = None
 
     def __post_init__(self):
         if self.side:

@@ -26,3 +26,4 @@ __all__ = [
 ]
 from app.models.terminal_column import TerminalColumn
 from app.models.algo_row import BsaAlgoRow
+from app.models.copy_trade_log import CopyTradeLog

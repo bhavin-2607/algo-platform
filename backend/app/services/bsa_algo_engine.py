@@ -305,11 +305,18 @@ class BsaAlgoEngine:
 
         try:
             if adapter:
-                resp = await adapter.place_order(req)
-                if resp.status == "FAILED":
-                    logger.error(f"[ALGO EXEC ERROR] Dhan rejected {side} order for {row.symbol}: {resp.message}")
+                from app.services.dhan_fanout_engine import fanout_engine
+                fanout_res = await fanout_engine.execute_fanout_order(
+                    user_id=row.user_id,
+                    base_order=req,
+                    source="ALGO_AUTO",
+                    db=db,
+                )
+                master_info = fanout_res.get("master") or {}
+                if master_info.get("status") == "REJECTED":
+                    logger.error(f"[ALGO EXEC ERROR] Dhan rejected {side} order for {row.symbol}: {master_info.get('error_message')}")
                     return None
-                row.last_order_id = resp.broker_order_id or f"DHAN-{int(asyncio.get_event_loop().time()*1000)}"
+                row.last_order_id = master_info.get("broker_order_id") or f"DHAN-{int(asyncio.get_event_loop().time()*1000)}"
                 return fill_price
             else:
                 # Simulated paper execution

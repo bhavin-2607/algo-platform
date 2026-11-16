@@ -22,6 +22,7 @@ from app.api.routes import (
     backtest,
     formula,
     terminal,
+    copy_trading,
 )
 from app.api.routes.dhan_auth_route import router as dhan_auth_router
 from app.api.routes.settings import router as settings_router
@@ -81,6 +82,7 @@ app.include_router(market.router, prefix="/api/market", tags=["Market"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
 app.include_router(formula.router, prefix="/api/formula", tags=["Formula"])
 app.include_router(terminal.router, prefix="/api/terminal", tags=["Terminal"])
+app.include_router(copy_trading.router, prefix="/api/copy-trading", tags=["DhanCopyTrading"])
 app.include_router(dhan_auth_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 

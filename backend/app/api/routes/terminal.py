@@ -1681,15 +1681,24 @@ async def place_manual_order(
             price         = body.price if body.order_type == "LIMIT" else 0,
             trigger_price = body.trigger_price,
         )
-        response = await adapter.place_order(order)
-        if response.status == "FAILED":
-            raise HTTPException(status_code=502, detail=response.message)
+        from app.services.dhan_fanout_engine import fanout_engine
+        fanout_res = await fanout_engine.execute_fanout_order(
+            user_id=current_user.id,
+            base_order=order,
+            source="WATCHLIST_MANUAL",
+            db=db,
+        )
+        master_info = fanout_res.get("master") or {}
+        if master_info.get("status") == "REJECTED":
+            raise HTTPException(status_code=502, detail=master_info.get("error_message") or "Master order failed")
         return {
             "status":           "placed",
-            "order_id":         response.broker_order_id,
+            "order_id":         master_info.get("broker_order_id") or "DHAN-ORDER",
+            "batch_id":         fanout_res.get("batch_id"),
             "symbol":           body.symbol,
             "transaction_type": body.transaction_type,
             "quantity":         body.quantity,
+            "fanout":           fanout_res,
         }
     except HTTPException:
         raise

@@ -272,12 +272,23 @@ def renew_dhan_token():
             accounts = result.scalars().all()
             for account in accounts:
                 from app.broker.dhan import DhanAdapter
+                from app.core.security import decrypt_broker_token, encrypt_broker_token
+                token = settings.DHAN_ACCESS_TOKEN
+                if account.encrypted_access_token:
+                    try:
+                        token = decrypt_broker_token(account.encrypted_access_token)
+                    except Exception:
+                        pass
+                client_id = account.client_id or settings.DHAN_CLIENT_ID
                 adapter = DhanAdapter(
-                    client_id    = settings.DHAN_CLIENT_ID,
-                    access_token = settings.DHAN_ACCESS_TOKEN,
+                    client_id=client_id,
+                    access_token=token,
                 )
                 success = await adapter.renew_token()
-                logger.info(f"Dhan token renewal for {account.client_id}: {'OK' if success else 'FAILED'}")
+                if success and adapter._access_token:
+                    account.encrypted_access_token = encrypt_broker_token(adapter._access_token)
+                    await db.commit()
+                logger.info(f"Dhan token renewal for {client_id}: {'OK' if success else 'FAILED'}")
 
     _run(_renew)
 

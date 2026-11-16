@@ -13,6 +13,7 @@ import { api } from "@/utils/api";
 import { wsBase } from "@/utils/ws";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
+import { Link } from "react-router-dom";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TerminalRow {
@@ -371,6 +372,12 @@ export default function TerminalPage() {
     refetchInterval: 2000,
   });
 
+  const { data: copySummary } = useQuery({
+    queryKey: ["copy-trading-summary"],
+    queryFn: () => api.get("/copy-trading/accounts").then(r => r.data),
+    refetchInterval: 8000,
+  });
+
   const addAlgoRowMutation = useMutation({
     mutationFn: (payload: string | { symbol: string; segment?: string; exchange?: string }) => {
       const body = typeof payload === "string" ? { symbol: payload } : payload;
@@ -501,6 +508,29 @@ export default function TerminalPage() {
               boxShadow: !tokenOffline && isLive ? "0 0 6px var(--green)" : "none"}} />
             {tokenOffline ? "OFFLINE" : isLive ? "LIVE" : "POLLING"}
           </div>
+          {copySummary?.active_copy_count > 0 && (
+            <Link
+              to="/copy-trading"
+              style={{
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "3px 8px",
+                fontSize: 10,
+                fontWeight: 700,
+                color: "var(--green)",
+                background: "rgba(0, 230, 118, 0.1)",
+                border: "1px solid rgba(0, 230, 118, 0.4)",
+                borderRadius: 3,
+                letterSpacing: 0.5,
+              }}
+              title="Click to open Dhan Copy Trading Hub"
+            >
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--green)" }} />
+              COPY: {copySummary.active_copy_count} ACCOUNTS
+            </Link>
+          )}
           {isAdmin && (
             <>
               <button

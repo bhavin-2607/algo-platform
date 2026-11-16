@@ -98,6 +98,41 @@ async def init_db():
                 WHERE t.rnum > 1
             )
         """)
+        # Copy Trading Migrations
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS account_role VARCHAR DEFAULT 'CHILD'"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS account_name VARCHAR"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS is_copy_enabled BOOLEAN DEFAULT TRUE"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS fixed_qty_equity INTEGER DEFAULT 10"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS fixed_lots_fno INTEGER DEFAULT 1"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS max_loss_limit FLOAT"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS force_market_order BOOLEAN DEFAULT TRUE"
+        )
+        # Default first active broker account to MASTER if none exists
+        await conn.exec_driver_sql("""
+            UPDATE broker_accounts
+            SET account_role = 'MASTER', account_name = COALESCE(account_name, 'Primary Master Account')
+            WHERE id = (
+                SELECT id FROM broker_accounts
+                WHERE is_active = TRUE
+                ORDER BY created_at ASC
+                LIMIT 1
+            ) AND NOT EXISTS (
+                SELECT 1 FROM broker_accounts WHERE account_role = 'MASTER'
+            )
+        """)
 
 
 async def get_db():
