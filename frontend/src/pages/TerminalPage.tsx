@@ -417,11 +417,21 @@ export default function TerminalPage() {
     onError: (err: any) => toast.error(err?.response?.data?.detail || "Failed to activate kill switch"),
   });
 
+  const { data: batchPresets } = useQuery({
+    queryKey: ["batch-presets"],
+    queryFn: () => api.get("/terminal/batch-presets").then(r => r.data as { equity: string; option: string; algo: string }),
+  });
+
   const applyBatchMutation = useMutation({
-    mutationFn: (batch: string) => api.post("/terminal/columns/apply-batch", { batch, book: "both" }),
+    mutationFn: ({ batch, book }: { batch: string; book: string }) =>
+      api.post("/terminal/columns/apply-batch", { batch, book }),
     onSuccess: (res: any) => {
-      toast.success(`Applied ${res.data?.applied_batch || "formula"} batch`);
+      const bookLabel = res.data?.book === "algo" ? "Algo Window" : res.data?.books?.join(", ") || "watchlist";
+      toast.success(`Applied ${res.data?.applied_batch || "formula"} batch to ${bookLabel}`);
       qc.invalidateQueries({ queryKey: ["terminal-columns"] });
+      qc.invalidateQueries({ queryKey: ["column-values"] });
+      qc.invalidateQueries({ queryKey: ["batch-presets"] });
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
     },
     onError: () => toast.error("Failed to apply formula batch"),
   });
@@ -491,10 +501,10 @@ export default function TerminalPage() {
                 }}
                 onClick={() => {
                   if (confirm("Apply Fibonacci Formula batch across tables?")) {
-                    applyBatchMutation.mutate("Fibonacci Formula");
+                    applyBatchMutation.mutate({ batch: "Fibonacci Formula", book: "both" });
                   }
                 }}
-                title="Apply Fibonacci Formula Batch"
+                title="Apply Fibonacci Formula Batch Across All Tables"
               >
                 FIBONACCI BATCH
               </button>
@@ -509,10 +519,10 @@ export default function TerminalPage() {
                 }}
                 onClick={() => {
                   if (confirm("Apply BSA Formula batch (28 columns A=SYMBOL to AB=VOLUME) across tables?")) {
-                    applyBatchMutation.mutate("BSA");
+                    applyBatchMutation.mutate({ batch: "BSA", book: "both" });
                   }
                 }}
-                title="Apply BSA Formula Batch (28 Columns: A=SYMBOL to AB=VOLUME)"
+                title="Apply BSA Formula Batch Across All Tables"
               >
                 BSA BATCH (28 COLS)
               </button>
@@ -615,6 +625,9 @@ export default function TerminalPage() {
       {(viewMode === "all" || viewMode === "equity") && equitySymbols.length > 0 && (
         <TerminalTable
           title="EQUITY"
+          book="equity"
+          activeBatch={batchPresets?.equity || "bsa"}
+          onSelectBatch={(batch: string) => applyBatchMutation.mutate({ batch, book: "equity" })}
           onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
           onAddToAlgo={(sym) => addAlgoRowMutation.mutate(sym)}
           instrMap={instrMap}
@@ -635,6 +648,9 @@ export default function TerminalPage() {
         <div style={{marginTop: (viewMode === "all" && equitySymbols.length) ? 18 : 0}}>
           <TerminalTable
             title="OPTIONS"
+            book="option"
+            activeBatch={batchPresets?.option || "bsa"}
+            onSelectBatch={(batch: string) => applyBatchMutation.mutate({ batch, book: "option" })}
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
             onAddToAlgo={(sym) => addAlgoRowMutation.mutate(sym)}
             instrMap={instrMap}
@@ -659,6 +675,8 @@ export default function TerminalPage() {
           <AlgoWindowTable
             algoRows={algoRows ?? []}
             isPaper={isPaperMode}
+            activeBatch={batchPresets?.algo || "combined"}
+            onSelectBatch={(batch: string) => applyBatchMutation.mutate({ batch, book: "algo" })}
             onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
             onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
             onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
@@ -1166,6 +1184,24 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               >
                 APPLY BSA BATCH (28 COLS)
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm("Apply Combined Formula batch? This configures BSA columns and Fibonacci target extensions.")) {
+                    api.post("/terminal/columns/apply-batch", { batch: "Combined", book: "both" })
+                      .then(() => { toast.success("Applied Combined Formula batch"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                      .catch(() => toast.error("Failed to apply batch"));
+                  }
+                }}
+                style={{
+                  padding:"8px 16px", fontSize:11, cursor:"pointer",
+                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
+                  background:"rgba(0, 230, 118, 0.15)", border:"1px solid var(--green)",
+                  color:"var(--green)", borderRadius:3,
+                }}
+              >
+                APPLY COMBINED BATCH
+              </button>
             </div>
           </div>
 
@@ -1440,10 +1476,12 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
   );
 }
 
-// ── Algo Trading Window Table (BSA Automation) ───────────────────────────────
+// ── Algo Trading Window Table (BSA & Fibonacci Automation) ───────────────────
 function AlgoWindowTable({
   algoRows,
   isPaper = true,
+  activeBatch = "combined",
+  onSelectBatch,
   onToggleAlgo,
   onUpdateRow,
   onDeleteRow,
@@ -1453,6 +1491,8 @@ function AlgoWindowTable({
 }: {
   algoRows: any[];
   isPaper?: boolean;
+  activeBatch?: string;
+  onSelectBatch?: (b: string) => void;
   onToggleAlgo: (id: string, currentActive: boolean) => void;
   onUpdateRow: (id: string, updates: any) => void;
   onDeleteRow: (id: string) => void;
@@ -1462,16 +1502,41 @@ function AlgoWindowTable({
 }) {
   const activeCount = algoRows.filter((r) => r.is_algo_active).length;
 
+  const isBsa = (activeBatch || "combined").toLowerCase() === "bsa";
+  const isFib = (activeBatch || "combined").toLowerCase() === "fibonacci";
+
+  const allTargetCols = [
+    { key: "TGT1",  label: "TGT1",  desc: "TGT1 (BSA BT1/ST1)",  type: "bsa", color: "var(--yellow)" },
+    { key: "TGT2",  label: "TGT2",  desc: "TGT2 (BSA BT2/ST2)",  type: "bsa", color: "var(--yellow)" },
+    { key: "TGT3",  label: "TGT3",  desc: "TGT3 (BSA BT3/ST3)",  type: "bsa", color: "var(--yellow)" },
+    { key: "T11.8", label: "T11.8", desc: "T11.8 (+0.118%)",     type: "fib", color: "var(--green)" },
+    { key: "T23.8", label: "T23.8", desc: "T23.8 (+0.238%)",     type: "fib", color: "var(--green)" },
+    { key: "T38.2", label: "T38.2", desc: "T38.2 (+0.382%)",     type: "fib", color: "var(--green)" },
+    { key: "T50",   label: "T50",   desc: "T50 (+0.500%)",       type: "fib", color: "var(--green)" },
+    { key: "T61.8", label: "T61.8", desc: "T61.8 (+0.618%)",     type: "fib", color: "var(--green)" },
+    { key: "T78.6", label: "T78.6", desc: "T78.6 (+0.786%)",     type: "fib", color: "var(--green)" },
+    { key: "T100",  label: "T100",  desc: "T100 (+1.000%)",      type: "fib", color: "var(--green)" },
+    { key: "T1.618", label: "T1.618", desc: "T1.618 (+1.618%)",  type: "fib", color: "var(--green)" },
+    { key: "T2.618", label: "T2.618", desc: "T2.618 (+2.618%)",  type: "fib", color: "var(--green)" },
+  ];
+
+  const visibleTargetCols = allTargetCols.filter((tc) => {
+    if (isBsa) return tc.type === "bsa";
+    if (isFib) return tc.type === "fib";
+    return true; // combined shows all
+  });
+
   return (
     <div style={{ border: "1px solid var(--border)", background: "var(--surface)", marginBottom: 16 }}>
       {/* Header bar */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "rgba(0, 230, 118, 0.04)"
+        padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "rgba(0, 230, 118, 0.04)",
+        flexWrap: "wrap", gap: 10
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "var(--green)" }}>
-            ALGO TRADING WINDOW (BSA & FIBONACCI AUTOMATION)
+            ALGO TRADING WINDOW
           </span>
           <span className={`badge ${isPaper ? "badge-yellow" : "badge-green"}`} style={{ fontSize: 10, fontWeight: 700 }}>
             {isPaper ? "PAPER TRADING (SIMULATION)" : "LIVE DHAN BROKER"}
@@ -1483,11 +1548,53 @@ function AlgoWindowTable({
             {algoRows.length} SCRIPTS
           </span>
         </div>
-        <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", alignItems: "center", gap: 8 }}>
-          <span>ALGO ON = Automated Trading</span>
-          <span>·</span>
-          <span>Target Selection acts as Live / Kill Switch</span>
-        </div>
+
+        {/* Separate formula buttons for Algo Window */}
+        {onSelectBatch && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9, letterSpacing: 1, color: "var(--muted)", fontWeight: 600, marginRight: 2 }}>
+              ALGO FORMULA:
+            </span>
+            {[
+              { id: "bsa", label: "BSA FORMULA", batch: "BSA" },
+              { id: "fibonacci", label: "FIBONACCI FORMULA", batch: "Fibonacci Formula" },
+              { id: "combined", label: "COMBINED FORMULAS", batch: "Combined" },
+            ].map((item) => {
+              const isCur = (activeBatch || "combined").toLowerCase() === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelectBatch(item.batch)}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 0.8,
+                    padding: "4px 10px",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    border: isCur
+                      ? "1px solid var(--green)"
+                      : "1px solid var(--border)",
+                    background: isCur
+                      ? "rgba(0, 230, 118, 0.15)"
+                      : "rgba(255,255,255,0.03)",
+                    color: isCur
+                      ? "var(--green)"
+                      : "var(--muted)",
+                    boxShadow: isCur
+                      ? "0 0 8px rgba(0,230,118,0.25)"
+                      : "none",
+                  }}
+                  title={`Set Algo Window formulas to ${item.label}`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {algoRows.length === 0 ? (
@@ -1505,18 +1612,11 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 75 }}>ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--yellow)", textAlign: "right", minWidth: 65 }}>TGT1</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--yellow)", textAlign: "right", minWidth: 65 }}>TGT2</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--yellow)", textAlign: "right", minWidth: 65 }}>TGT3</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T11.8</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T23.8</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T38.2</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T50</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T61.8</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T78.6</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T100</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T1.618</th>
-                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: "var(--green)", textAlign: "right", minWidth: 70 }}>T2.618</th>
+                {visibleTargetCols.map((tc) => (
+                  <th key={tc.key} style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: tc.color, textAlign: "right", minWidth: 65 }}>
+                    {tc.label}
+                  </th>
+                ))}
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 130 }}>TARGET / KILL SWITCH</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>ALGO ON/OFF</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
@@ -1533,22 +1633,22 @@ function AlgoWindowTable({
                 const isAuto = r.is_algo_active;
                 const inPos = r.status === "IN_POSITION";
                 const rowBg = inPos ? "rgba(0,230,118,0.04)" : "transparent";
-                const activeTgt = r.target_type || "TGT1";
+                const activeTgt = r.target_type || (isBsa ? "TGT1" : "T11.8");
 
-                const targets = [
-                  { key: "TGT1",  val: r.tgt1 },
-                  { key: "TGT2",  val: r.tgt2 },
-                  { key: "TGT3",  val: r.tgt3 },
-                  { key: "T11.8", val: r.t11_8 },
-                  { key: "T23.8", val: r.t23_8 },
-                  { key: "T38.2", val: r.t38_2 },
-                  { key: "T50",   val: r.t50 },
-                  { key: "T61.8", val: r.t61_8 },
-                  { key: "T78.6", val: r.t78_6 },
-                  { key: "T100",  val: r.t100 },
-                  { key: "T1.618", val: r.t1_618 },
-                  { key: "T2.618", val: r.t2_618 },
-                ];
+                const targetValues: Record<string, any> = {
+                  "TGT1":  r.tgt1,
+                  "TGT2":  r.tgt2,
+                  "TGT3":  r.tgt3,
+                  "T11.8": r.t11_8,
+                  "T23.8": r.t23_8,
+                  "T38.2": r.t38_2,
+                  "T50":   r.t50,
+                  "T61.8": r.t61_8,
+                  "T78.6": r.t78_6,
+                  "T100":  r.t100,
+                  "T1.618": r.t1_618,
+                  "T2.618": r.t2_618,
+                };
 
                 return (
                   <tr
@@ -1581,12 +1681,13 @@ function AlgoWindowTable({
                       {r.sl != null ? `₹${Number(r.sl).toLocaleString()}` : "—"}
                     </td>
 
-                    {/* All 9 Target Columns */}
-                    {targets.map((tgt) => {
-                      const isArmed = activeTgt === tgt.key;
+                    {/* Dynamic Target Columns matching selected batch */}
+                    {visibleTargetCols.map((tc) => {
+                      const isArmed = activeTgt === tc.key;
+                      const val = targetValues[tc.key];
                       return (
                         <td
-                          key={tgt.key}
+                          key={tc.key}
                           style={{
                             padding: "8px 6px",
                             textAlign: "right",
@@ -1597,9 +1698,9 @@ function AlgoWindowTable({
                             borderRight: isArmed ? "1px solid rgba(0, 230, 118, 0.25)" : "none",
                             borderLeft: isArmed ? "1px solid rgba(0, 230, 118, 0.25)" : "none",
                           }}
-                          title={isArmed ? `Armed Target: ${tgt.key}` : tgt.key}
+                          title={isArmed ? `Armed Target: ${tc.key}` : tc.key}
                         >
-                          {tgt.val != null ? `₹${Number(tgt.val).toLocaleString()}` : "—"}
+                          {val != null ? `₹${Number(val).toLocaleString()}` : "—"}
                         </td>
                       );
                     })}
@@ -1607,7 +1708,7 @@ function AlgoWindowTable({
                     {/* Active Target Selector / Kill Switch Dropdown */}
                     <td style={{ padding: "8px 8px", textAlign: "center" }}>
                       <select
-                        value={r.target_type || "T11.8"}
+                        value={r.target_type || (isBsa ? "TGT1" : "T11.8")}
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val === "KILL") {
@@ -1630,18 +1731,11 @@ function AlgoWindowTable({
                         }}
                         title="Select active target level or trigger instant Kill Switch"
                       >
-                        <option value="TGT1">TGT1 (BSA BT1/ST1)</option>
-                        <option value="TGT2">TGT2 (BSA BT2/ST2)</option>
-                        <option value="TGT3">TGT3 (BSA BT3/ST3)</option>
-                        <option value="T11.8">T11.8 (+0.118%)</option>
-                        <option value="T23.8">T23.8 (+0.238%)</option>
-                        <option value="T38.2">T38.2 (+0.382%)</option>
-                        <option value="T50">T50 (+0.500%)</option>
-                        <option value="T61.8">T61.8 (+0.618%)</option>
-                        <option value="T78.6">T78.6 (+0.786%)</option>
-                        <option value="T100">T100 (+1.000%)</option>
-                        <option value="T1.618">T1.618 (+1.618%)</option>
-                        <option value="T2.618">T2.618 (+2.618%)</option>
+                        {visibleTargetCols.map((tc) => (
+                          <option key={tc.key} value={tc.key}>
+                            {tc.desc}
+                          </option>
+                        ))}
                         <option value="KILL" style={{ color: "var(--red)", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
                       </select>
                     </td>
@@ -1879,9 +1973,12 @@ function AlgoWindowTable({
 }
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
-function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
+function TerminalTable({ title, book = "equity", activeBatch = "bsa", onSelectBatch, watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
   onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, instrMap, signalMap, strategyNames }: {
   title: string;
+  book?: "equity" | "option";
+  activeBatch?: string;
+  onSelectBatch?: (batch: string) => void;
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; columnValues: Record<string, Record<string, any>>; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
@@ -1898,7 +1995,8 @@ function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, co
     <div style={{border:"1px solid var(--border)", background:"var(--surface)", marginBottom:16}}>
       <div style={{
         display:"flex", alignItems:"center", justifyContent:"space-between",
-        padding:"10px 14px", borderBottom:"1px solid var(--border)", background:"rgba(0,0,0,0.18)"
+        padding:"10px 14px", borderBottom:"1px solid var(--border)", background:"rgba(0,0,0,0.18)",
+        flexWrap: "wrap", gap: 10
       }}>
         <div style={{display:"flex", alignItems:"center", gap:8}}>
           <span style={{
@@ -1911,6 +2009,53 @@ function TerminalTable({ title, watchlist, liveData, termRowMap, visibleCols, co
             {watchlist.length} {title === "OPTIONS" ? "CONTRACTS" : "SYMBOLS"}
           </span>
         </div>
+
+        {/* Separate formula buttons for this watchlist */}
+        {isAdmin && onSelectBatch && (
+          <div style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap"}}>
+            <span style={{fontSize:9, letterSpacing:1, color:"var(--muted)", fontWeight:600, marginRight:2}}>
+              FORMULAS:
+            </span>
+            {[
+              { id: "bsa", label: "BSA (28 COLS)", batch: "BSA" },
+              { id: "fibonacci", label: "FIBONACCI", batch: "Fibonacci Formula" },
+              { id: "combined", label: "COMBINED", batch: "Combined" },
+            ].map((item) => {
+              const isCur = (activeBatch || "bsa").toLowerCase() === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelectBatch(item.batch)}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 0.8,
+                    padding: "4px 10px",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    border: isCur
+                      ? `1px solid ${title === "OPTIONS" ? "var(--yellow)" : "var(--green)"}`
+                      : "1px solid var(--border)",
+                    background: isCur
+                      ? (title === "OPTIONS" ? "rgba(255, 183, 3, 0.14)" : "rgba(0, 230, 118, 0.14)")
+                      : "rgba(255,255,255,0.03)",
+                    color: isCur
+                      ? (title === "OPTIONS" ? "var(--yellow)" : "var(--green)")
+                      : "var(--muted)",
+                    boxShadow: isCur
+                      ? (title === "OPTIONS" ? "0 0 8px rgba(255,183,3,0.2)" : "0 0 8px rgba(0,230,118,0.2)")
+                      : "none",
+                  }}
+                  title={`Apply ${item.label} to ${title === "OPTIONS" ? "Options" : "Equity"} Watchlist`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div style={{overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:"var(--font)"}}>

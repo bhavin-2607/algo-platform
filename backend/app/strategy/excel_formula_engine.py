@@ -294,6 +294,12 @@ def evaluate_columns_in_order(columns: list[dict], tick: dict) -> dict:
     if "p_low" not in enriched or enriched["p_low"] is None:
         enriched["p_low"] = float(enriched.get("low") or enriched.get("ltp") or 0)
 
+    # If previous day range is flat, fallback to today's high and low for DIFF
+    if float(enriched.get("p_high", 0)) <= float(enriched.get("p_low", 0)):
+        if tick.get("high") and tick.get("low") and float(tick["high"]) > float(tick["low"]):
+            enriched["p_high"] = float(tick["high"])
+            enriched["p_low"] = float(tick["low"])
+
     # Multi-pass convergence loop (stops early once values stabilize)
     for _ in range(4):
         changed = False

@@ -68,27 +68,45 @@ class BsaAlgoEngine:
         if not active_rows:
             return
 
-        from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+        from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS, COMBINED_FORMULA_COLUMNS
+        from app.strategy.excel_formula_engine import formula_for_book
+
+        is_option = any(r.segment == "NSE_FNO" for r in active_rows) or any(s in symbol_upper for s in ("CE", "PE", "FUT"))
 
         # Calculate live formulas for this symbol and tick
-        fib_vals = evaluate_columns_in_order(FIBONACCI_FORMULA_COLUMNS, tick)
-        bsa_vals = evaluate_columns_in_order(BSA_FORMULA_COLUMNS, tick)
+        fib_cols = [
+            {**c, "formula": formula_for_book(c["name"], c["formula"], "option" if is_option else "equity")}
+            for c in FIBONACCI_FORMULA_COLUMNS
+        ]
+        comb_cols = [
+            {**c, "formula": formula_for_book(c["name"], c["formula"], "option" if is_option else "equity") if c.get("formula") else None}
+            for c in COMBINED_FORMULA_COLUMNS
+        ]
 
-        signal = str(bsa_vals.get("intrasignal") or bsa_vals.get("s_signal") or fib_vals.get("signal") or fib_vals.get("ssig") or "").upper()
-        entry_calc = float(bsa_vals.get("entry") or fib_vals.get("entry") or ltp)
-        sl_calc = float(bsa_vals.get("sl") or fib_vals.get("sl") or (entry_calc * 0.995))
-        tgt1_calc = float(bsa_vals.get("tgt1") or 0)
-        tgt2_calc = float(bsa_vals.get("tgt2") or 0)
-        tgt3_calc = float(bsa_vals.get("tgt3") or 0)
-        t11_8_calc = float(fib_vals.get("t11.8") or fib_vals.get("t11_8") or (entry_calc * 1.00118))
-        t23_8_calc = float(fib_vals.get("t23.8") or fib_vals.get("t23_8") or (entry_calc * 1.00238))
-        t38_2_calc = float(fib_vals.get("t38.2") or fib_vals.get("t38_2") or (entry_calc * 1.00382))
-        t50_calc = float(fib_vals.get("t50") or (entry_calc * 1.005))
-        t61_8_calc = float(fib_vals.get("t61.8") or fib_vals.get("t61_8") or (entry_calc * 1.00618))
-        t78_6_calc = float(fib_vals.get("t78.6") or fib_vals.get("t78_6") or (entry_calc * 1.00786))
-        t100_calc = float(fib_vals.get("t100") or (entry_calc * 1.01))
-        t1_618_calc = float(fib_vals.get("t1.618") or fib_vals.get("t1_618") or (entry_calc * 1.01618))
-        t2_618_calc = float(fib_vals.get("t2.618") or fib_vals.get("t2_618") or (entry_calc * 1.02618))
+        comb_vals = evaluate_columns_in_order(comb_cols, tick)
+        bsa_vals = comb_vals
+        fib_vals = comb_vals
+
+        signal = str(comb_vals.get("intrasignal") or comb_vals.get("s_signal") or comb_vals.get("signal") or "BUY").upper()
+        is_buy = (signal == "BUY")
+        sign = 1 if is_buy else -1
+        mult = 100.0 if is_option else 1.0
+
+        entry_calc = float(comb_vals.get("entry") or ltp)
+        sl_calc = float(comb_vals.get("sl") or round(entry_calc * (0.995 if is_buy else 1.005), 2))
+        tgt1_calc = float(comb_vals.get("tgt1") or (comb_vals.get("bt1") if is_buy else comb_vals.get("st1")) or 0)
+        tgt2_calc = float(comb_vals.get("tgt2") or (comb_vals.get("bt2") if is_buy else comb_vals.get("st2")) or 0)
+        tgt3_calc = float(comb_vals.get("tgt3") or (comb_vals.get("bt3") if is_buy else comb_vals.get("st3")) or 0)
+
+        t11_8_calc = float(comb_vals.get("t11.8") or comb_vals.get("t11_8") or round(entry_calc * (1 + sign * 0.00118 * mult), 2))
+        t23_8_calc = float(comb_vals.get("t23.8") or comb_vals.get("t23_8") or round(entry_calc * (1 + sign * 0.00238 * mult), 2))
+        t38_2_calc = float(comb_vals.get("t38.2") or comb_vals.get("t38_2") or round(entry_calc * (1 + sign * 0.00382 * mult), 2))
+        t50_calc = float(comb_vals.get("t50") or round(entry_calc * (1 + sign * 0.005 * mult), 2))
+        t61_8_calc = float(comb_vals.get("t61.8") or comb_vals.get("t61_8") or round(entry_calc * (1 + sign * 0.00618 * mult), 2))
+        t78_6_calc = float(comb_vals.get("t78.6") or comb_vals.get("t78_6") or round(entry_calc * (1 + sign * 0.00786 * mult), 2))
+        t100_calc = float(comb_vals.get("t100") or round(entry_calc * (1 + sign * 0.01 * mult), 2))
+        t1_618_calc = float(comb_vals.get("t1.618") or comb_vals.get("t1_618") or round(entry_calc * (1 + sign * 0.01618 * mult), 2))
+        t2_618_calc = float(comb_vals.get("t2.618") or comb_vals.get("t2_618") or round(entry_calc * (1 + sign * 0.02618 * mult), 2))
 
         for row in active_rows:
             try:

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import uuid
 
 from app.strategy.excel_formula_engine import evaluate_columns_in_order
-from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS, COMBINED_FORMULA_COLUMNS
 from app.models.algo_row import BsaAlgoRow
 from app.services.bsa_algo_engine import BsaAlgoEngine
 from app.broker.base import OrderRequest
@@ -285,6 +285,43 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
 
         # ST1 = (open - 0.55) - (diff / 3) = 1999.45 - 20 = 1979.45
         self.assertEqual(res.get("st1"), 1979.45)
+
+    def test_combined_formula_evaluation(self):
+        """Verify that COMBINED_FORMULA_COLUMNS evaluates both BSA targets and Fibonacci targets consistently."""
+        sample_tick = {
+            "open": 100.0,
+            "high": 105.0,
+            "low": 98.0,
+            "close": 101.0,
+            "ltp": 102.0,
+            "volume": 500000,
+            "p_close": 99.0,
+            "p_high": 103.0,
+            "p_low": 97.0,
+        }
+        res = evaluate_columns_in_order(COMBINED_FORMULA_COLUMNS, sample_tick)
+
+        self.assertEqual(res.get("intrasignal"), "BUY")
+        self.assertIsNotNone(res.get("entry"))
+        self.assertIsNotNone(res.get("sl"))
+        # In BUY: SL must be below entry
+        self.assertTrue(res.get("sl") < res.get("entry"))
+
+        # BSA targets
+        self.assertIsNotNone(res.get("tgt1"))
+        self.assertIsNotNone(res.get("tgt2"))
+        self.assertIsNotNone(res.get("tgt3"))
+        self.assertTrue(res.get("tgt1") > res.get("entry"))
+        self.assertTrue(res.get("tgt2") > res.get("tgt1") or res.get("tgt2") > res.get("entry"))
+        self.assertTrue(res.get("tgt3") > res.get("tgt2"))
+
+        # Fibonacci targets must all be strictly greater than entry on BUY
+        self.assertIsNotNone(res.get("t11.8"))
+        self.assertTrue(res.get("t11.8") > res.get("entry"))
+        self.assertTrue(res.get("t23.8") > res.get("t11.8"))
+        self.assertTrue(res.get("t38.2") > res.get("t23.8"))
+        self.assertTrue(res.get("t50") > res.get("t38.2"))
+        self.assertTrue(res.get("t100") > res.get("t50"))
 
 
 if __name__ == "__main__":

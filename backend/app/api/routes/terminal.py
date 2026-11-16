@@ -927,9 +927,58 @@ async def validate_column_formula(
 
 # ── Batch Switching ──────────────────────────────────────────────────────────
 
+# ── Batch Switching & Presets ───────────────────────────────────────────────
+
 class ApplyBatchRequest(BaseModel):
-    batch: str   # "BSA" or "Fibonacci Formula"
-    book: str = "both"  # "equity", "option", or "both"
+    batch: str          # "BSA", "Fibonacci Formula", "Combined"
+    book: str = "both"  # "equity", "option", "algo", or "both"
+
+
+_user_batch_presets: dict[str, dict[str, str]] = {}
+
+
+async def _get_batch_presets(user_id: UUID) -> dict[str, str]:
+    defaults = {"equity": "bsa", "option": "bsa", "algo": "combined"}
+    try:
+        import redis.asyncio as aioredis
+        from app.core.config import settings
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        data = await r.hgetall(f"batch_presets:{user_id}")
+        await r.aclose()
+        if data:
+            return {**defaults, **data}
+    except Exception:
+        pass
+    return _user_batch_presets.get(str(user_id), defaults)
+
+
+async def _save_batch_preset(user_id: UUID, book: str, batch: str):
+    b_key = "combined" if "combine" in batch.lower() else "bsa" if "bsa" in batch.lower() else "fibonacci"
+    try:
+        import redis.asyncio as aioredis
+        from app.core.config import settings
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        if book == "both":
+            await r.hset(f"batch_presets:{user_id}", mapping={"equity": b_key, "option": b_key})
+        else:
+            await r.hset(f"batch_presets:{user_id}", book, b_key)
+        await r.aclose()
+    except Exception:
+        pass
+    curr = _user_batch_presets.setdefault(str(user_id), {"equity": "bsa", "option": "bsa", "algo": "combined"})
+    if book == "both":
+        curr["equity"] = b_key
+        curr["option"] = b_key
+    else:
+        curr[book] = b_key
+
+
+@router.get("/batch-presets")
+async def get_batch_presets(
+    current_user: User = Depends(get_current_user),
+):
+    """Return active formula batch for equity, option, and algo window."""
+    return await _get_batch_presets(current_user.id)
 
 
 @router.post("/columns/apply-batch")
@@ -939,72 +988,72 @@ async def apply_formula_batch(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Apply a complete formula batch (BSA or Fibonacci Formula) across terminal tables.
+    Apply a complete formula batch (BSA, Fibonacci Formula, or Combined) across terminal tables or algo window.
     """
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
     from sqlalchemy import delete as sa_delete
-    from app.models.terminal_column import TerminalColumn, DEFAULT_COLUMNS, FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+    from app.models.terminal_column import (
+        TerminalColumn,
+        DEFAULT_COLUMNS,
+        FIBONACCI_FORMULA_COLUMNS,
+        BSA_FORMULA_COLUMNS,
+        COMBINED_FORMULA_COLUMNS,
+    )
     from app.strategy.excel_formula_engine import formula_for_book
 
+    batch_key = "combined" if "combine" in payload.batch.lower() else "bsa" if "bsa" in payload.batch.lower() else "fibonacci"
+
+    # If applying to algo window only, persist preference and return
+    if payload.book == "algo":
+        await _save_batch_preset(current_user.id, "algo", payload.batch)
+        return {"status": "ok", "applied_batch": batch_key, "book": "algo"}
+
     books = ["equity", "option"] if payload.book == "both" else [payload.book]
+    await _save_batch_preset(current_user.id, payload.book, payload.batch)
 
-    # Clear existing columns for current user and books
-    await db.execute(
-        sa_delete(TerminalColumn).where(
-            TerminalColumn.user_id == current_user.id,
-            TerminalColumn.book.in_(books + ["shared"]),
+    # Clear existing columns strictly for target books to ensure watchlists stay independent
+    for b in books:
+        await db.execute(
+            sa_delete(TerminalColumn).where(
+                TerminalColumn.user_id == current_user.id,
+                TerminalColumn.book.in_([b, "shared"]),
+            )
         )
-    )
-
-    batch_key = "bsa" if "bsa" in payload.batch.lower() else "fibonacci"
 
     if batch_key == "bsa":
         # Apply BSA Formula batch (28 columns in exact sequence A=SYMBOL to AB=VOLUME)
-        default_cols = [c for c in BSA_FORMULA_COLUMNS if c.get("col_type") == "default"]
-        for d in default_cols:
-            db.add(TerminalColumn(
-                user_id     = current_user.id,
-                name        = d["name"],
-                col_key     = d["col_key"],
-                col_type    = d["col_type"],
-                col_order   = d["col_order"],
-                width       = d["width"],
-                is_visible  = True,
-                color_rules = d.get("color_rules"),
-                book        = "shared",
-            ))
-        formula_cols = [c for c in BSA_FORMULA_COLUMNS if c.get("col_type") != "default"]
         for b in books:
-            for d in formula_cols:
+            for d in BSA_FORMULA_COLUMNS:
+                is_def = d.get("col_type") == "default"
                 db.add(TerminalColumn(
                     user_id     = current_user.id,
                     name        = d["name"],
                     col_key     = d.get("col_key") or d["name"].lower(),
-                    col_type    = "custom",
-                    formula     = d["formula"],
+                    col_type    = "default" if is_def else "custom",
+                    formula     = None if is_def else d.get("formula"),
                     col_order   = d["col_order"],
                     width       = d.get("width", 85),
                     is_visible  = True,
                     color_rules = d.get("color_rules"),
                     book        = b,
                 ))
-    else:
+    elif batch_key == "fibonacci":
         # Apply Fibonacci Formula batch: Default columns + Fibonacci strategy formulas
-        for d in DEFAULT_COLUMNS:
-            db.add(TerminalColumn(
-                user_id     = current_user.id,
-                name        = d["name"],
-                col_key     = d["col_key"],
-                col_type    = d["col_type"],
-                col_order   = d["col_order"],
-                width       = d["width"],
-                is_visible  = True,
-                color_rules = d["color_rules"],
-                book        = "shared",
-            ))
         for b in books:
+            for d in DEFAULT_COLUMNS:
+                db.add(TerminalColumn(
+                    user_id     = current_user.id,
+                    name        = d["name"],
+                    col_key     = d["col_key"],
+                    col_type    = d["col_type"],
+                    col_order   = d["col_order"],
+                    width       = d["width"],
+                    is_visible  = True,
+                    color_rules = d.get("color_rules"),
+                    book        = b,
+                ))
             for d in FIBONACCI_FORMULA_COLUMNS:
                 formula_text = formula_for_book(d["name"], d["formula"], b)
                 db.add(TerminalColumn(
@@ -1015,6 +1064,25 @@ async def apply_formula_batch(
                     formula     = formula_text,
                     col_order   = d["col_order"],
                     width       = d.get("width", 80),
+                    is_visible  = True,
+                    color_rules = d.get("color_rules"),
+                    book        = b,
+                ))
+    else:
+        # Apply Combined Formula batch: BSA indicators & targets + Fibonacci extensions
+        for b in books:
+            for d in COMBINED_FORMULA_COLUMNS:
+                is_def = d.get("col_type") == "default"
+                raw_formula = d.get("formula")
+                formula_text = formula_for_book(d["name"], raw_formula, b) if raw_formula else None
+                db.add(TerminalColumn(
+                    user_id     = current_user.id,
+                    name        = d["name"],
+                    col_key     = d.get("col_key") or d["name"].lower(),
+                    col_type    = "default" if is_def else "custom",
+                    formula     = formula_text,
+                    col_order   = d["col_order"],
+                    width       = d.get("width", 85),
                     is_visible  = True,
                     color_rules = d.get("color_rules"),
                     book        = b,
@@ -1051,17 +1119,22 @@ class BsaManualOrderPayload(BaseModel):
 
 @router.get("/algo-rows")
 async def list_algo_rows(
+    batch: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Return all scripts in the Algo Trading Window for current user,
-    enriched with live market data and real-time Fibonacci formula calculations.
+    enriched with live market data and formula calculations for the active batch.
     """
+    import math
     from app.models.algo_row import BsaAlgoRow
     from app.market.market_poller import get_poller
-    from app.strategy.excel_formula_engine import evaluate_columns_in_order
-    from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS
+    from app.strategy.excel_formula_engine import evaluate_columns_in_order, formula_for_book
+    from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS, BSA_FORMULA_COLUMNS, COMBINED_FORMULA_COLUMNS
+
+    presets = await _get_batch_presets(current_user.id)
+    active_batch = (batch or presets.get("algo") or "combined").lower()
 
     result = await db.execute(
         select(BsaAlgoRow)
@@ -1077,6 +1150,7 @@ async def list_algo_rows(
     for r in rows:
         live = cached_quotes.get(r.symbol, {})
         ltp = float(live.get("ltp") or r.buy_price or 0)
+        is_option = r.segment == "NSE_FNO" or any(s in r.symbol.upper() for s in ("CE", "PE", "FUT"))
 
         # Compute live formula outputs
         tick_data = {
@@ -1088,12 +1162,49 @@ async def list_algo_rows(
             "close":   live.get("close"),
             "volume":  live.get("volume"),
             "vwap":    live.get("vwap") or live.get("atp"),
-            "p_close": live.get("p_close") or live.get("close"),
+            "p_close": live.get("p_close") or live.get("prev_close") or live.get("close"),
             "p_high":  live.get("p_high") or live.get("high"),
             "p_low":   live.get("p_low") or live.get("low"),
         }
-        fib_vals = evaluate_columns_in_order(FIBONACCI_FORMULA_COLUMNS, tick_data)
-        bsa_vals = evaluate_columns_in_order(BSA_FORMULA_COLUMNS, tick_data)
+        open_val = float(tick_data["open"] or ltp or 100.0)
+
+        fib_cols = [
+            {**c, "formula": formula_for_book(c["name"], c["formula"], "option" if is_option else "equity")}
+            for c in FIBONACCI_FORMULA_COLUMNS
+        ]
+        comb_cols = [
+            {**c, "formula": formula_for_book(c["name"], c["formula"], "option" if is_option else "equity") if c.get("formula") else None}
+            for c in COMBINED_FORMULA_COLUMNS
+        ]
+
+        if active_batch == "bsa":
+            bsa_vals = evaluate_columns_in_order(BSA_FORMULA_COLUMNS, tick_data)
+            fib_vals = {}
+            sig = str(bsa_vals.get("intrasignal") or bsa_vals.get("s_signal") or "BUY").upper()
+            ent = bsa_vals.get("entry") or round((math.sqrt(open_val) + (0.025 if sig == "BUY" else -0.025))**2, 2)
+            sl_val = bsa_vals.get("sl") or round(ent * (0.995 if sig == "BUY" else 1.005), 2)
+            t1 = bsa_vals.get("tgt1") or bsa_vals.get("bt1")
+            t2 = bsa_vals.get("tgt2") or bsa_vals.get("bt2")
+            t3 = bsa_vals.get("tgt3") or bsa_vals.get("bt3")
+        elif active_batch == "fibonacci":
+            fib_vals = evaluate_columns_in_order(fib_cols, tick_data)
+            bsa_vals = {}
+            sig = str(fib_vals.get("signal") or fib_vals.get("ssig") or "BUY").upper()
+            ent = fib_vals.get("entry") or round((math.sqrt(open_val) + (0.015 if sig == "BUY" else -0.015))**2, 2)
+            sl_val = fib_vals.get("sl") or round(ent * (0.995 if sig == "BUY" else 1.005), 2)
+            t1 = fib_vals.get("t11.8") or fib_vals.get("t11_8")
+            t2 = fib_vals.get("t23.8") or fib_vals.get("t23_8")
+            t3 = fib_vals.get("t38.2") or fib_vals.get("t38_2")
+        else: # combined
+            comb_vals = evaluate_columns_in_order(comb_cols, tick_data)
+            bsa_vals = comb_vals
+            fib_vals = comb_vals
+            sig = str(comb_vals.get("intrasignal") or comb_vals.get("s_signal") or "BUY").upper()
+            ent = comb_vals.get("entry") or round((math.sqrt(open_val) + (0.025 if sig == "BUY" else -0.025))**2, 2)
+            sl_val = comb_vals.get("sl") or round(ent * (0.995 if sig == "BUY" else 1.005), 2)
+            t1 = comb_vals.get("tgt1") or comb_vals.get("bt1")
+            t2 = comb_vals.get("tgt2") or comb_vals.get("bt2")
+            t3 = comb_vals.get("tgt3") or comb_vals.get("bt3")
 
         # Current trade PnL
         live_pnl = r.pnl
@@ -1118,9 +1229,9 @@ async def list_algo_rows(
             "target_type":      r.target_type or "TGT1",
             "pnl":              live_pnl,
             "ltp":              ltp if ltp > 0 else None,
-            "signal":           bsa_vals.get("intrasignal") or bsa_vals.get("s_signal") or fib_vals.get("signal") or fib_vals.get("ssig") or "—",
-            "entry":            bsa_vals.get("entry") or fib_vals.get("entry"),
-            "sl":               bsa_vals.get("sl") or fib_vals.get("sl"),
+            "signal":           sig,
+            "entry":            ent,
+            "sl":               sl_val,
             "t11_8":            fib_vals.get("t11.8") or fib_vals.get("t11_8"),
             "t23_8":            fib_vals.get("t23.8") or fib_vals.get("t23_8"),
             "t38_2":            fib_vals.get("t38.2") or fib_vals.get("t38_2"),
@@ -1130,9 +1241,9 @@ async def list_algo_rows(
             "t100":             fib_vals.get("t100"),
             "t1_618":           fib_vals.get("t1.618") or fib_vals.get("t1_618"),
             "t2_618":           fib_vals.get("t2.618") or fib_vals.get("t2_618"),
-            "tgt1":             bsa_vals.get("tgt1") or fib_vals.get("t11.8") or fib_vals.get("t11_8"),
-            "tgt2":             bsa_vals.get("tgt2") or fib_vals.get("t23.8") or fib_vals.get("t23_8"),
-            "tgt3":             bsa_vals.get("tgt3") or fib_vals.get("t38.2") or fib_vals.get("t38_2"),
+            "tgt1":             t1,
+            "tgt2":             t2,
+            "tgt3":             t3,
             "bt1":              bsa_vals.get("bt1"),
             "bt2":              bsa_vals.get("bt2"),
             "bt3":              bsa_vals.get("bt3"),
