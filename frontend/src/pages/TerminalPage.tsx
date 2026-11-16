@@ -675,7 +675,7 @@ export default function TerminalPage() {
           <AlgoWindowTable
             algoRows={algoRows ?? []}
             isPaper={isPaperMode}
-            activeBatch={batchPresets?.algo || "combined"}
+            activeBatch={batchPresets?.algo || "bsa"}
             onSelectBatch={(batch: string) => applyBatchMutation.mutate({ batch, book: "algo" })}
             onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
             onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
@@ -1184,24 +1184,6 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               >
                 APPLY BSA BATCH (28 COLS)
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm("Apply Combined Formula batch? This configures BSA columns and Fibonacci target extensions.")) {
-                    api.post("/terminal/columns/apply-batch", { batch: "Combined", book: "both" })
-                      .then(() => { toast.success("Applied Combined Formula batch"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
-                      .catch(() => toast.error("Failed to apply batch"));
-                  }
-                }}
-                style={{
-                  padding:"8px 16px", fontSize:11, cursor:"pointer",
-                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
-                  background:"rgba(0, 230, 118, 0.15)", border:"1px solid var(--green)",
-                  color:"var(--green)", borderRadius:3,
-                }}
-              >
-                APPLY COMBINED BATCH
-              </button>
             </div>
           </div>
 
@@ -1480,7 +1462,7 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
 function AlgoWindowTable({
   algoRows,
   isPaper = true,
-  activeBatch = "combined",
+  activeBatch = "bsa",
   onSelectBatch,
   onToggleAlgo,
   onUpdateRow,
@@ -1502,8 +1484,8 @@ function AlgoWindowTable({
 }) {
   const activeCount = algoRows.filter((r) => r.is_algo_active).length;
 
-  const isBsa = (activeBatch || "combined").toLowerCase() === "bsa";
-  const isFib = (activeBatch || "combined").toLowerCase() === "fibonacci";
+  const isBsa = (activeBatch || "bsa").toLowerCase() === "bsa";
+  const isFib = (activeBatch || "bsa").toLowerCase() === "fibonacci";
 
   const allTargetCols = [
     { key: "TGT1",  label: "TGT1",  desc: "TGT1 (BSA BT1/ST1)",  type: "bsa", color: "var(--yellow)" },
@@ -1521,9 +1503,8 @@ function AlgoWindowTable({
   ];
 
   const visibleTargetCols = allTargetCols.filter((tc) => {
-    if (isBsa) return tc.type === "bsa";
     if (isFib) return tc.type === "fib";
-    return true; // combined shows all
+    return tc.type === "bsa";
   });
 
   return (
@@ -1558,9 +1539,8 @@ function AlgoWindowTable({
             {[
               { id: "bsa", label: "BSA FORMULA", batch: "BSA" },
               { id: "fibonacci", label: "FIBONACCI FORMULA", batch: "Fibonacci Formula" },
-              { id: "combined", label: "COMBINED FORMULAS", batch: "Combined" },
             ].map((item) => {
-              const isCur = (activeBatch || "combined").toLowerCase() === item.id;
+              const isCur = (activeBatch || "bsa").toLowerCase() === item.id;
               return (
                 <button
                   key={item.id}
@@ -2019,7 +1999,6 @@ function TerminalTable({ title, book = "equity", activeBatch = "bsa", onSelectBa
             {[
               { id: "bsa", label: "BSA (28 COLS)", batch: "BSA" },
               { id: "fibonacci", label: "FIBONACCI", batch: "Fibonacci Formula" },
-              { id: "combined", label: "COMBINED", batch: "Combined" },
             ].map((item) => {
               const isCur = (activeBatch || "bsa").toLowerCase() === item.id;
               return (
