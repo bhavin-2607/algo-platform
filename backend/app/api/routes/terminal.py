@@ -1247,6 +1247,8 @@ async def list_algo_rows(
             "buy_entry_price":  active_entry_price,
             "pnl":              live_pnl,
             "ltp":              ltp if ltp > 0 else None,
+            "p_close":          tick_data.get("p_close"),
+            "chg_pct":          round(((ltp - float(tick_data.get("p_close")))/float(tick_data.get("p_close")))*100, 2) if (tick_data.get("p_close") and ltp > 0) else None,
             "signal":           sig,
             "entry":            ent,
             "sl":               sl_val,

@@ -146,7 +146,6 @@ export default function TerminalPage() {
   const [showAdd,    setShowAdd]    = useState(false);
   const [formulaRow, setFormulaRow] = useState<{id:string,symbol:string}|null>(null);
   const [showColumns, setShowColumns] = useState(false);
-  const [signalsOpen, setSignalsOpen] = useState(false);
   const [orderPanel,  setOrderPanel]  = useState<{symbol:string,security_id:string,segment:string,prefillSide?:string,prefillPrice?:number}|null>(null);
   const [showImportPositions, setShowImportPositions] = useState(false);
   const wsRef = useRef<WebSocket|null>(null);
@@ -309,26 +308,6 @@ export default function TerminalPage() {
     refetchInterval: 60_000,
   });
   const tokenOffline = tokenError || (tokenLoaded && !tokenStatus?.valid);
-
-  // Live strategy signals — refreshed every 5s
-  const { data: liveSignals } = useQuery({
-    queryKey: ["live-signals"],
-    queryFn: () => api.get("/strategies/live-signals").then(r => r.data),
-    refetchInterval: 5000,
-    enabled: watchlist.length > 0,
-  });
-
-  // Group signals by symbol → strategy
-  const signalMap: Record<string, Record<string, any>> = {};
-  (liveSignals ?? []).forEach((s: any) => {
-    if (!signalMap[s.symbol]) signalMap[s.symbol] = {};
-    signalMap[s.symbol][s.strategy_name] = s;
-  });
-
-  // Unique strategy names for column headers
-  const strategyNames: string[] = [...new Set(
-    (liveSignals ?? []).map((s: any) => s.strategy_name)
-  )] as string[];
 
 
   const hideColMutation = useMutation({
@@ -685,8 +664,6 @@ export default function TerminalPage() {
           onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
           onAddToAlgo={(sym, seg, exch) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_EQ", exchange: exch || "NSE" })}
           instrMap={instrMap}
-          signalMap={signalMap}
-          strategyNames={strategyNames}
           watchlist={equitySymbols}
           liveData={liveData}
           termRowMap={termRowMap}
@@ -706,8 +683,6 @@ export default function TerminalPage() {
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
             onAddToAlgo={(sym, seg, exch) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_FNO", exchange: exch || "NFO" })}
             instrMap={instrMap}
-            signalMap={signalMap}
-            strategyNames={strategyNames}
             watchlist={optionSymbols}
             liveData={liveData}
             termRowMap={termRowMap}
@@ -735,52 +710,6 @@ export default function TerminalPage() {
             onKillRow={(id) => killAlgoMutation.mutate(id)}
             onOpenImportPositions={() => setShowImportPositions(true)}
           />
-        </div>
-      )}
-
-      
-      {/* ── Strategy Signal Table ──────────────────────────────────────────── */}
-      {strategyNames.length > 0 && (
-        <div style={{marginTop:12, border:"1px solid var(--border)", background:"var(--surface)"}}>
-          <button type="button" onClick={() => setSignalsOpen(v => !v)}
-            style={{width:"100%", display:"flex", alignItems:"center", gap:8, padding:"6px 10px",
-              background:"transparent", border:"none", cursor:"pointer", fontFamily:"var(--font)", textAlign:"left"}}>
-            <span style={{fontSize:10, letterSpacing:1.5, color:"var(--muted)"}}>
-              {signalsOpen ? "▾" : "▸"} STRATEGY SIGNALS
-            </span>
-            <span style={{fontSize:10, color:"var(--text)"}}>{strategyNames.length}</span>
-          </button>
-          {signalsOpen && watchlist.map((sym: string) => (
-            <div key={"strat-"+sym} style={{display:"flex", flexWrap:"wrap", alignItems:"center", gap:6,
-              padding:"4px 10px", borderTop:"1px solid var(--border)", fontSize:11}}>
-              <span style={{fontWeight:700, color:"var(--green)", minWidth:88}}>{sym}</span>
-              {strategyNames.map((stratName: string) => {
-                const sig = signalMap[sym]?.[stratName];
-                const dir = sig?.direction || "HOLD";
-                const inst = instrMap[sym] || SECURITY_IDS[sym];
-                return (
-                  <span key={"sc-"+stratName} style={{display:"inline-flex", alignItems:"center", gap:4,
-                    padding:"2px 6px", border:"1px solid var(--border)"}}>
-                    <span style={{color:"var(--muted)", fontSize:9}}>{stratName}</span>
-                    <span className={`badge ${dir==="BUY"?"badge-green":dir==="SELL"?"badge-red":"badge-gray"}`}
-                      style={{fontSize:9, minWidth:36, textAlign:"center"}}>{dir}</span>
-                    {sig?.price ? <span>₹{Number(sig.price).toLocaleString()}</span> : null}
-                    {sig?.sl ? <span style={{color:"var(--red)"}}>SL {Number(sig.sl).toFixed(0)}</span> : null}
-                    {sig?.target ? <span style={{color:"var(--green)"}}>T {Number(sig.target).toFixed(0)}</span> : null}
-                    {dir !== "HOLD" && inst && (
-                      <button onClick={() => setOrderPanel({symbol:sym, ...inst, prefillSide:dir, prefillPrice:sig?.price||0})}
-                        style={{padding:"1px 6px", fontSize:9, cursor:"pointer", fontWeight:700, fontFamily:"var(--font)",
-                          background:dir==="BUY"?"rgba(0,255,136,0.15)":"rgba(255,68,102,0.15)",
-                          border:`1px solid ${dir==="BUY"?"rgba(0,255,136,0.5)":"rgba(255,68,102,0.5)"}`,
-                          color:dir==="BUY"?"var(--green)":"var(--red)"}}>
-                        ORDER
-                      </button>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          ))}
         </div>
       )}
 
@@ -1958,6 +1887,10 @@ function AlgoWindowTable({
                 const isOpt = isOptionScript(r.symbol, r.segment);
                 const normalizedTgt = normalizeTargetType(r.target_type);
                 const normalizedEntry = normalizeEntryType(r.entry_type);
+                const pClose = r.p_close;
+                const chgPct = r.chg_pct;
+                const isLtpUp = pClose != null && r.ltp != null ? r.ltp > pClose : (chgPct != null ? chgPct > 0 : false);
+                const isLtpDown = pClose != null && r.ltp != null ? r.ltp < pClose : (chgPct != null ? chgPct < 0 : false);
 
                 return (
                   <tr
@@ -2008,8 +1941,20 @@ function AlgoWindowTable({
                       </select>
                     </td>
 
-                    <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 700, fontSize: 12, color: "var(--text)" }}>
-                      {r.ltp != null ? `₹${Number(r.ltp).toLocaleString()}` : "—"}
+                    <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
+                      {r.ltp != null ? (
+                        <span style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "flex-end",
+                          gap: 4,
+                          color: isLtpUp ? "var(--green)" : isLtpDown ? "var(--red)" : "var(--text)"
+                        }}>
+                          {isLtpUp && <span style={{ fontSize: 9, color: "var(--green)" }}>▲</span>}
+                          {isLtpDown && <span style={{ fontSize: 9, color: "var(--red)" }}>▼</span>}
+                          <span>₹{Number(r.ltp).toLocaleString()}</span>
+                        </span>
+                      ) : "—"}
                     </td>
                     <td style={{ padding: "8px 6px", textAlign: "center" }}>
                       <span className={`badge ${r.signal === "BUY" ? "badge-green" : r.signal === "SELL" ? "badge-red" : "badge-gray"}`} style={{ fontSize: 9, fontWeight: 700, minWidth: 38, textAlign: "center" }}>
@@ -2491,7 +2436,7 @@ function AlgoWindowTable({
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
 function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
-  onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, instrMap, signalMap, strategyNames }: {
+  onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, instrMap }: {
   title: string;
   book?: "equity" | "option";
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
@@ -2501,8 +2446,6 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
   onOrder:(sym:string,inst:{security_id:string,segment:string},prefillSide?:string,prefillPrice?:number|null)=>void;
   onAddToAlgo:(sym:string, segment?: string, exchange?: string)=>void;
   instrMap: Record<string,{security_id:string,segment:string}>;
-  signalMap: Record<string,Record<string,any>>;
-  strategyNames: string[];
 }) {
   const signalColIdx = visibleCols.findIndex((col: any) => col.name?.toUpperCase() === "SIGNAL");
 
@@ -2574,6 +2517,9 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
             const trow  = termRowMap[sym];
             const ltp   = live.ltp ?? trow?.ltp ?? null;
             const chg   = live.change_pct ?? null;
+            const pClose = live.p_close ?? live.prev_close ?? null;
+            const isLtpUp = pClose != null && ltp != null ? ltp > pClose : (chg != null ? chg > 0 : false);
+            const isLtpDown = pClose != null && ltp != null ? ltp < pClose : (chg != null ? chg < 0 : false);
             const pos   = (chg ?? 0) >= 0;
             const inPos = trow?.status === "active";
             const rowBg = inPos ? "rgba(0,255,136,0.06)" : "var(--surface)";
@@ -2701,12 +2647,22 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                         </td>
                       )}
                       <td style={{
-                        padding:"7px 10px", color,
+                        padding:"7px 10px",
+                        color: col.col_key==="ltp" ? (isLtpUp ? "var(--green)" : isLtpDown ? "var(--red)" : "var(--text)") : color,
                         borderRight:"1px solid var(--border)",
                         fontWeight:col.col_key==="ltp"?"700":"400",
                         fontSize:col.col_key==="ltp"?"14px":"13px",
+                        whiteSpace: col.col_key==="ltp" ? "nowrap" : undefined,
                       }}>
-                        {formatted}
+                        {col.col_key === "ltp" && ltp != null ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            {isLtpUp && <span style={{ fontSize: 9, color: "var(--green)" }}>▲</span>}
+                            {isLtpDown && <span style={{ fontSize: 9, color: "var(--red)" }}>▼</span>}
+                            <span>{formatted}</span>
+                          </span>
+                        ) : (
+                          formatted
+                        )}
                       </td>
                     </Fragment>
                   );
