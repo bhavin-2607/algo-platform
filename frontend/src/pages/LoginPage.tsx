@@ -3,12 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { authApi, userApi } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const { setTokens, setUser } = useAuthStore();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [mfa, setMfa] = useState("");
   const [needsMfa, setNeedsMfa] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -17,7 +19,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await authApi.login(email, password, needsMfa ? mfa : undefined);
+      const res = await authApi.login(username.trim(), password, needsMfa ? mfa : undefined);
       setTokens(res.data.access_token, res.data.refresh_token);
       // Fetch full user profile so id, email, role are all populated
       const me = await userApi.me();
@@ -60,8 +62,56 @@ export default function LoginPage() {
           <p className="brand-sub" style={{ letterSpacing: 1.5 }}>QUANTITATIVE STRATEGY EXECUTION</p>
         </div>
         <form onSubmit={handleSubmit}>
-          <Field label="EMAIL_ADDR" value={email} onChange={setEmail} type="email" placeholder="trader@domain.com" />
-          <Field label="PASSWORD" value={password} onChange={setPassword} type="password" placeholder="••••••••••••" />
+          <div className="field">
+            <label className="field-label">USERNAME</label>
+            <input
+              className="field-input"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Enter username"
+              required
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+
+          <div className="field">
+            <label className="field-label">PASSWORD</label>
+            <div style={{ position: "relative", width: "100%" }}>
+              <input
+                className="field-input"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+                required
+                style={{ paddingRight: 36 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                style={{
+                  position: "absolute",
+                  right: 10,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--muted)",
+                  display: "flex",
+                  alignItems: "center",
+                  padding: 2,
+                }}
+                title={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+
           {needsMfa && <Field label="MFA_TOKEN" value={mfa} onChange={setMfa} type="text" placeholder="000000" />}
           <button className={`auth-btn${loading ? " loading" : ""}`} type="submit" disabled={loading}>
             {loading ? "AUTHENTICATING..." : "AUTHENTICATE"}
