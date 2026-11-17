@@ -217,7 +217,7 @@ export default function TerminalPage() {
     queryKey: ["terminal-columns"],
     queryFn: () => api.get("/terminal/columns").then(r => r.data),
   });
-  const [viewMode, setViewMode] = useState<"all" | "equity" | "options" | "algo">("all");
+  const [viewMode, setViewMode] = useState<"equity" | "options" | "mcx" | "algo">("equity");
 
   const visibleCols = useMemo(() => {
     return (allCols ?? [])
@@ -232,7 +232,7 @@ export default function TerminalPage() {
     const forBook = visibleCols.filter((c: any) => {
       const colBook = (c.book || "equity").toLowerCase();
       if (!c.formula) return true; // default columns (open, high, ltp, etc.) are shared
-      return colBook === book || colBook === "shared";
+      return colBook === book || colBook === "shared" || (book === "mcx" && colBook === "equity");
     });
 
     // Strictly deduplicate by col_key or name to prevent duplicate columns in table
@@ -249,14 +249,32 @@ export default function TerminalPage() {
     return (allCols ?? []).filter((c: any) => c.col_type === "custom" && c.is_visible);
   }, [allCols]);
 
-  const segmentOf = (sym: string) =>
-    instrMap[sym]?.segment || (SECURITY_IDS as Record<string, {segment: string}>)[sym]?.segment || "NSE_EQ";
-  const equitySymbols = watchlist.filter((sym) => segmentOf(sym) !== "NSE_FNO");
-  const optionSymbols = watchlist.filter((sym) => segmentOf(sym) === "NSE_FNO");
+  const isMcxSymbol = useCallback((sym: string) => {
+    const inst = instrMap[sym] as any;
+    const exch = inst?.exchange || (inst?.segment === "MCX_COMM" ? "MCX" : "");
+    if (exch === "MCX" || inst?.segment === "MCX_COMM") return true;
+    const s = sym.toUpperCase();
+    return s.startsWith("GOLD") || s.startsWith("SILVER") || s.startsWith("CRUDEOIL") ||
+           s.startsWith("NATURALGAS") || s.startsWith("COPPER") || s.startsWith("ZINC") ||
+           s.startsWith("NICKEL") || s.startsWith("ALUMINIUM") || s.startsWith("LEAD");
+  }, [instrMap]);
+
+  const isOptionSymbol = useCallback((sym: string) => {
+    if (isMcxSymbol(sym)) return false;
+    const inst = instrMap[sym];
+    const seg = inst?.segment || (SECURITY_IDS as Record<string, {segment: string}>)[sym]?.segment;
+    if (seg === "NSE_FNO" || seg === "BSE_FNO") return true;
+    return /\s\d{2,}\s(CE|PE|CALL|PUT)$/i.test(sym) || /-(CE|PE)$/i.test(sym);
+  }, [isMcxSymbol, instrMap]);
+
+  const mcxSymbols = useMemo(() => watchlist.filter(isMcxSymbol), [watchlist, isMcxSymbol]);
+  const optionSymbols = useMemo(() => watchlist.filter((sym) => !isMcxSymbol(sym) && isOptionSymbol(sym)), [watchlist, isMcxSymbol, isOptionSymbol]);
+  const equitySymbols = useMemo(() => watchlist.filter((sym) => !isMcxSymbol(sym) && !isOptionSymbol(sym)), [watchlist, isMcxSymbol, isOptionSymbol]);
+
   const ticksRef = useRef<Record<string, any>>({});
   ticksRef.current = liveData;
-  const booksRef = useRef({ equity: equitySymbols, options: optionSymbols });
-  booksRef.current = { equity: equitySymbols, options: optionSymbols };
+  const booksRef = useRef({ equity: equitySymbols, options: optionSymbols, mcx: mcxSymbols });
+  booksRef.current = { equity: equitySymbols, options: optionSymbols, mcx: mcxSymbols };
 
   function ticksFor(symbols: string[]) {
     return symbols.map((sym) => {
@@ -279,17 +297,18 @@ export default function TerminalPage() {
   }
 
   const { data: columnValues } = useQuery({
-    queryKey: ["column-values", equitySymbols.join("|"), optionSymbols.join("|")],
+    queryKey: ["column-values", equitySymbols.join("|"), optionSymbols.join("|"), mcxSymbols.join("|")],
     queryFn: async () => {
       const load = (symbols: string[], book: string) =>
         symbols.length
           ? api.post("/terminal/column-values", { ticks: ticksFor(symbols), book }).then(r => r.data.values as Record<string, Record<string, any>>)
           : Promise.resolve({});
-      const [equity, options] = await Promise.all([
+      const [equity, options, mcx] = await Promise.all([
         load(booksRef.current.equity, "equity"),
         load(booksRef.current.options, "option"),
+        load(booksRef.current.mcx, "mcx"),
       ]);
-      return { ...equity, ...options };
+      return { ...equity, ...options, ...mcx };
     },
     enabled: watchlist.length > 0,
     refetchInterval: 1000,
@@ -352,7 +371,7 @@ export default function TerminalPage() {
   });
 
   const addAlgoRowMutation = useMutation({
-    mutationFn: (payload: string | { symbol: string; segment?: string; exchange?: string }) => {
+    mutationFn: (payload: string | { symbol: string; segment?: string; exchange?: string; token?: string }) => {
       const body = typeof payload === "string" ? { symbol: payload } : payload;
       return api.post("/terminal/algo-rows", body);
     },
@@ -468,69 +487,124 @@ export default function TerminalPage() {
 
   return (
     <Layout>
-      {/* ── Account Summary Bar (Compact Fit) ──────────────────────────── */}
+      {/* ── Unified Terminal Control Strip (Single Line: Watchlist Selector + Account Vitals) ── */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           flexWrap: "wrap",
-          gap: 12,
-          padding: "6px 12px",
+          gap: 10,
+          padding: "5px 12px",
           marginBottom: 8,
           borderRadius: 4,
           border: "1px solid var(--border)",
           background: "var(--surface)",
         }}
       >
-        {/* Left: Compact Vitals */}
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
-            <span style={{ fontSize: 10, letterSpacing: 0.8, color: "var(--muted)", fontWeight: 700 }}>
+        {/* Left: Tab Switcher (EQUITY | OPTIONS | MCX | ALGO WINDOW) */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+          <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "equity" ? "active" : ""}`}
+              onClick={() => setViewMode("equity")}
+              style={{ padding: "4px 10px", fontSize: 11 }}
+            >
+              EQUITY ({equitySymbols.length})
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "options" ? "active" : ""}`}
+              onClick={() => setViewMode("options")}
+              style={{ padding: "4px 10px", fontSize: 11 }}
+            >
+              OPTIONS ({optionSymbols.length})
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "mcx" ? "active" : ""}`}
+              onClick={() => setViewMode("mcx")}
+              style={{ padding: "4px 10px", fontSize: 11 }}
+            >
+              MCX ({mcxSymbols.length})
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${viewMode === "algo" ? "active" : ""}`}
+              onClick={() => setViewMode("algo")}
+              style={{ padding: "4px 10px", fontSize: 11 }}
+            >
+              ALGO WINDOW ({algoRows?.length ?? 0})
+            </button>
+          </div>
+        </div>
+
+        {/* Right: AVAIL BALANCE | USED MARGIN | P&L | ACTIVE | IN POSITION | COLUMNS | ADD SYMBOL */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+          {/* AVAIL BALANCE */}
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4 }}>
+            <span style={{ fontSize: 9, letterSpacing: 0.6, color: "var(--muted)", fontWeight: 700 }}>
               AVAIL BALANCE
             </span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", fontFamily: "monospace" }}>
               {funds?.availabelBalance != null ? `₹${Number(funds.availabelBalance).toLocaleString()}` : "—"}
             </span>
           </div>
 
-          <span style={{ color: "var(--border)", fontSize: 12 }}>|</span>
+          <span style={{ color: "var(--border)", fontSize: 11 }}>|</span>
 
-          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
-            <span style={{ fontSize: 10, letterSpacing: 0.8, color: "var(--muted)", fontWeight: 700 }}>
+          {/* USED MARGIN */}
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4 }}>
+            <span style={{ fontSize: 9, letterSpacing: 0.6, color: "var(--muted)", fontWeight: 700 }}>
               USED MARGIN
             </span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", fontFamily: "monospace" }}>
               {funds?.utilizedAmount != null ? `₹${Number(funds.utilizedAmount).toLocaleString()}` : "—"}
             </span>
           </div>
 
-          <span style={{ color: "var(--border)", fontSize: 12 }}>|</span>
+          <span style={{ color: "var(--border)", fontSize: 11 }}>|</span>
 
-          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
-            <span style={{ fontSize: 10, letterSpacing: 0.8, color: "var(--muted)", fontWeight: 700 }}>
-              OVERALL P&L
+          {/* P&L */}
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4 }}>
+            <span style={{ fontSize: 9, letterSpacing: 0.6, color: "var(--muted)", fontWeight: 700 }}>
+              P&L
             </span>
             <span
               style={{
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: 700,
                 color: overallPnl >= 0 ? "var(--green)" : "var(--red)",
+                fontFamily: "monospace",
               }}
             >
               {`${overallPnl >= 0 ? "+" : ""}₹${overallPnl.toLocaleString()}`}
             </span>
           </div>
-        </div>
 
-        {/* Right: Status counts & action buttons */}
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginLeft: "auto" }}>
-          <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.6 }}>
-            ACTIVE <b style={{ color: "var(--text)" }}>{screenRows.filter((r: any) => r.is_active).length}</b>
+          <span style={{ color: "var(--border)", fontSize: 11 }}>|</span>
+
+          {/* ACTIVE */}
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4 }}>
+            <span style={{ fontSize: 9, letterSpacing: 0.6, color: "var(--muted)", fontWeight: 700 }}>
+              ACTIVE
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+              {screenRows.filter((r: any) => r.is_active).length}
+            </span>
           </div>
-          <span style={{ color: "var(--border)", fontSize: 11 }}>•</span>
-          <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.6 }}>
-            IN POSITION <b style={{ color: "var(--text)" }}>{screenRows.filter((r: any) => r.status === "active").length}</b>
+
+          <span style={{ color: "var(--border)", fontSize: 11 }}>|</span>
+
+          {/* IN POSITION */}
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4 }}>
+            <span style={{ fontSize: 9, letterSpacing: 0.6, color: "var(--muted)", fontWeight: 700 }}>
+              IN POSITION
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+              {screenRows.filter((r: any) => r.status === "active").length}
+            </span>
           </div>
 
           {copySummary?.active_copy_count > 0 && (
@@ -540,8 +614,8 @@ export default function TerminalPage() {
                 textDecoration: "none",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: 5,
-                padding: "2px 7px",
+                gap: 4,
+                padding: "2px 6px",
                 fontSize: 10,
                 fontWeight: 700,
                 color: "var(--green)",
@@ -557,29 +631,34 @@ export default function TerminalPage() {
             </Link>
           )}
 
+          {/* COLUMNS */}
           <button
             type="button"
             className="exit-btn"
             style={{
-              fontSize: 11,
-              padding: "4px 10px",
+              fontSize: 10,
+              padding: "3px 8px",
               color: "var(--yellow)",
               borderColor: "rgba(255,183,3,0.3)",
               lineHeight: 1.2,
+              fontWeight: 700,
             }}
             onClick={() => setShowColumns(true)}
           >
             COLUMNS
           </button>
+
+          {/* ADD SYMBOL */}
           <button
             type="button"
             className="connect-btn"
             style={{
-              fontSize: 11,
-              padding: "4px 12px",
+              fontSize: 10,
+              padding: "3px 10px",
               lineHeight: 1.2,
+              fontWeight: 700,
             }}
-            onClick={() => { setShowAdd((v) => !v); }}
+            onClick={() => setShowAdd((v) => !v)}
           >
             {showAdd ? "CANCEL" : "+ ADD SYMBOL"}
           </button>
@@ -624,85 +703,66 @@ export default function TerminalPage() {
 
       {/* ── Add Symbol Panel ────────────────────────────────────────────────── */}
       {showAdd && (
-        <AddSymbolPanel onAdded={() => {
-          qc.invalidateQueries({queryKey:["watchlist"]});
-          setShowAdd(false);
-        }} />
-      )}
-      {/* ── Watchlist View Selector ─────────────────────────────────────── */}
-      {watchlist.length > 0 && (
-        <div style={{
-          display:"flex", alignItems:"center", justifyContent:"space-between",
-          margin:"8px 0 8px", flexWrap:"wrap", gap:8
-        }}>
-          <div className="tab-switcher" style={{margin:0}}>
-            <button
-              type="button"
-              className={`tab-btn ${viewMode === "all" ? "active" : ""}`}
-              onClick={() => setViewMode("all")}
-            >
-              ALL WATCHLISTS
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${viewMode === "equity" ? "active" : ""}`}
-              onClick={() => setViewMode("equity")}
-            >
-              EQUITY
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${viewMode === "options" ? "active" : ""}`}
-              onClick={() => setViewMode("options")}
-            >
-              OPTIONS
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${viewMode === "algo" ? "active" : ""}`}
-              onClick={() => setViewMode("algo")}
-            >
-              ALGO WINDOW
-            </button>
-          </div>
-          <div style={{fontSize:11, color:"var(--muted)", display:"flex", alignItems:"center", gap:6}}>
-            <span style={{width:6, height:6, borderRadius:"50%", background:"var(--green)", display:"inline-block"}} />
-            <span>DHAN LIVE FEED</span>
-          </div>
-        </div>
-      )}
-
-      {watchlist.length === 0 && (
-        <div style={{padding:"60px 20px",textAlign:"center",color:"var(--muted)",
-          fontSize:13,border:"1px solid var(--border)",background:"var(--surface)"}}>
-          No symbols — click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to start
-        </div>
-      )}
-      {(viewMode === "all" || viewMode === "equity") && equitySymbols.length > 0 && (
-        <TerminalTable
-          title="EQUITY"
-          book="equity"
-          onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-          onAddToAlgo={(sym, seg, exch) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_EQ", exchange: exch || "NSE" })}
-          instrMap={instrMap}
-          watchlist={equitySymbols}
-          liveData={liveData}
-          termRowMap={termRowMap}
-          visibleCols={colsFor("equity")}
-          columnValues={columnValues ?? {}}
-          isAdmin={isAdmin}
-          onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
-          onExitRow={(id)=>exitRowMutation.mutate(id)}
-          onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
+        <AddSymbolPanel
+          onAdded={() => {
+            qc.invalidateQueries({queryKey:["watchlist"]});
+            setShowAdd(false);
+          }}
+          onAddToAlgo={(inst) => {
+            addAlgoRowMutation.mutate({
+              symbol: inst.symbol,
+              segment: inst.exchange_segment || inst.segment || "NSE_EQ",
+              exchange: inst.exchange || "NSE",
+              token: inst.security_id,
+            });
+            setShowAdd(false);
+          }}
         />
       )}
-      {(viewMode === "all" || viewMode === "options") && optionSymbols.length > 0 && (
-        <div style={{marginTop: (viewMode === "all" && equitySymbols.length) ? 10 : 0}}>
+
+      {/* ── Separate List Views (EQUITY | OPTIONS | MCX | ALGO WINDOW) ──────── */}
+      {viewMode === "equity" && (
+        equitySymbols.length === 0 ? (
+          <div style={{
+            padding:"40px 20px", textAlign:"center", color:"var(--muted)",
+            fontSize:12, border:"1px solid var(--border)", background:"var(--surface)"
+          }}>
+            No equity symbols in watchlist. Click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to add.
+          </div>
+        ) : (
+          <TerminalTable
+            title="EQUITY"
+            book="equity"
+            onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
+            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_EQ", exchange: exch || "NSE", token: tok })}
+            instrMap={instrMap}
+            watchlist={equitySymbols}
+            liveData={liveData}
+            termRowMap={termRowMap}
+            visibleCols={colsFor("equity")}
+            columnValues={columnValues ?? {}}
+            isAdmin={isAdmin}
+            onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
+            onExitRow={(id)=>exitRowMutation.mutate(id)}
+            onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
+          />
+        )
+      )}
+
+      {viewMode === "options" && (
+        optionSymbols.length === 0 ? (
+          <div style={{
+            padding:"40px 20px", textAlign:"center", color:"var(--muted)",
+            fontSize:12, border:"1px solid var(--border)", background:"var(--surface)"
+          }}>
+            No option contracts in watchlist. Click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to search & add options.
+          </div>
+        ) : (
           <TerminalTable
             title="OPTIONS"
             book="option"
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym, seg, exch) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_FNO", exchange: exch || "NFO" })}
+            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_FNO", exchange: exch || "NFO", token: tok })}
             instrMap={instrMap}
             watchlist={optionSymbols}
             liveData={liveData}
@@ -714,24 +774,50 @@ export default function TerminalPage() {
             onExitRow={(id)=>exitRowMutation.mutate(id)}
             onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
           />
-        </div>
+        )
+      )}
+
+      {viewMode === "mcx" && (
+        mcxSymbols.length === 0 ? (
+          <div style={{
+            padding:"40px 20px", textAlign:"center", color:"var(--muted)",
+            fontSize:12, border:"1px solid var(--border)", background:"var(--surface)"
+          }}>
+            No MCX commodity contracts in watchlist. Click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to search & add GOLD, SILVER, CRUDEOIL, etc.
+          </div>
+        ) : (
+          <TerminalTable
+            title="MCX COMMODITIES"
+            book="mcx"
+            onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
+            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "MCX_COMM", exchange: exch || "MCX", token: tok })}
+            instrMap={instrMap}
+            watchlist={mcxSymbols}
+            liveData={liveData}
+            termRowMap={termRowMap}
+            visibleCols={colsFor("mcx")}
+            columnValues={columnValues ?? {}}
+            isAdmin={isAdmin}
+            onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
+            onExitRow={(id)=>exitRowMutation.mutate(id)}
+            onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
+          />
+        )
       )}
 
       {/* ── Algo Trading Window Table ────────────────────────────────────── */}
-      {(viewMode === "all" || viewMode === "algo") && (
-        <div style={{marginTop: 10}}>
-          <AlgoWindowTable
-            algoRows={algoRows ?? []}
-            isPaper={isPaperMode}
-            onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
-            onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
-            onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
-            onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
-            onManualOrder={(id, side) => manualAlgoOrderMutation.mutate({ id, side })}
-            onKillRow={(id) => killAlgoMutation.mutate(id)}
-            onOpenImportPositions={() => setShowImportPositions(true)}
-          />
-        </div>
+      {viewMode === "algo" && (
+        <AlgoWindowTable
+          algoRows={algoRows ?? []}
+          isPaper={isPaperMode}
+          onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
+          onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
+          onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
+          onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
+          onManualOrder={(id, side) => manualAlgoOrderMutation.mutate({ id, side })}
+          onKillRow={(id) => killAlgoMutation.mutate(id)}
+          onOpenImportPositions={() => setShowImportPositions(true)}
+        />
       )}
 
     </Layout>
@@ -739,7 +825,10 @@ export default function TerminalPage() {
 }
 
 // ── Add Symbol Panel ──────────────────────────────────────────────────────────
-function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
+function AddSymbolPanel({ onAdded, onAddToAlgo }: {
+  onAdded: () => void;
+  onAddToAlgo?: (inst: any) => void;
+}) {
   const [query,   setQuery]   = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -750,7 +839,7 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
       security_id:      inst.security_id,
       exchange_segment: inst.exchange_segment || inst.segment || "NSE_EQ",
     }),
-    onSuccess: (_, inst) => { toast.success(`${inst.symbol} added`); onAdded(); },
+    onSuccess: (_, inst) => { toast.success(`${inst.symbol} added to watchlist`); onAdded(); },
   });
 
   useEffect(() => {
@@ -772,14 +861,14 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
         <div style={{position:"relative", maxWidth:500, display:"flex", gap:8}}>
           <input className="field-input" value={query}
             onChange={e => setQuery(e.target.value)} autoFocus
-            placeholder="Search symbol or option... e.g. TCS, BANKNIFTY 61000 CE"
+            placeholder="Search symbol or option... e.g. TCS, BANKNIFTY 61000 CE, GOLD"
             style={{flex:1}} />
           {loading && <span style={{position:"absolute", right:12, top:"50%",
             transform:"translateY(-50%)", color:"var(--muted)", fontSize:11}}>...</span>}
         </div>
         {results.length > 0 && (
           <div style={{marginTop:6, border:"1px solid var(--border)",
-            background:"var(--surface)", maxHeight:240, overflowY:"auto", maxWidth:640}}>
+            background:"var(--surface)", maxHeight:240, overflowY:"auto", maxWidth:680}}>
             {results.map(inst => (
               <div key={`${inst.exchange_segment}-${inst.security_id}`}
                 style={{padding:"8px 12px", display:"flex", justifyContent:"space-between",
@@ -790,11 +879,32 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
                   <span style={{fontWeight:700, color:"var(--green)", fontSize:12}}>{inst.symbol}</span>
                   <span style={{fontSize:10, color:"var(--muted)", marginLeft:8}}>{inst.name}</span>
                 </div>
-                <div style={{display:"flex", gap:8, alignItems:"center"}}>
-                  <span style={{fontSize:9, color:"var(--muted)"}}>{inst.exchange} · {inst.series}</span>
-                  <button className="connect-btn" style={{padding:"2px 10px", fontSize:10}}
+                <div style={{display:"flex", gap:6, alignItems:"center"}}>
+                  <span style={{fontSize:9, color:"var(--muted)"}}>{inst.exchange} · {inst.series || inst.exchange_segment}</span>
+                  <button className="connect-btn" style={{padding:"3px 8px", fontSize:10}}
                     onClick={() => addMutation.mutate(inst)}
-                    disabled={addMutation.isPending}>+ ADD</button>
+                    disabled={addMutation.isPending}
+                    title="Add to Watchlist"
+                  >
+                    + WATCHLIST
+                  </button>
+                  {onAddToAlgo && (
+                    <button
+                      type="button"
+                      className="connect-btn"
+                      style={{
+                        padding: "3px 8px",
+                        fontSize: 10,
+                        background: "rgba(0, 180, 216, 0.15)",
+                        borderColor: "rgba(0, 180, 216, 0.45)",
+                        color: "#08b6de",
+                      }}
+                      onClick={() => onAddToAlgo(inst)}
+                      title="Add directly to Algo Window"
+                    >
+                      + ALGO
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -2454,30 +2564,30 @@ function AlgoWindowTable({
 function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
   onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, instrMap }: {
   title: string;
-  book?: "equity" | "option";
+  book?: string;
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
   visibleCols: any[]; columnValues: Record<string, Record<string, any>>; isAdmin: boolean;
   onRemoveSymbol:(s:string)=>void; onExitRow:(id:string)=>void;
   onFormulaRow:(id:string,sym:string)=>void;
   onOrder:(sym:string,inst:{security_id:string,segment:string},prefillSide?:string,prefillPrice?:number|null)=>void;
-  onAddToAlgo:(sym:string, segment?: string, exchange?: string)=>void;
-  instrMap: Record<string,{security_id:string,segment:string}>;
+  onAddToAlgo:(sym:string, segment?: string, exchange?: string, token?: string)=>void;
+  instrMap: Record<string,{security_id:string; segment:string; exchange?: string}>;
 }) {
   const signalColIdx = visibleCols.findIndex((col: any) => col.name?.toUpperCase() === "SIGNAL");
 
   return (
-    <div style={{border:"1px solid var(--border)", background:"var(--surface)", marginBottom:16}}>
+    <div style={{border:"1px solid var(--border)", background:"var(--surface)", marginBottom:10}}>
       <div style={{
         display:"flex", alignItems:"center", justifyContent:"space-between",
-        padding:"10px 14px", borderBottom:"1px solid var(--border)", background:"var(--surface2)",
+        padding:"8px 12px", borderBottom:"1px solid var(--border)", background:"var(--surface2)",
         flexWrap: "wrap", gap: 10
       }}>
         <div style={{display:"flex", alignItems:"center", gap:8}}>
           <span style={{
             fontSize:11, fontWeight:700, letterSpacing:1.5,
-            color: title === "OPTIONS" ? "var(--yellow)" : "var(--green)"
+            color: title.includes("OPTIONS") ? "var(--yellow)" : title.includes("MCX") ? "#08b6de" : "var(--green)"
           }}>
-            {title === "OPTIONS" ? "OPTIONS WATCHLIST" : "EQUITY WATCHLIST"}
+            {title.includes("WATCHLIST") ? title : `${title} WATCHLIST`}
           </span>
         </div>
       </div>
@@ -2488,11 +2598,11 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
             <th style={{
               position:"sticky", left:0, zIndex:20,
               background:"var(--surface)",
-              padding:"8px 10px", fontSize:10, letterSpacing:1.5, color:"var(--muted)",
-              borderRight:"1px solid var(--border)", width:44, minWidth:44, maxWidth:44, textAlign:"center"
+              padding:"6px 4px", fontSize:10, letterSpacing:1.2, color:"var(--muted)",
+              borderRight:"1px solid var(--border)", width:46, minWidth:46, maxWidth:46, textAlign:"center"
             }}>#</th>
             <th style={{
-              position:"sticky", left:44, zIndex:20,
+              position:"sticky", left:46, zIndex:20,
               background:"var(--surface)",
               padding:"8px 10px", fontSize:10, letterSpacing:1.5, color:"var(--muted)",
               borderRight:"2px solid var(--border)", width:140, minWidth:140, maxWidth:140, textAlign:"left",
@@ -2597,21 +2707,48 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                 <td style={{
                   position:"sticky", left:0, zIndex:10,
                   background:rowBg,
-                  padding:"6px 10px", fontSize:12, color:"var(--muted)",
-                  borderRight:"1px solid var(--border)", width:44, minWidth:44, maxWidth:44,
+                  padding:"4px 4px", fontSize:11, color:"var(--muted)",
+                  borderRight:"1px solid var(--border)", width:46, minWidth:46, maxWidth:46,
                   textAlign:"center", fontWeight:600
                 }}>
-                  {idx+1}
+                  <div style={{ fontSize: 11, lineHeight: 1 }}>{idx+1}</div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const inst = ((typeof instrMap !== "undefined" ? instrMap[sym] : null) || SECURITY_IDS[sym]) as any;
+                      onAddToAlgo(sym, inst?.segment, inst?.exchange, inst?.security_id);
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 22,
+                      height: 18,
+                      marginTop: 3,
+                      fontSize: 9,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      background: "rgba(0, 230, 118, 0.12)",
+                      border: "1px solid rgba(0, 230, 118, 0.4)",
+                      color: "var(--green)",
+                      borderRadius: 3,
+                      padding: 0,
+                      lineHeight: 1,
+                    }}
+                    title={`Add ${sym} to Algo Trading Window`}
+                  >
+                    +A
+                  </button>
                 </td>
                 <td style={{
-                  position:"sticky", left:44, zIndex:10,
+                  position:"sticky", left:46, zIndex:10,
                   background:rowBg,
                   padding:"6px 10px", borderRight:"2px solid var(--border)",
                   width:140, minWidth:140, maxWidth:140,
                   boxShadow:"3px 0 6px -2px rgba(0,0,0,0.35)"
                 }}>
                   <div style={{fontWeight:700,color:"var(--green)",fontSize:13}}>{sym}</div>
-                  <div style={{fontSize:10,color:"var(--muted)"}}>{trow?.strategy_label??"WATCHLIST"}</div>
                 </td>
                 {visibleCols.map((col:any, cIdx:number) => {
                   const {color, formatted} = getCellValue(col);

@@ -6,31 +6,8 @@ import { useAuthStore } from "@/store/auth";
 
 
 
-function getMarketStatus() {
-  const now = new Date();
-  const istStr = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-  const istDate = new Date(istStr);
-  const day = istDate.getDay();
-  const mins = istDate.getHours() * 60 + istDate.getMinutes();
-
-  if (day === 0 || day === 6) {
-    return { text: "MARKET CLOSED (WEEKEND)", isOpen: false, isPre: false };
-  }
-  if (mins >= 540 && mins < 555) {
-    return { text: "PRE-MARKET", isOpen: true, isPre: true };
-  }
-  if (mins >= 555 && mins <= 930) {
-    return { text: "MARKET OPEN", isOpen: true, isPre: false };
-  }
-  if (mins > 930 && mins <= 960) {
-    return { text: "POST-MARKET", isOpen: false, isPre: false };
-  }
-  return { text: "MARKET CLOSED", isOpen: false, isPre: false };
-}
-
 export default function DashboardPage() {
   const { user } = useAuthStore();
-  const market = getMarketStatus();
   const { data: dhanHistory, isLoading: historyLoading, isError: historyError } = useQuery({
     queryKey: ["dhan-trade-history"],
     queryFn: () => api.get("/terminal/trade-history").then(r => r.data),
@@ -91,16 +68,6 @@ export default function DashboardPage() {
           <p className="page-sub">
             Welcome back, <span style={{ color: "var(--green)" }}>{user?.username}</span>
           </p>
-        </div>
-        <div className="market-status" style={{
-          borderColor: market.isOpen ? (market.isPre ? "var(--yellow)" : "var(--green)") : "var(--border)",
-          color: market.isOpen ? (market.isPre ? "var(--yellow)" : "var(--green)") : "var(--muted)"
-        }}>
-          <div className="market-dot" style={{
-            background: market.isOpen ? (market.isPre ? "var(--yellow)" : "var(--green)") : "var(--muted)",
-            boxShadow: market.isOpen ? `0 0 8px ${market.isPre ? "var(--yellow)" : "var(--green)"}` : "none"
-          }} />
-          <span>{market.text}</span>
         </div>
       </div>
 
