@@ -256,7 +256,7 @@ function IpWhitelistingTab() {
 
         {/* IP Comparison Grid */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginTop: 20 }}>
-          <div style={{ background: "rgba(0,0,0,0.25)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
+          <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
             <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>CURRENT PLATFORM SERVER IP</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: isMatched ? "var(--green)" : "var(--yellow)", marginTop: 6 }}>
               {serverIp}
@@ -266,7 +266,7 @@ function IpWhitelistingTab() {
             </div>
           </div>
 
-          <div style={{ background: "rgba(0,0,0,0.25)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
+          <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
             <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>DHAN REGISTERED PRIMARY IP</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: primaryIp === serverIp ? "var(--green)" : "var(--text)", marginTop: 6 }}>
               {primaryIp}
@@ -276,7 +276,7 @@ function IpWhitelistingTab() {
             </div>
           </div>
 
-          <div style={{ background: "rgba(0,0,0,0.25)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
+          <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
             <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>DHAN REGISTERED SECONDARY IP</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: secondaryIp === serverIp ? "var(--green)" : "var(--text)", marginTop: 6 }}>
               {secondaryIp}
@@ -360,7 +360,7 @@ function IpWhitelistingTab() {
                   flex: 1,
                   padding: "7px 10px",
                   fontSize: 12,
-                  background: "rgba(0,0,0,0.3)",
+                  background: "var(--surface2)",
                   border: "1px solid var(--border)",
                   color: "var(--text)",
                   borderRadius: 4,
@@ -373,12 +373,11 @@ function IpWhitelistingTab() {
                 style={{
                   padding: "7px 10px",
                   fontSize: 11,
-                  background: "#141923",
+                  background: "var(--surface2)",
                   border: "1px solid var(--border)",
                   color: "var(--text)",
                   borderRadius: 4,
                   fontWeight: 600,
-                  colorScheme: "dark",
                 }}
               >
                 <option value="PRIMARY">PRIMARY</option>
@@ -398,7 +397,7 @@ function IpWhitelistingTab() {
         </div>
 
         {/* Informational Guidelines */}
-        <div style={{ marginTop: 20, padding: "12px 14px", background: "rgba(0,0,0,0.2)", border: "1px solid var(--border)", borderRadius: 4 }}>
+        <div style={{ marginTop: 20, padding: "12px 14px", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 4 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: "var(--yellow)", letterSpacing: 1 }}>
             IMPORTANT SEBI GUIDELINES & DH-905 TROUBLESHOOTING:
           </div>

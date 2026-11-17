@@ -42,7 +42,7 @@
   --bg:        #f4f7fa;
   --surface:   #ffffff;
   --surface2:  #e9eef5;
-  --border:    rgba(15, 23, 42, 0.08);
+  --border:    rgba(15, 23, 42, 0.12);
   --green:     #059669;
   --green-dim: rgba(5, 150, 105, 0.12);
   --red:       #e11d48;
@@ -123,6 +123,16 @@ a:hover { text-decoration: underline; }
 }
 .field-input:focus { border-color: var(--green); }
 .field-input::placeholder { color: var(--muted); }
+
+select {
+  background-color: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+select option {
+  background-color: var(--surface);
+  color: var(--text);
+}
 
 .auth-btn {
   width: 100%; padding: 14px;
@@ -230,10 +240,10 @@ a:hover { text-decoration: underline; }
   right: 0;
   top: calc(100% + 8px);
   width: 290px;
-  background: #0e131b;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
   z-index: 9999;
   overflow: hidden;
   padding: 6px 0;
@@ -252,11 +262,11 @@ a:hover { text-decoration: underline; }
   color: var(--text);
   font-family: var(--font);
   transition: all 0.12s ease;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border);
 }
 
 .user-dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.05) !important;
+  background: var(--surface2) !important;
 }
 
 .dropdown-logout-btn {
@@ -372,7 +382,7 @@ a:hover { text-decoration: underline; }
 .badge-red    { background: rgba(255, 59, 87, 0.12); color: var(--red);   border: 1px solid rgba(255, 59, 87, 0.35); }
 .badge-yellow { background: rgba(255, 183, 3, 0.12); color: var(--yellow);border: 1px solid rgba(255, 183, 3, 0.35); }
 .badge-blue   { background: rgba(0, 180, 216, 0.12); color: var(--blue);  border: 1px solid rgba(0, 180, 216, 0.35); }
-.badge-gray   { background: rgba(255, 255, 255, 0.05); color: var(--muted); border: 1px solid rgba(255, 255, 255, 0.12); }
+.badge-gray   { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
 
 .exit-btn {
   padding: 4px 12px; background: transparent;

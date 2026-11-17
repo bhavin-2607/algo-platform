@@ -4,6 +4,7 @@ import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -183,6 +184,9 @@ function PasswordCard() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const mutation = useMutation({
     mutationFn: () => api.post("/users/me/change-password", {
       current_password: current,
@@ -214,24 +218,120 @@ function PasswordCard() {
       <div className="card-header">
         <span className="card-title">PASSWORD & SECURITY</span>
       </div>
-      <div style={{padding:"16px 20px", display:"grid", gap:12}}>
-        <div className="field">
-          <label className="field-label">CURRENT PASSWORD</label>
-          <input className="field-input" type="password" value={current} onChange={e => setCurrent(e.target.value)} />
+      <div style={{ padding: "16px 20px", display: "grid", gap: 12 }}>
+        <div>
+          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CURRENT PASSWORD</label>
+          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+            <input
+              className="field-input"
+              type={showCurrent ? "text" : "password"}
+              value={current}
+              onChange={e => setCurrent(e.target.value)}
+              placeholder="Current password"
+              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurrent(v => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+              title={showCurrent ? "Hide password" : "Show password"}
+            >
+              {showCurrent ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
         </div>
-        <div className="field">
-          <label className="field-label">NEW PASSWORD</label>
-          <input className="field-input" type="password" value={next} onChange={e => setNext(e.target.value)} />
+
+        <div>
+          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>NEW PASSWORD</label>
+          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+            <input
+              className="field-input"
+              type={showNext ? "text" : "password"}
+              value={next}
+              onChange={e => setNext(e.target.value)}
+              placeholder="At least 8 characters"
+              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowNext(v => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+              title={showNext ? "Hide password" : "Show password"}
+            >
+              {showNext ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
         </div>
-        <div className="field">
-          <label className="field-label">CONFIRM NEW PASSWORD</label>
-          <input className="field-input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+
+        <div>
+          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CONFIRM NEW PASSWORD</label>
+          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+            <input
+              className="field-input"
+              type={showConfirm ? "text" : "password"}
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              placeholder="Confirm new password"
+              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm(v => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+              title={showConfirm ? "Hide password" : "Show password"}
+            >
+              {showConfirm ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
         </div>
-        <button className="connect-btn" style={{justifySelf:"start"}} onClick={submit} disabled={mutation.isPending}>
+
+        <button
+          className="connect-btn"
+          style={{ justifySelf: "start", padding: "6px 16px", fontSize: 11, height: 32, marginTop: 4 }}
+          onClick={submit}
+          disabled={mutation.isPending}
+        >
           {mutation.isPending ? "SAVING" : "UPDATE PASSWORD"}
         </button>
-        <p className="token-note" style={{ padding: 0 }}>
-          This needs the current password. If it is forgotten, an admin can set a new one from Console → Users → Reset.
+
+        <p className="token-note" style={{ padding: 0, fontSize: 11, color: "var(--muted)" }}>
+          Requires current password. Contact an administrator to reset if forgotten.
         </p>
       </div>
     </div>

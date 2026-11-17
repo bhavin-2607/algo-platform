@@ -26,9 +26,10 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <Toaster position="top-right" toastOptions={{
-          style: { background:"#0d1117", color:"#e8f5e9",
-            border:"1px solid rgba(0,255,136,0.2)",
-            fontFamily:"JetBrains Mono, monospace", fontSize:12 },
+          style: { background:"var(--surface)", color:"var(--text)",
+            border:"1px solid var(--border)",
+            boxShadow:"0 8px 24px rgba(0,0,0,0.2)",
+            fontFamily:"var(--font)", fontSize:12 },
         }} />
         <Routes>
           <Route path="/login"        element={<LoginPage />} />

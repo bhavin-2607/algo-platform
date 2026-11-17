@@ -11,7 +11,59 @@ import {
   Moon,
   LogOut,
   ChevronDown,
+  Clock,
 } from "lucide-react";
+
+function TopNavClock() {
+  const [time, setTime] = useState(() => {
+    return new Date().toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  });
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setTime(
+        new Date().toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      );
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 8px",
+        background: "var(--surface2)",
+        border: "1px solid var(--border)",
+        borderRadius: 4,
+        fontFamily: "monospace",
+        fontSize: 11,
+        fontWeight: 700,
+        color: "var(--text)",
+        letterSpacing: 0.5,
+      }}
+      title="Indian Standard Time (IST)"
+    >
+      <Clock size={12} style={{ color: "var(--muted)" }} />
+      <span>{time}</span>
+      <span style={{ fontSize: 9, color: "var(--muted)", fontWeight: 600 }}>IST</span>
+    </div>
+  );
+}
 
 const NAV_ITEMS = [
   { path: "/dashboard",    label: "Dashboard" },
@@ -125,8 +177,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
 
-        {/* RIGHT SIDE: LIVE STATUS | [Gear ICON] Logged in username with dropdown menu */}
+        {/* RIGHT SIDE: Clock | LIVE STATUS | [Gear ICON] Logged in username with dropdown menu */}
         <div className="top-nav-right">
+          {/* Clock */}
+          <TopNavClock />
+
+          <span style={{ color: "var(--border)", fontSize: 13, userSelect: "none" }}>|</span>
+
           {/* LIVE STATUS */}
           <div
             style={{
@@ -134,7 +191,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               alignItems: "center",
               gap: 8,
               padding: "4px 10px",
-              background: "rgba(0,0,0,0.22)",
+              background: "var(--surface2)",
               border: "1px solid var(--border)",
               borderRadius: 4,
             }}
@@ -174,7 +231,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             {activeCopyCount > 0 && (
               <>
                 <span style={{ color: "var(--border)", fontSize: 11 }}>•</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: "#38bdf8" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#0284c7" }}>
                   COPY: {activeCopyCount}
                 </span>
               </>
@@ -194,7 +251,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 alignItems: "center",
                 gap: 7,
                 padding: "4px 10px",
-                background: menuOpen ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.03)",
+                background: menuOpen ? "var(--surface2)" : "transparent",
                 border: `1px solid ${menuOpen ? "var(--green)" : "var(--border)"}`,
                 borderRadius: 4,
                 cursor: "pointer",
@@ -304,8 +361,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <div
                   style={{
                     padding: "10px 14px",
-                    background: "rgba(0, 0, 0, 0.2)",
-                    borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+                    background: "var(--surface2)",
+                    borderBottom: "1px solid var(--border)",
                     display: "flex",
                     alignItems: "center",
                     gap: 10,

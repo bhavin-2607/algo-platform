@@ -200,7 +200,7 @@ export default function CopyTradingPage() {
                   padding: "4px 10px",
                   fontSize: 10,
                   fontWeight: 700,
-                  background: "rgba(255,255,255,0.06)",
+                  background: "var(--surface2)",
                   border: "1px solid var(--border)",
                   color: "var(--text)",
                   borderRadius: 3,
@@ -342,7 +342,7 @@ export default function CopyTradingPage() {
                           fontWeight: 700,
                           borderRadius: 3,
                           cursor: "pointer",
-                          background: child.is_copy_enabled ? "rgba(0, 230, 118, 0.16)" : "rgba(255, 255, 255, 0.05)",
+                          background: child.is_copy_enabled ? "rgba(0, 230, 118, 0.16)" : "var(--surface2)",
                           border: `1px solid ${child.is_copy_enabled ? "var(--green)" : "var(--border)"}`,
                           color: child.is_copy_enabled ? "var(--green)" : "var(--muted)",
                         }}
@@ -656,9 +656,9 @@ function AccountModal({
         style={{
           width: "100%",
           maxWidth: 520,
-          background: "#141923",
+          background: "var(--surface)",
           border: "1px solid var(--border)",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
         }}
       >
         <div className="card-header">

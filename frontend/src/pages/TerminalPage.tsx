@@ -103,6 +103,9 @@ const SECURITY_IDS: Record<string, {security_id:string, segment:string}> = {
 const T_HEADERS: Record<string, string> = {
   "T11.8": "T1", "T23.8": "T2", "T38.2": "T3", "T50": "T4", "T61.8": "T5",
   "T78.6": "T6", "T100": "T7", "T1.618": "T8", "T2.618": "T9",
+  "p_high": "PREV HIGH", "p_low": "PREV LOW", "p_close": "PREV CLOSE",
+  "P_HIGH": "PREV HIGH", "P_LOW": "PREV LOW", "P_CLOSE": "PREV CLOSE",
+  "P.HIGH": "PREV HIGH", "P.LOW": "PREV LOW", "P.CLOSE": "PREV CLOSE",
 };
 
 function isOptionScript(symbol: string, segment?: string): boolean {
@@ -1601,7 +1604,7 @@ function ImportDhanPositionsModal({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            background: "rgba(0,0,0,0.2)",
+            background: "var(--surface2)",
             flexWrap: "wrap",
             gap: 8,
           }}
@@ -1624,7 +1627,7 @@ function ImportDhanPositionsModal({
               padding: "4px 10px",
               fontSize: 10,
               fontWeight: 700,
-              background: "rgba(255,255,255,0.06)",
+              background: "var(--surface)",
               border: "1px solid var(--border)",
               color: "var(--text)",
               borderRadius: 3,
@@ -1653,7 +1656,7 @@ function ImportDhanPositionsModal({
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr style={{ borderBottom: "1px solid var(--border)", background: "rgba(0,0,0,0.2)" }}>
+                  <tr style={{ borderBottom: "1px solid var(--border)", background: "var(--surface2)" }}>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "left" }}>SCRIPT / SYMBOL</th>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "left" }}>SEGMENT</th>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>QTY</th>
@@ -1697,11 +1700,10 @@ function ImportDhanPositionsModal({
                             style={{
                               padding: "2px 4px",
                               fontSize: 10,
-                              background: "#141923",
-                              border: "1px solid rgba(0, 230, 118, 0.4)",
-                              color: "#4ade80",
+                              background: "var(--surface2)",
+                              border: "1px solid var(--border)",
+                              color: "var(--green)",
                               borderRadius: 3,
-                              colorScheme: "dark",
                             }}
                           >
                             {TARGET_COLS.map((tc) => (
@@ -1748,7 +1750,7 @@ function ImportDhanPositionsModal({
             borderTop: "1px solid var(--border)",
             display: "flex",
             justifyContent: "flex-end",
-            background: "rgba(0,0,0,0.1)",
+            background: "var(--surface2)",
           }}
         >
           <button
@@ -1925,19 +1927,18 @@ function AlgoWindowTable({
                           padding: "3px 4px",
                           fontSize: 10,
                           fontWeight: 700,
-                          background: r.trade_mode === "BUY_ONLY" ? "rgba(0, 230, 118, 0.12)" : r.trade_mode === "SELL_ONLY" ? "rgba(251, 191, 36, 0.12)" : "#141923",
+                          background: r.trade_mode === "BUY_ONLY" ? "rgba(0, 230, 118, 0.12)" : r.trade_mode === "SELL_ONLY" ? "rgba(251, 191, 36, 0.12)" : "var(--surface2)",
                           border: `1px solid ${r.trade_mode === "BUY_ONLY" ? "var(--green)" : r.trade_mode === "SELL_ONLY" ? "#f59e0b" : "var(--border)"}`,
-                          color: r.trade_mode === "BUY_ONLY" ? "#4ade80" : r.trade_mode === "SELL_ONLY" ? "#fbbf24" : "var(--text)",
+                          color: r.trade_mode === "BUY_ONLY" ? "var(--green)" : r.trade_mode === "SELL_ONLY" ? "#fbbf24" : "var(--text)",
                           borderRadius: 3,
                           cursor: "pointer",
-                          colorScheme: "dark",
                           width: "100%",
                         }}
                         title="Trade Mode: FULL (Buy+Sell cycle), BUY ONLY (Auto entry, manual exit), or SELL ONLY (Auto profit target / SL on existing holding)"
                       >
-                        <option value="FULL" style={{ background: "#141923", color: "var(--text)" }}>FULL</option>
-                        <option value="BUY_ONLY" style={{ background: "#141923", color: "#4ade80" }}>BUY ONLY</option>
-                        <option value="SELL_ONLY" style={{ background: "#141923", color: "#fbbf24" }}>SELL ONLY</option>
+                        <option value="FULL">FULL</option>
+                        <option value="BUY_ONLY">BUY ONLY</option>
+                        <option value="SELL_ONLY">SELL ONLY</option>
                       </select>
                     </td>
 
@@ -1988,29 +1989,28 @@ function AlgoWindowTable({
                               width: "100%",
                               padding: "5px 8px",
                               fontSize: 11,
-                              background: "#141923",
-                              border: `1px solid ${r.entry_type === "CUSTOM" ? "#38bdf8" : "rgba(0, 230, 118, 0.4)"}`,
-                              color: r.entry_type === "CUSTOM" ? "#38bdf8" : "#4ade80",
+                              background: "var(--surface2)",
+                              border: `1px solid ${r.entry_type === "CUSTOM" ? "#0284c7" : "rgba(0, 230, 118, 0.4)"}`,
+                              color: r.entry_type === "CUSTOM" ? "#0284c7" : "var(--green)",
                               borderRadius: 3,
                               cursor: "pointer",
                               fontWeight: 700,
-                              colorScheme: "dark",
                             }}
                             title="Select trigger condition for BUY order (Formula Entry, T1-T9 Target level, or Custom Buy price)"
                           >
-                            <option value="FORMULA" style={{ background: "#141923", color: "var(--text)" }}>
+                            <option value="FORMULA">
                               ENTRY (FORMULA)
                             </option>
                             {TARGET_COLS.map((tc) => {
                               const sign = r.signal === "SELL" ? "-" : "+";
                               const pct = isOpt ? tc.pctOption : tc.pctEquity;
                               return (
-                                <option key={tc.key} value={tc.key} style={{ background: "#141923", color: "#4ade80" }}>
+                                <option key={tc.key} value={tc.key}>
                                   {`${tc.label} (${sign}${pct})`}
                                 </option>
                               );
                             })}
-                            <option value="CUSTOM" style={{ background: "#141923", color: "#38bdf8", fontWeight: 700 }}>
+                            <option value="CUSTOM">
                               CUSTOM BUY PRICE
                             </option>
                           </select>
@@ -2096,7 +2096,7 @@ function AlgoWindowTable({
                             padding: "8px 6px",
                             textAlign: "right",
                             fontSize: 12,
-                            color: isArmed ? "var(--green)" : "rgba(255,255,255,0.7)",
+                            color: isArmed ? "var(--green)" : "var(--muted)",
                             fontWeight: isArmed ? 700 : 400,
                             background: isArmed ? "rgba(0, 230, 118, 0.08)" : "transparent",
                             borderRight: isArmed ? "1px solid rgba(0, 230, 118, 0.25)" : "none",
@@ -2135,13 +2135,12 @@ function AlgoWindowTable({
                           width: "100%",
                           padding: "5px 8px",
                           fontSize: 11,
-                          background: r.target_type === "KILL" ? "rgba(255,40,80,0.25)" : "#141923",
-                          border: `1px solid ${r.target_type === "KILL" ? "var(--red)" : r.target_type === "CUSTOM" ? "#38bdf8" : "rgba(0, 230, 118, 0.4)"}`,
-                          color: r.target_type === "KILL" ? "#ff4d6d" : r.target_type === "CUSTOM" ? "#38bdf8" : "#4ade80",
+                          background: r.target_type === "KILL" ? "rgba(255,40,80,0.18)" : "var(--surface2)",
+                          border: `1px solid ${r.target_type === "KILL" ? "var(--red)" : r.target_type === "CUSTOM" ? "#0284c7" : "rgba(0, 230, 118, 0.4)"}`,
+                          color: r.target_type === "KILL" ? "var(--red)" : r.target_type === "CUSTOM" ? "#0284c7" : "var(--green)",
                           borderRadius: 3,
                           cursor: "pointer",
                           fontWeight: 700,
-                          colorScheme: "dark",
                         }}
                         title="Select active target level or trigger instant Kill Switch"
                       >
@@ -2149,13 +2148,13 @@ function AlgoWindowTable({
                           const sign = r.signal === "SELL" ? "-" : "+";
                           const pct = isOpt ? tc.pctOption : tc.pctEquity;
                           return (
-                            <option key={tc.key} value={tc.key} style={{ background: "#141923", color: "#4ade80" }}>
+                            <option key={tc.key} value={tc.key}>
                               {`${tc.label} (${sign}${pct})`}
                             </option>
                           );
                         })}
-                        <option value="CUSTOM" style={{ background: "#141923", color: "#38bdf8", fontWeight: 700 }}>CUSTOM TARGET</option>
-                        <option value="KILL" style={{ background: "#2a1215", color: "#ff4d6d", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
+                        <option value="CUSTOM">CUSTOM TARGET</option>
+                        <option value="KILL" style={{ color: "var(--red)", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
                       </select>
 
                       {r.target_type === "CUSTOM" && (
@@ -2210,7 +2209,7 @@ function AlgoWindowTable({
                           letterSpacing: 0.5,
                           borderRadius: 3,
                           cursor: "pointer",
-                          background: isAuto ? "rgba(0, 230, 118, 0.18)" : "rgba(255, 255, 255, 0.05)",
+                          background: isAuto ? "rgba(0, 230, 118, 0.18)" : "var(--surface2)",
                           border: `1px solid ${isAuto ? "var(--green)" : "var(--border)"}`,
                           color: isAuto ? "var(--green)" : "var(--muted)",
                           transition: "all 0.15s",
@@ -2231,7 +2230,7 @@ function AlgoWindowTable({
                           width: 48,
                           padding: "3px 4px",
                           fontSize: 11,
-                          background: "rgba(0,0,0,0.3)",
+                          background: "var(--surface2)",
                           border: "1px solid var(--border)",
                           color: "var(--text)",
                           borderRadius: 3,
@@ -2248,17 +2247,16 @@ function AlgoWindowTable({
                         style={{
                           padding: "3px 4px",
                           fontSize: 11,
-                          background: "#141923",
+                          background: "var(--surface2)",
                           border: "1px solid var(--border)",
-                          color: "#fcd34d",
+                          color: "var(--yellow)",
                           borderRadius: 3,
                           cursor: "pointer",
                           fontWeight: 600,
-                          colorScheme: "dark",
                         }}
                       >
                         {[1, 2, 3, 4, 5].map((n) => (
-                          <option key={n} value={n} style={{ background: "#141923", color: "#fcd34d" }}>
+                          <option key={n} value={n}>
                             {n} {n === 1 ? "TRD" : "TRDS"}
                           </option>
                         ))}
@@ -2453,7 +2451,7 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
     <div style={{border:"1px solid var(--border)", background:"var(--surface)", marginBottom:16}}>
       <div style={{
         display:"flex", alignItems:"center", justifyContent:"space-between",
-        padding:"10px 14px", borderBottom:"1px solid var(--border)", background:"rgba(0,0,0,0.18)",
+        padding:"10px 14px", borderBottom:"1px solid var(--border)", background:"var(--surface2)",
         flexWrap: "wrap", gap: 10
       }}>
         <div style={{display:"flex", alignItems:"center", gap:8}}>
@@ -2538,9 +2536,9 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                   case "high":       value=live.high; color="var(--green)"; break;
                   case "low":        value=live.low;  color="var(--red)"; break;
                   case "close":      value=live.close; break;
+                  case "p_high":     value=live.p_high ?? null; color="var(--green)"; break;
+                  case "p_low":      value=live.p_low ?? null;  color="var(--red)"; break;
                   case "p_close":    value=live.p_close ?? live.prev_close ?? null; break;
-                  case "p_high":     value=live.p_high ?? null; break;
-                  case "p_low":      value=live.p_low ?? null; break;
                   case "vwap":       value=live.vwap||live.atp||null; break;
                   case "bp1":        value=live.bp1; color="var(--green)"; break;
                   case "sp1":        value=live.sp1; color="var(--red)"; break;
@@ -2578,7 +2576,7 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                 background:inPos?"rgba(0,255,136,0.03)":"transparent",
                 borderLeft:inPos?"2px solid var(--green)":"2px solid transparent",
               }}
-                onMouseEnter={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.06)":"rgba(255,255,255,0.02)")}
+                onMouseEnter={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.06)":"var(--surface2)")}
                 onMouseLeave={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.03)":"transparent")}
               >
                 <td style={{

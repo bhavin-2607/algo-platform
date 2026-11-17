@@ -629,6 +629,34 @@ async def _shared_columns(db: AsyncSession, current_user: User):
         )
         cols = list(result.scalars().all())
 
+    if cols:
+        existing_keys = {c.col_key for c in cols if c.col_key}
+        owner_id = cols[0].user_id
+        added = False
+        for d in DEFAULT_COLUMNS:
+            if d.get("col_key") and d["col_key"] not in existing_keys:
+                db.add(TerminalColumn(
+                    user_id=owner_id,
+                    name=d["name"],
+                    col_key=d["col_key"],
+                    col_type=d["col_type"],
+                    formula=d.get("formula"),
+                    col_order=d["col_order"],
+                    width=d["width"],
+                    is_visible=True,
+                    color_rules=d.get("color_rules"),
+                    book="shared",
+                ))
+                added = True
+        if added:
+            await db.commit()
+            result = await db.execute(
+                select(TerminalColumn)
+                .where(TerminalColumn.user_id.in_(admin_ids) if admin_ids else TerminalColumn.user_id == owner_id)
+                .order_by(TerminalColumn.col_order)
+            )
+            cols = list(result.scalars().all())
+
     if not cols:
         owner_id = admin_ids[0] if admin_ids else current_user.id
         for d in DEFAULT_COLUMNS:
