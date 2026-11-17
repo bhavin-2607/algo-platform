@@ -12,7 +12,18 @@ import {
   LogOut,
   ChevronDown,
   Clock,
+  Bell,
+  Volume2,
+  VolumeX,
+  Trash2,
+  CheckCheck,
+  X,
+  AlertTriangle,
+  ArrowUpRight,
+  ArrowDownRight,
+  Info,
 } from "lucide-react";
+import { useNotificationStore, notifyMarket } from "@/store/notifications";
 
 function TopNavClock() {
   const [time, setTime] = useState(() => {
@@ -65,6 +76,339 @@ function TopNavClock() {
   );
 }
 
+function NotificationBell() {
+  const { notifications, soundEnabled, toggleSound, markAsRead, markAllAsRead, clearAll } =
+    useNotificationStore();
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<"ALL" | "ORDERS" | "ERRORS" | "MARKET">("ALL");
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const filtered = notifications.filter((n) => {
+    if (filter === "ORDERS") return n.type === "order";
+    if (filter === "ERRORS") return n.type === "error";
+    if (filter === "MARKET") return n.type === "market";
+    return true;
+  });
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [open]);
+
+  return (
+    <div ref={drawerRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Notification History & Audio Chimes"
+        style={{
+          position: "relative",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 32,
+          height: 30,
+          background: open ? "var(--surface2)" : "transparent",
+          border: `1px solid ${open ? "var(--green)" : "var(--border)"}`,
+          borderRadius: 4,
+          cursor: "pointer",
+          color: unreadCount > 0 ? "var(--green)" : "var(--muted)",
+          transition: "all 0.15s ease",
+        }}
+      >
+        <Bell size={15} />
+        {unreadCount > 0 && (
+          <span
+            style={{
+              position: "absolute",
+              top: -4,
+              right: -4,
+              minWidth: 16,
+              height: 16,
+              padding: "0 4px",
+              borderRadius: 8,
+              background: "var(--red)",
+              color: "#fff",
+              fontSize: 9,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 0 6px rgba(255, 59, 87, 0.6)",
+              lineHeight: 1,
+            }}
+          >
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 8px)",
+            width: 380,
+            maxHeight: 520,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            boxShadow: "0 12px 36px rgba(0, 0, 0, 0.5)",
+            zIndex: 9999,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            animation: "fadeUp 0.15s ease",
+          }}
+        >
+          {/* Header */}
+          <div
+            style={{
+              padding: "10px 14px",
+              borderBottom: "1px solid var(--border)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: "rgba(255,255,255,0.02)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, color: "var(--text)" }}>
+                NOTIFICATIONS
+              </span>
+              {unreadCount > 0 && (
+                <span
+                  style={{
+                    background: "rgba(0, 230, 118, 0.15)",
+                    color: "var(--green)",
+                    border: "1px solid rgba(0, 230, 118, 0.3)",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "1px 6px",
+                    borderRadius: 3,
+                  }}
+                >
+                  {unreadCount} NEW
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* Sound Toggle */}
+              <button
+                type="button"
+                onClick={toggleSound}
+                title={soundEnabled ? "Sound enabled (click to mute)" : "Sound muted (click to unmute)"}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: soundEnabled ? "var(--green)" : "var(--muted)",
+                  padding: 2,
+                  display: "inline-flex",
+                  alignItems: "center",
+                }}
+              >
+                {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+              </button>
+
+              {/* Mark all read */}
+              {unreadCount > 0 && (
+                <button
+                  type="button"
+                  onClick={markAllAsRead}
+                  title="Mark all as read"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--muted)",
+                    padding: 2,
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <CheckCheck size={14} />
+                </button>
+              )}
+
+              {/* Clear all */}
+              {notifications.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearAll}
+                  title="Clear all notifications"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--muted)",
+                    padding: 2,
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+
+              {/* Close */}
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                title="Close"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--muted)",
+                  padding: 2,
+                  display: "inline-flex",
+                  alignItems: "center",
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+
+          {/* Filter Tabs */}
+          <div
+            style={{
+              display: "flex",
+              borderBottom: "1px solid var(--border)",
+              background: "rgba(0,0,0,0.15)",
+              padding: "4px 8px",
+              gap: 4,
+            }}
+          >
+            {(["ALL", "ORDERS", "ERRORS", "MARKET"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setFilter(tab)}
+                style={{
+                  padding: "3px 8px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.8,
+                  borderRadius: 3,
+                  border: "none",
+                  cursor: "pointer",
+                  background: filter === tab ? "var(--surface2)" : "transparent",
+                  color: filter === tab ? "var(--green)" : "var(--muted)",
+                }}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Notification List */}
+          <div style={{ flex: 1, overflowY: "auto", maxHeight: 400 }}>
+            {filtered.length === 0 ? (
+              <div
+                style={{
+                  padding: "36px 16px",
+                  textAlign: "center",
+                  color: "var(--muted)",
+                  fontSize: 12,
+                }}
+              >
+                No notifications in this category.
+              </div>
+            ) : (
+              filtered.map((item) => {
+                const timeStr = new Date(item.timestamp).toLocaleTimeString("en-IN", {
+                  hour12: false,
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                });
+                const isBuy = item.side === "BUY";
+                const isSell = item.side === "SELL";
+                const isError = item.type === "error";
+                const isMarket = item.type === "market";
+
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => markAsRead(item.id)}
+                    style={{
+                      padding: "8px 12px",
+                      borderBottom: "1px solid var(--border)",
+                      background: item.read ? "transparent" : "rgba(0, 230, 118, 0.03)",
+                      cursor: "pointer",
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "flex-start",
+                      transition: "background 0.12s",
+                    }}
+                  >
+                    <div style={{ marginTop: 2, flexShrink: 0 }}>
+                      {isError ? (
+                        <AlertTriangle size={14} style={{ color: "var(--red)" }} />
+                      ) : isBuy ? (
+                        <ArrowUpRight size={14} style={{ color: "var(--green)" }} />
+                      ) : isSell ? (
+                        <ArrowDownRight size={14} style={{ color: "var(--red)" }} />
+                      ) : isMarket ? (
+                        <Clock size={14} style={{ color: "var(--cyan, #08b6de)" }} />
+                      ) : (
+                        <Info size={14} style={{ color: "var(--muted)" }} />
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: item.read ? 600 : 700,
+                            color: isError ? "var(--red)" : "var(--text)",
+                            letterSpacing: 0.5,
+                          }}
+                        >
+                          {item.title}
+                        </span>
+                        <span style={{ fontSize: 9, color: "var(--muted)", flexShrink: 0, fontFamily: "monospace" }}>
+                          {timeStr}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--muted)",
+                          marginTop: 2,
+                          lineHeight: 1.4,
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {item.message}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const NAV_ITEMS = [
   { path: "/dashboard",    label: "Dashboard" },
   { path: "/terminal",     label: "Terminal" },
@@ -105,7 +449,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { data: brokerAccounts } = useQuery({
     queryKey: ["broker-accounts"],
     queryFn: () => api.get("/brokers").then((r) => r.data).catch(() => []),
-    staleTime: 30_000,
+    staleTime: 0,
+    refetchInterval: 8_000,
   });
   const activeBroker = (brokerAccounts || []).find((b: any) => b.is_active);
   const isPaperMode = !activeBroker || Boolean(activeBroker.paper_trading);
@@ -114,7 +459,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { data: fundsData } = useQuery({
     queryKey: ["dhan-funds"],
     queryFn: () => api.get("/market/funds").then((r) => r.data).catch(() => null),
-    refetchInterval: 30_000,
+    refetchInterval: 15_000,
   });
 
   // Copy trading active account count
@@ -128,9 +473,41 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { data: dhanStatus } = useQuery({
     queryKey: ["dhan-auth-token-status"],
     queryFn: () => api.get("/dhan-auth/token-status").then((r) => r.data).catch(() => null),
-    refetchInterval: 15_000,
+    staleTime: 0,
+    refetchInterval: 8_000,
   });
   const tokenOffline = dhanStatus && !dhanStatus.valid;
+
+  // Market hours watchdog for 9:15 AM (Open) and 3:30 PM (Closed) IST chimes
+  useEffect(() => {
+    let lastChecked = "";
+    const timer = setInterval(() => {
+      const istDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const day = istDate.getDay();
+      if (day < 1 || day > 5) return; // Monday to Friday only
+
+      const dateStr = istDate.toISOString().slice(0, 10);
+      const hours = istDate.getHours();
+      const minutes = istDate.getMinutes();
+      const seconds = istDate.getSeconds();
+
+      if (hours === 9 && minutes === 15 && seconds < 6) {
+        const key = `${dateStr}-open`;
+        if (lastChecked !== key) {
+          lastChecked = key;
+          notifyMarket("OPEN", "NSE/BSE/MCX market session is open (09:15 IST).");
+        }
+      } else if (hours === 15 && minutes === 30 && seconds < 6) {
+        const key = `${dateStr}-close`;
+        if (lastChecked !== key) {
+          lastChecked = key;
+          notifyMarket("CLOSED", "NSE/BSE equity & F&O market session has concluded (15:30 IST).");
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(timer);
+  }, []);
 
   function handleLogout() {
     logout();
@@ -279,6 +656,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </>
             )}
           </div>
+
+          {/* Notification History Bell & Audio Chimes */}
+          <NotificationBell />
 
           <span style={{ color: "var(--border)", fontSize: 13, userSelect: "none" }}>|</span>
 

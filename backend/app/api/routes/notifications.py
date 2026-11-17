@@ -67,7 +67,7 @@ async def send_test_notification(
     notifier = get_notifier()
     sent = await notifier.send(
         chat_id,
-        f"✅ <b>AlgoTrade notification test</b>\n\nHello <b>{current_user.username}</b>! "
+        f"[OK] <b>AlgoTrade notification test</b>\n\nHello <b>{current_user.username}</b>! "
         f"Your Telegram notifications are working correctly.",
     )
     if not sent:

@@ -16,7 +16,7 @@ export default function AdminPage() {
           <p className="page-sub">Platform management, user control & Dhan security</p>
         </div>
       </div>
-      <div className="tab-switcher" style={{ marginBottom:24 }}>
+      <div className="tab-switcher" style={{ marginBottom:10 }}>
         {(["overview","users","trades","ip-whitelisting"] as const).map(t => (
           <button key={t} className={`tab-btn${tab===t?" active":""}`} onClick={()=>setTab(t)}>
             {t === "ip-whitelisting" ? "IP WHITELISTING" : t.toUpperCase()}
@@ -41,7 +41,7 @@ function OverviewTab() {
   if (!data) return <Spinner />;
   return (
     <div>
-      <div className="stats-grid" style={{ marginBottom:24 }}>
+      <div className="stats-grid" style={{ marginBottom:10 }}>
         <StatCard label="TOTAL USERS"         value={data.users?.total ?? 0}   sub={`${data.users?.active ?? 0} active`} />
         <StatCard label="TOTAL TRADES"        value={data.trades?.total ?? 0}  sub={`${data.trades?.live ?? 0} live · ${data.trades?.paper ?? 0} paper`} />
         <StatCard label="ALGO SCRIPTS"        value={data.algo?.total ?? 0}    sub={`${data.algo?.active ?? 0} automated active`} color="green" />
@@ -102,7 +102,7 @@ function UsersTab() {
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
         <span style={{ fontSize:13, color:"var(--muted)" }}>{users?.length??0} registered accounts</span>
         <button className="connect-btn" onClick={()=>setShowForm(v=>!v)}>
           {showForm ? "CANCEL" : "+ CREATE USER"}
@@ -110,13 +110,13 @@ function UsersTab() {
       </div>
 
       {showForm && (
-        <div className="card" style={{ padding:20, marginBottom:20 }}>
-          <div className="card-title" style={{ marginBottom:16 }}>NEW USER</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+        <div className="card" style={{ padding:"12px 14px", marginBottom:10 }}>
+          <div className="card-title" style={{ marginBottom:10 }}>NEW USER</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
             <FormField label="EMAIL"    value={form.email}    onChange={set("email")}    type="email" />
             <FormField label="USERNAME" value={form.username} onChange={set("username")} type="text" />
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
             <FormField label="PASSWORD" value={form.password} onChange={set("password")} type="password" />
             <div className="field">
               <label className="field-label">ROLE</label>

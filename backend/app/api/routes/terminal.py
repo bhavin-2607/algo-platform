@@ -1735,7 +1735,7 @@ async def get_dhan_positions(
             if net_qty != 0:
                 sym = pos.get("tradingSymbol") or pos.get("customSymbol") or pos.get("symbol") or str(pos.get("securityId") or "")
                 seg = pos.get("exchangeSegment") or pos.get("segment") or ("NSE_FNO" if is_option_symbol(sym) else "NSE_EQ")
-                exch = "NFO" if seg in ("NSE_FNO", "NFO") else ("NSE" if "NSE" in str(seg) else "BSE")
+                exch = "MCX" if "MCX" in str(seg) else ("NFO" if seg in ("NSE_FNO", "NFO") else ("NSE" if "NSE" in str(seg) else "BSE"))
                 sec_id = str(pos.get("securityId") or "")
                 buy_avg = float(pos.get("buyAvg") or pos.get("costPrice") or pos.get("price") or 0.0)
                 ltp = float(pos.get("ltp") or pos.get("lastPrice") or 0.0)

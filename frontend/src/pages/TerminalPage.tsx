@@ -12,6 +12,7 @@ import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import { wsBase } from "@/utils/ws";
 import { useAuthStore } from "@/store/auth";
+import { notifyOrder, notifyError } from "@/store/notifications";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 
@@ -318,8 +319,15 @@ export default function TerminalPage() {
 
   const exitRowMutation = useMutation({
     mutationFn: (id: string) => api.post(`/terminal/rows/${id}/exit`),
-    onSuccess: () => { toast.success("Exit order sent"); qc.invalidateQueries({queryKey:["terminal-rows"]}); },
-    onError: () => toast.error("No active position"),
+    onSuccess: (res: any) => {
+      toast.success("Exit order sent");
+      notifyOrder("SELL", res.data?.symbol || "POSITION", res.data?.quantity || 1, res.data?.price);
+      qc.invalidateQueries({queryKey:["terminal-rows"]});
+    },
+    onError: () => {
+      toast.error("No active position");
+      notifyError("EXIT ORDER FAILED", "No active position or exit order rejected");
+    },
   });
 
   // ── Algo Trading Window Queries & Mutations ──────────────────────────────
@@ -392,10 +400,17 @@ export default function TerminalPage() {
     mutationFn: ({ id, side }: { id: string; side: "BUY" | "SELL" }) =>
       api.post(`/terminal/algo-rows/${id}/manual-order`, { side }),
     onSuccess: (res: any) => {
+      const row = (algoRows ?? []).find((r: any) => r.id === res.data?.row_id);
+      const sym = row?.symbol || res.data?.symbol || "ALGO";
       toast.success(`Manual ${res.data?.side} executed @ ₹${res.data?.fill_price}`);
+      notifyOrder(res.data?.side || "BUY", sym, res.data?.fill_qty || row?.quantity || 1, res.data?.fill_price);
       qc.invalidateQueries({ queryKey: ["algo-rows"] });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.detail || "Manual order execution failed"),
+    onError: (err: any) => {
+      const msg = err?.response?.data?.detail || "Manual order execution failed";
+      toast.error(msg);
+      notifyError("MANUAL ORDER FAILED", msg);
+    },
   });
 
   const killAlgoMutation = useMutation({
@@ -461,8 +476,8 @@ export default function TerminalPage() {
           justifyContent: "space-between",
           flexWrap: "wrap",
           gap: 12,
-          padding: "8px 14px",
-          marginBottom: 14,
+          padding: "6px 12px",
+          marginBottom: 8,
           borderRadius: 4,
           border: "1px solid var(--border)",
           background: "var(--surface)",
@@ -618,7 +633,7 @@ export default function TerminalPage() {
       {watchlist.length > 0 && (
         <div style={{
           display:"flex", alignItems:"center", justifyContent:"space-between",
-          margin:"14px 0 12px", flexWrap:"wrap", gap:10
+          margin:"8px 0 8px", flexWrap:"wrap", gap:8
         }}>
           <div className="tab-switcher" style={{margin:0}}>
             <button
@@ -682,7 +697,7 @@ export default function TerminalPage() {
         />
       )}
       {(viewMode === "all" || viewMode === "options") && optionSymbols.length > 0 && (
-        <div style={{marginTop: (viewMode === "all" && equitySymbols.length) ? 18 : 0}}>
+        <div style={{marginTop: (viewMode === "all" && equitySymbols.length) ? 10 : 0}}>
           <TerminalTable
             title="OPTIONS"
             book="option"
@@ -704,7 +719,7 @@ export default function TerminalPage() {
 
       {/* ── Algo Trading Window Table ────────────────────────────────────── */}
       {(viewMode === "all" || viewMode === "algo") && (
-        <div style={{marginTop: 18}}>
+        <div style={{marginTop: 10}}>
           <AlgoWindowTable
             algoRows={algoRows ?? []}
             isPaper={isPaperMode}
@@ -752,8 +767,8 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
   }, [query]);
 
   return (
-    <div className="card" style={{marginBottom:12}}>
-      <div style={{padding:"14px 16px"}}>
+    <div className="card" style={{marginBottom:8}}>
+      <div style={{padding:"8px 12px"}}>
         <div style={{position:"relative", maxWidth:500, display:"flex", gap:8}}>
           <input className="field-input" value={query}
             onChange={e => setQuery(e.target.value)} autoFocus
@@ -2753,10 +2768,17 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
     }),
     onSuccess: (res: any) => {
       toast.success(`${side} order placed — ID: ${res.data?.order_id}`);
+      notifyOrder(side, symbol, qty, orderType === "LIMIT" ? price : ltp || undefined);
       qc.invalidateQueries({queryKey:["orderbook"]});
       onClose();
     },
-    onError: (e: any) => { const d = e.response?.data?.detail; const msg = Array.isArray(d) ? d.map((x:any) => x.msg || JSON.stringify(x)).join(", ") : typeof d === "string" ? d : d?.error_message || JSON.stringify(d) || "Order failed"; toast.error(msg); setConfirm(false); },
+    onError: (e: any) => {
+      const d = e.response?.data?.detail;
+      const msg = Array.isArray(d) ? d.map((x:any) => x.msg || JSON.stringify(x)).join(", ") : typeof d === "string" ? d : d?.error_message || JSON.stringify(d) || "Order failed";
+      toast.error(msg);
+      notifyError("ORDER REJECTED", `${symbol} ${side}: ${msg}`);
+      setConfirm(false);
+    },
   });
 
   const estimatedValue = ltp && qty ? (ltp * parseInt(qty || "0")).toLocaleString() : "—";

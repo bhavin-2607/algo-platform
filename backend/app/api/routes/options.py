@@ -51,11 +51,13 @@ def _load_option_rows() -> list[dict]:
         return rows
     with open(csv_path, newline="", encoding="utf-8", errors="ignore") as handle:
         for row in csv.DictReader(handle):
-            if row.get("EXCH_ID") != "NSE":
+            exch = (row.get("EXCH_ID") or "").strip().upper()
+            if exch not in ("NSE", "MCX", "BSE"):
                 continue
-            if row.get("INSTRUMENT") not in ("OPTIDX", "OPTSTK"):
+            inst = (row.get("INSTRUMENT") or "").strip().upper()
+            if inst not in ("OPTIDX", "OPTSTK", "OPTFUT", "OPTCOM"):
                 continue
-            opt = (row.get("OPTION_TYPE") or "").strip()
+            opt = (row.get("OPTION_TYPE") or "").strip().upper()
             if opt not in ("CE", "PE"):
                 continue
             sid = (row.get("SECURITY_ID") or "").strip()
@@ -69,7 +71,15 @@ def _load_option_rows() -> list[dict]:
             except ValueError:
                 continue
             expiry = (row.get("SM_EXPIRY_DATE") or "").strip()
-            blob = f"{display} {underlying} {strike:g} {opt} {expiry}".upper()
+            blob = f"{display} {underlying} {strike:g} {opt} {expiry} {exch}".upper()
+
+            if exch == "MCX":
+                seg = "MCX_COMM"
+            elif exch == "BSE":
+                seg = "BSE_FNO"
+            else:
+                seg = "NSE_FNO"
+
             rows.append({
                 "symbol":           display or f"{underlying} {strike:g} {opt}",
                 "underlying":       underlying,
@@ -78,11 +88,13 @@ def _load_option_rows() -> list[dict]:
                 "option_type":      opt,
                 "expiry":           expiry,
                 "lot_size":         lot,
-                "exchange_segment": "NSE_FNO",
+                "exchange":         exch,
+                "exchange_segment": seg,
+                "segment":          seg,
                 "blob":             blob,
             })
     _OPTION_ROWS = rows
-    logger.info("Loaded %s NSE option contracts for search", len(rows))
+    logger.info("Loaded %s option contracts (NSE, MCX, BSE) for search", len(rows))
     return rows
 
 

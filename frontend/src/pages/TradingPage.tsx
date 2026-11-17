@@ -47,19 +47,37 @@ export default function TradingPage() {
       }
       return res;
     }),
-    onSuccess: () => { toast.success("Broker account added"); qc.invalidateQueries({queryKey:["brokers"]}); setShowForm(false); },
+    onSuccess: () => {
+      toast.success("Broker account added");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+      setShowForm(false);
+    },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
   });
 
   const activateMutation = useMutation({
     mutationFn: (id: string) => brokerApi.activate(id),
-    onSuccess: () => { toast.success("Broker activated"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Broker activated");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+    },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Activation failed"),
   });
 
   const removeMutation = useMutation({
     mutationFn: (id: string) => brokerApi.disconnect(id),
-    onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Removed");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
   });
 
   const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker === "dhan" || b.broker === "paper");
@@ -161,7 +179,12 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
 
   const deactivateMutation = useMutation({
     mutationFn: () => api.patch(`/brokers/${b.id}/deactivate`),
-    onSuccess: () => { toast.success("Broker deactivated"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Broker deactivated");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
     onError: () => toast.error("Deactivation failed"),
   });
 
@@ -170,6 +193,11 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
     onSuccess: (res: any) => {
       toast.success(`Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
       qc.invalidateQueries({queryKey:["settings-status"]});
+      qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed — token may be expired"),
   });
@@ -178,7 +206,12 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
     mutationFn: () => api.post("/settings/dhan-token", {access_token: token}),
     onSuccess: (res: any) => {
       toast.success(res.data?.valid ? "Token updated & verified" : "Token saved");
-      qc.invalidateQueries({queryKey:["settings-status","brokers"]});
+      qc.invalidateQueries({queryKey:["settings-status"]});
+      qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
       setToken(""); setExpanded(false);
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Update failed"),
@@ -188,7 +221,7 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
     <div style={{borderTop:"1px solid var(--border)"}}>
       {/* Main row */}
       <div style={{
-        padding:"16px 20px", display:"flex",
+        padding:"10px 14px", display:"flex",
         alignItems:"center", justifyContent:"space-between",
       }}>
         <div style={{display:"flex", alignItems:"center", gap:14}}>

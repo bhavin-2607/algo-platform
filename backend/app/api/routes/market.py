@@ -504,11 +504,12 @@ async def search_instruments_csv(
     try:
         df = _scrip_frame()
 
-        # Equity + Indices
+        # Equity + Indices + MCX Commodities
         eq_df = df[
             ((df["EXCH_ID"] == "NSE") & (df["SERIES"] == "EQ")) |
             ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))  |
-            ((df["EXCH_ID"] == "NSE") & (df["SEGMENT"] == "I"))
+            ((df["EXCH_ID"] == "NSE") & (df["SEGMENT"] == "I")) |
+            ((df["EXCH_ID"] == "MCX") & (df["INSTRUMENT"].isin(["FUTCOM", "FUTIDX"])))
         ]
 
         mask = (
@@ -518,7 +519,7 @@ async def search_instruments_csv(
         )
         matches = eq_df[mask].head(60)
 
-        # Deduplicate by ISIN — NSE first
+        # Deduplicate by ISIN — NSE first, then BSE, then MCX
         seen_isin = {}
         results   = []
 
@@ -550,6 +551,17 @@ async def search_instruments_csv(
                     "isin":             isin,
                 })
 
+        for _, row in matches[matches["EXCH_ID"] == "MCX"].iterrows():
+            results.append({
+                "symbol":           str(row["DISPLAY_NAME"] or row["SYMBOL_NAME"]),
+                "name":             str(row["SYMBOL_NAME"] or row["DISPLAY_NAME"]),
+                "security_id":      str(int(float(row["SECURITY_ID"]))),
+                "exchange_segment": "MCX_COMM",
+                "exchange":         "MCX",
+                "series":           str(row.get("INSTRUMENT") or "FUTCOM"),
+                "isin":             "",
+            })
+
         # Sort: exact match first, then starts-with, then contains
         def sort_key(r):
             s = r["symbol"].upper()
@@ -560,21 +572,21 @@ async def search_instruments_csv(
 
         results.sort(key=sort_key)
 
-        # Option contracts join this search when the query names a strike or CE/PE.
+        # Option contracts join this search when the query names a strike, CE/PE, or commodity
         # Equity and index rows stay first so a plain symbol search is unchanged.
         if _query_includes_option(q_upper):
             from app.api.routes.options import match_option_contracts
             results = results[:8]
             seen = {r["security_id"] for r in results}
-            for opt in match_option_contracts(q_upper, limit=12):
+            for opt in match_option_contracts(q_upper, limit=16):
                 if opt["security_id"] in seen:
                     continue
                 results.append({
                     "symbol":           opt["symbol"],
                     "name":             f"{opt['underlying']} {opt['strike']:g} {opt['option_type']} {opt['expiry']}",
                     "security_id":      opt["security_id"],
-                    "exchange_segment": "NSE_FNO",
-                    "exchange":         "NSE",
+                    "exchange_segment": opt.get("exchange_segment", "NSE_FNO"),
+                    "exchange":         opt.get("exchange", "NSE"),
                     "series":           opt["option_type"],
                     "isin":             "",
                 })
@@ -589,7 +601,12 @@ async def search_instruments_csv(
 def _query_includes_option(q: str) -> bool:
     if any(ch.isdigit() for ch in q):
         return True
-    return any(word in q.split() for word in ("CE", "PE", "CALL", "PUT"))
+    words = set(q.split())
+    if words & {"CE", "PE", "CALL", "PUT"}:
+        return True
+    if words & {"GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "MCX"}:
+        return True
+    return False
 
 
 BUNDLED_INSTRUMENTS = [

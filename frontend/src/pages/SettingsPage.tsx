@@ -21,13 +21,13 @@ export default function SettingsPage() {
       </div>
       <div className="settings-board">
         {/* Left Column: User Profile & Security */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <UserProfileCard />
           <PasswordCard />
         </div>
 
         {/* Right Column: Connected Broker & Token Refresh */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <BrokerSettingsSection />
           <TokenRenewalCard qc={qc} />
         </div>
@@ -48,8 +48,8 @@ function UserProfileCard() {
           {isAdmin ? "ADMINISTRATOR" : "TRADER"}
         </span>
       </div>
-      <div style={{ padding: "18px 20px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+      <div style={{ padding: "12px 14px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
           <div
             style={{
               width: 44,
@@ -125,6 +125,10 @@ function TokenRenewalCard({qc}: {qc: any}) {
       toast.success(res.data?.valid ? "Token updated & verified" : "Token saved (verify failed)");
       qc.invalidateQueries({queryKey:["settings-status"]});
       qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
       setNewToken("");
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Update failed"),
@@ -135,6 +139,11 @@ function TokenRenewalCard({qc}: {qc: any}) {
     onSuccess: (res: any) => {
       toast.success(`Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
       qc.invalidateQueries({queryKey:["settings-status"]});
+      qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed"),
   });
@@ -218,7 +227,7 @@ function PasswordCard() {
       <div className="card-header">
         <span className="card-title">PASSWORD & SECURITY</span>
       </div>
-      <div style={{ padding: "16px 20px", display: "grid", gap: 12 }}>
+      <div style={{ padding: "12px 14px", display: "grid", gap: 8 }}>
         <div>
           <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CURRENT PASSWORD</label>
           <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
@@ -364,6 +373,8 @@ function BrokerSettingsSection() {
     onSuccess: () => {
       toast.success("Broker added and verified");
       qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
       qc.invalidateQueries({queryKey:["dhan-funds"]});
       setShowForm(false);
     },
@@ -372,7 +383,12 @@ function BrokerSettingsSection() {
 
   const removeMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/brokers/${id}`),
-    onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Removed");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
   });
 
   const activateMutation = useMutation({
@@ -380,6 +396,8 @@ function BrokerSettingsSection() {
     onSuccess: (res: any) => {
       toast.success(res.data?.message || "Broker activated successfully");
       qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
       qc.invalidateQueries({queryKey:["dhan-funds"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to activate broker"),
@@ -387,7 +405,12 @@ function BrokerSettingsSection() {
 
   const deactivateMutation = useMutation({
     mutationFn: (id: string) => api.patch(`/brokers/${id}/deactivate`),
-    onSuccess: () => { toast.success("Deactivated"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Deactivated");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
   });
 
   const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker === "dhan" || b.broker === "paper");
@@ -402,8 +425,8 @@ function BrokerSettingsSection() {
         </div>
 
         {showForm && (
-          <div style={{padding:"20px 20px 0"}}>
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12}}>
+          <div style={{padding:"12px 14px 0"}}>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
               <div className="field">
                 <label className="field-label">CLIENT ID</label>
                 <input className="field-input" value={form.client_id}
@@ -432,7 +455,7 @@ function BrokerSettingsSection() {
               </div>
             </div>
             {!form.paper_trading && (
-              <div className="field" style={{marginBottom:12}}>
+              <div className="field" style={{marginBottom:10}}>
                 <label className="field-label">ACCESS TOKEN</label>
                 <input className="field-input" type="password"
                   value={form.access_token}
@@ -443,14 +466,14 @@ function BrokerSettingsSection() {
             <button className={`auth-btn${connectMutation.isPending?" loading":""}`}
               onClick={()=>connectMutation.mutate()}
               disabled={connectMutation.isPending}
-              style={{maxWidth:200, marginBottom:20}}>
-              {connectMutation.isPending?"ADDING...":"ADD BROKER →"}
+              style={{maxWidth:200, marginBottom:10}}>
+              {connectMutation.isPending?"ADDING...":"ADD BROKER ->"}
             </button>
           </div>
         )}
 
         {visibleBrokers.length === 0 && !showForm && (
-          <div style={{padding:"30px 20px", textAlign:"center", color:"var(--muted)", fontSize:12}}>
+          <div style={{padding:"20px 14px", textAlign:"center", color:"var(--muted)", fontSize:12}}>
             No broker connected. Add Dhan to start trading.
           </div>
         )}
@@ -469,7 +492,7 @@ function BrokerSettingsSection() {
 function BrokerRow({ broker: b, onActivate, onRemove, onDeactivate }: any) {
   return (
     <div style={{borderTop:"1px solid var(--border)"}}>
-      <div style={{padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+      <div style={{padding:"10px 14px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
         <div style={{display:"flex", alignItems:"center", gap:14}}>
           <div style={{width:36, height:36, borderRadius:4,
             background:"rgba(0,255,136,0.1)", border:"1px solid rgba(0,255,136,0.3)",

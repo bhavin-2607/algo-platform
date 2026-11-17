@@ -134,7 +134,7 @@ export default function DashboardPage() {
       </div>
 
       {/* P&L Chart */}
-      <div className="card" style={{ marginBottom: 24 }}>
+      <div className="card" style={{ marginBottom: 10 }}>
         <div className="card-header">
           <span className="card-title">WEEKLY P&L</span>
           <span className="card-badge">{dhanConnected ? "DHAN LIVE" : "PAPER"}</span>
@@ -162,7 +162,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 24 }}>
+      <div className="card" style={{ marginBottom: 10 }}>
         <div className="card-header">
           <span className="card-title">DHAN LIVE ORDERBOOK</span>
           <span className="card-badge">{openPositions.length} open</span>
