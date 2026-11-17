@@ -23,6 +23,8 @@ from app.core.deps import get_current_user, require_admin
 from app.core.redis_client import get_redis
 from app.models.user import User, UserRole
 from app.models.terminal import TerminalRow, TerminalRowStatus
+from app.models.broker import BrokerAccount, BrokerName
+from app.broker.factory import get_broker_adapter
 from app.services.terminal_engine import TERMINAL_TICK_KEY, TERMINAL_RUN_KEY
 from app.strategy.formula_engine import validate_formula
 
@@ -1710,49 +1712,53 @@ async def get_dhan_positions(
     Fetch open positions from the user's active Dhan account (or Paper simulation)
     to allow 1-click import into the Algo Trading Window for automated profit booking.
     """
-    result = await db.execute(
-        select(BrokerAccount).where(
-            BrokerAccount.user_id == current_user.id,
-            BrokerAccount.is_active == True,
+    try:
+        result = await db.execute(
+            select(BrokerAccount).where(
+                BrokerAccount.user_id == current_user.id,
+                BrokerAccount.is_active == True,
+            )
         )
-    )
-    accounts = result.scalars().all()
-    master = next((a for a in accounts if a.account_role == "MASTER" and a.is_active), None)
-    if not master:
-        master = next((a for a in accounts if a.is_active), None)
+        accounts = result.scalars().all()
+        master = next((a for a in accounts if a.account_role == "MASTER" and a.is_active), None)
+        if not master:
+            master = next((a for a in accounts if a.is_active), None)
 
-    if not master:
-        return {"positions": [], "message": "No active broker account linked"}
+        if not master:
+            return {"positions": [], "message": "No active broker account linked"}
 
-    adapter = get_broker_adapter(master)
-    raw_positions = await adapter.get_positions()
-    parsed = []
-    for pos in (raw_positions or []):
-        net_qty = int(pos.get("netQty") or pos.get("quantity") or 0)
-        if net_qty != 0:
-            sym = pos.get("tradingSymbol") or pos.get("customSymbol") or pos.get("symbol") or str(pos.get("securityId") or "")
-            seg = pos.get("exchangeSegment") or pos.get("segment") or ("NSE_FNO" if is_option_symbol(sym) else "NSE_EQ")
-            exch = "NFO" if seg in ("NSE_FNO", "NFO") else ("NSE" if "NSE" in str(seg) else "BSE")
-            sec_id = str(pos.get("securityId") or "")
-            buy_avg = float(pos.get("buyAvg") or pos.get("costPrice") or pos.get("price") or 0.0)
-            ltp = float(pos.get("ltp") or pos.get("lastPrice") or 0.0)
-            pnl = float(pos.get("unrealizedProfit") or pos.get("realizedProfit") or 0.0)
+        adapter = get_broker_adapter(master)
+        raw_positions = await adapter.get_positions()
+        parsed = []
+        for pos in (raw_positions or []):
+            net_qty = int(pos.get("netQty") or pos.get("quantity") or 0)
+            if net_qty != 0:
+                sym = pos.get("tradingSymbol") or pos.get("customSymbol") or pos.get("symbol") or str(pos.get("securityId") or "")
+                seg = pos.get("exchangeSegment") or pos.get("segment") or ("NSE_FNO" if is_option_symbol(sym) else "NSE_EQ")
+                exch = "NFO" if seg in ("NSE_FNO", "NFO") else ("NSE" if "NSE" in str(seg) else "BSE")
+                sec_id = str(pos.get("securityId") or "")
+                buy_avg = float(pos.get("buyAvg") or pos.get("costPrice") or pos.get("price") or 0.0)
+                ltp = float(pos.get("ltp") or pos.get("lastPrice") or 0.0)
+                pnl = float(pos.get("unrealizedProfit") or pos.get("realizedProfit") or 0.0)
 
-            parsed.append({
-                "symbol": sym,
-                "exchange": exch,
-                "segment": seg,
-                "security_id": sec_id,
-                "net_qty": net_qty,
-                "quantity": abs(net_qty),
-                "side": "BUY" if net_qty > 0 else "SELL",
-                "buy_price": buy_avg,
-                "ltp": ltp,
-                "pnl": pnl,
-                "account_name": master.account_name or master.client_id,
-            })
+                parsed.append({
+                    "symbol": sym,
+                    "exchange": exch,
+                    "segment": seg,
+                    "security_id": sec_id,
+                    "net_qty": net_qty,
+                    "quantity": abs(net_qty),
+                    "side": "BUY" if net_qty > 0 else "SELL",
+                    "buy_price": buy_avg,
+                    "ltp": ltp,
+                    "pnl": pnl,
+                    "account_name": master.account_name or master.client_id,
+                })
 
-    return {"positions": parsed, "account_name": master.account_name or master.client_id, "is_paper": master.paper_trading}
+        return {"positions": parsed, "account_name": master.account_name or master.client_id, "is_paper": master.paper_trading}
+    except Exception as e:
+        logger.error(f"Error fetching Dhan positions: {e}", exc_info=True)
+        return {"positions": [], "message": f"Failed to fetch positions: {str(e)}"}
 
 
 @router.post("/algo-rows/import-position")
@@ -2127,7 +2133,7 @@ async def get_orderbook(
 
 
 @router.get("/positions")
-async def get_dhan_positions(
+async def get_today_positions(
     current_user: User = Depends(get_current_user),
 ):
     """Fetch today's positions from Dhan. A flattened trade comes back with netQty 0."""

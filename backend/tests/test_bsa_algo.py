@@ -631,6 +631,55 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
         self.assertEqual(row.buy_price, 820.0)
         self.assertEqual(row.entry_level, 820.0)
 
+    def test_get_dhan_positions_endpoint(self):
+        """Verify that get_dhan_positions handles account lookups and broker adapter calls cleanly without NameError."""
+        import asyncio
+        from app.api.routes.terminal import get_dhan_positions
+        from app.models.user import User
+
+        fake_user = User(id=uuid.uuid4(), email="test@example.com", username="testuser")
+        fake_db = AsyncMock()
+
+        # Case 1: No accounts found
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        fake_db.execute.return_value = mock_result
+
+        res = asyncio.run(get_dhan_positions(current_user=fake_user, db=fake_db))
+        self.assertEqual(res["positions"], [])
+        self.assertIn("No active broker account linked", res["message"])
+
+        # Case 2: Active account exists and adapter returns positions
+        mock_acc = MagicMock()
+        mock_acc.account_role = "MASTER"
+        mock_acc.is_active = True
+        mock_acc.account_name = "Master Acc"
+        mock_acc.client_id = "110022"
+        mock_acc.paper_trading = False
+
+        mock_result.scalars.return_value.all.return_value = [mock_acc]
+
+        mock_adapter = AsyncMock()
+        mock_adapter.get_positions.return_value = [
+            {
+                "tradingSymbol": "RELIANCE",
+                "exchangeSegment": "NSE_EQ",
+                "securityId": "2885",
+                "netQty": 10,
+                "buyAvg": 2500.0,
+                "ltp": 2520.0,
+                "unrealizedProfit": 200.0,
+            }
+        ]
+
+        with patch("app.api.routes.terminal.get_broker_adapter", return_value=mock_adapter):
+            res = asyncio.run(get_dhan_positions(current_user=fake_user, db=fake_db))
+            self.assertEqual(len(res["positions"]), 1)
+            self.assertEqual(res["positions"][0]["symbol"], "RELIANCE")
+            self.assertEqual(res["positions"][0]["net_qty"], 10)
+            self.assertEqual(res["positions"][0]["side"], "BUY")
+            self.assertFalse(res["is_paper"])
+
 
 if __name__ == "__main__":
     unittest.main()
