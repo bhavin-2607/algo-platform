@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import toast from "react-hot-toast";
+import { Copy, Check, ChevronDown, ChevronUp, Code, Globe } from "lucide-react";
 
 export default function AdminPage() {
   const [tab, setTab] = useState<"overview"|"users"|"trades"|"ip-whitelisting">("overview");
@@ -193,6 +194,8 @@ function IpWhitelistingTab() {
   const qc = useQueryClient();
   const [customIp, setCustomIp] = useState("");
   const [ipFlag, setIpFlag] = useState<"PRIMARY" | "SECONDARY">("PRIMARY");
+  const [showRawDhan, setShowRawDhan] = useState(false);
+  const [copiedRaw, setCopiedRaw] = useState(false);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["admin-dhan-ip"],
@@ -217,14 +220,28 @@ function IpWhitelistingTab() {
 
   const isMatched = Boolean(data?.is_matched);
   const ordersAllowed = data?.orders_allowed;
-  const serverIp = data?.current_server_ip || "Detecting...";
+  const ipMatchStatus = data?.ip_match_status;
+  const serverIpv4 = data?.current_server_ipv4 || data?.current_server_ip || "Detecting...";
+  const serverIpv6 = data?.current_server_ipv6;
   const dhanDetectedIp = data?.dhan_detected_ip;
+  const dhanDetectedVersion = data?.dhan_detected_version;
   const primaryIp = data?.dhan_primary_ip || "Not Set";
+  const primaryVersion = data?.dhan_primary_version;
   const secondaryIp = data?.dhan_secondary_ip || "Not Set";
+  const secondaryVersion = data?.dhan_secondary_version;
   const accountName = data?.account_name || data?.client_id || "Dhan";
   const eligibleDate = data?.modify_eligible_date;
   const modifyDatePrimary = data?.modify_date_primary;
   const modifyDateSecondary = data?.modify_date_secondary;
+  const rawDhan = data?.dhan_raw_response;
+
+  function handleCopyJson() {
+    if (!rawDhan) return;
+    navigator.clipboard.writeText(JSON.stringify(rawDhan, null, 2));
+    setCopiedRaw(true);
+    toast.success("Dhan API response copied to clipboard");
+    setTimeout(() => setCopiedRaw(false), 2000);
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -266,51 +283,102 @@ function IpWhitelistingTab() {
           </div>
         </div>
 
-        {/* IP Comparison Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginTop: 20 }}>
-          <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
-            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>CURRENT PLATFORM SERVER IP</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: isMatched ? "var(--green)" : "var(--yellow)", marginTop: 6, wordBreak: "break-all" }}>
-              {serverIp}
+        {data?.status && data.status !== "SUCCESS" && data?.message && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "10px 14px",
+              background: "rgba(255, 23, 68, 0.08)",
+              border: "1px solid rgba(255, 23, 68, 0.3)",
+              borderRadius: 4,
+              fontSize: 12,
+              color: "var(--red)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 8,
+            }}
+          >
+            <div>
+              <strong>Dhan API Status:</strong> {data.message}
             </div>
-            {dhanDetectedIp && (
-              <div style={{ fontSize: 11, color: "#38bdf8", marginTop: 6, wordBreak: "break-all" }}>
-                Dhan Detected: <strong>{dhanDetectedIp}</strong>
-              </div>
+            {data.status === "DHAN_ERROR" && (
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                If token is expired (DH-906), please refresh your access token in User Profile &gt; Settings.
+              </span>
             )}
+          </div>
+        )}
+
+        {/* IP Comparison Grid: 4 Cards (IPv4 & IPv6 Platform Server + Dhan Registered IPs) */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 14, marginTop: 20 }}>
+          {/* Card 1: Server IPv4 */}
+          <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>CURRENT SERVER IPv4</div>
+              <span className="badge badge-gray" style={{ fontSize: 9 }}>IPv4</span>
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: (serverIpv4 === primaryIp || serverIpv4 === secondaryIp) ? "var(--green)" : "var(--yellow)", marginTop: 8, wordBreak: "break-all" }}>
+              {serverIpv4}
+            </div>
             <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
-              Outgoing address making Dhan API requests
+              Platform outbound IPv4 address
             </div>
           </div>
 
+          {/* Card 2: Server IPv6 */}
           <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
-            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>DHAN REGISTERED PRIMARY IP</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: (primaryIp === serverIp || primaryIp === dhanDetectedIp) ? "var(--green)" : "var(--text)", marginTop: 6, wordBreak: "break-all" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>CURRENT SERVER IPv6</div>
+              <span className="badge badge-gray" style={{ fontSize: 9 }}>IPv6</span>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: (serverIpv6 && (serverIpv6 === primaryIp || serverIpv6 === secondaryIp)) ? "var(--green)" : (serverIpv6 ? "var(--text)" : "var(--muted)"), marginTop: 8, wordBreak: "break-all" }}>
+              {serverIpv6 || "Not Detected"}
+            </div>
+            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
+              Platform outbound IPv6 address
+            </div>
+          </div>
+
+          {/* Card 3: Dhan Registered Primary IP */}
+          <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>DHAN REGISTERED PRIMARY IP</div>
+              {primaryVersion && <span className="badge badge-gray" style={{ fontSize: 9 }}>{primaryVersion}</span>}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: (primaryIp === serverIpv4 || primaryIp === serverIpv6 || primaryIp === dhanDetectedIp) ? "var(--green)" : "var(--text)", marginTop: 8, wordBreak: "break-all" }}>
               {primaryIp}
             </div>
-            {modifyDatePrimary && (
+            {modifyDatePrimary ? (
               <div style={{ fontSize: 10, color: "var(--yellow)", marginTop: 4 }}>
                 Lock until: <strong>{modifyDatePrimary}</strong>
               </div>
+            ) : (
+              <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
+                Account: {accountName}
+              </div>
             )}
-            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
-              Account: {accountName}
-            </div>
           </div>
 
+          {/* Card 4: Dhan Registered Secondary IP */}
           <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", padding: "14px 16px", borderRadius: 4 }}>
-            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>DHAN REGISTERED SECONDARY IP</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: (secondaryIp === serverIp || secondaryIp === dhanDetectedIp) ? "var(--green)" : "var(--text)", marginTop: 6, wordBreak: "break-all" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.2 }}>DHAN REGISTERED SECONDARY IP</div>
+              {secondaryVersion && <span className="badge badge-gray" style={{ fontSize: 9 }}>{secondaryVersion}</span>}
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: (secondaryIp === serverIpv4 || secondaryIp === serverIpv6 || secondaryIp === dhanDetectedIp) ? "var(--green)" : "var(--text)", marginTop: 8, wordBreak: "break-all" }}>
               {secondaryIp}
             </div>
-            {modifyDateSecondary && (
+            {modifyDateSecondary ? (
               <div style={{ fontSize: 10, color: "var(--yellow)", marginTop: 4 }}>
                 Lock until: <strong>{modifyDateSecondary}</strong>
               </div>
+            ) : (
+              <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
+                Backup whitelisted IP
+              </div>
             )}
-            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
-              Backup whitelisted IP
-            </div>
           </div>
         </div>
 
@@ -321,63 +389,154 @@ function IpWhitelistingTab() {
         )}
       </div>
 
+      {/* Direct Dhan API Telemetry & Response Card */}
+      <div className="card" style={{ padding: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", letterSpacing: 1 }}>
+              CURRENT SET IP DATA FROM DHAN (DIRECT API TELEMETRY)
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              Direct live response from Dhan v2 IP API (<code>GET https://api.dhan.co/v2/ip/getIP</code>).
+            </div>
+          </div>
+          <button
+            type="button"
+            className="exit-btn"
+            onClick={() => setShowRawDhan((v) => !v)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 10,
+              padding: "5px 12px",
+              color: "var(--green)",
+              borderColor: "rgba(0, 230, 118, 0.4)",
+            }}
+          >
+            <Code size={12} />
+            <span>{showRawDhan ? "HIDE RAW JSON" : "VIEW DHAN RAW JSON"}</span>
+          </button>
+        </div>
+
+        {/* Dhan Key Telemetry Row */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 12,
+            marginTop: 16,
+            padding: "12px 14px",
+            background: "var(--surface2)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>DHAN DETECTED OUTGOING IP</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8", marginTop: 4, wordBreak: "break-all" }}>
+              {dhanDetectedIp || "Not Detected"}
+            </div>
+            {dhanDetectedVersion && (
+              <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>{dhanDetectedVersion} detected by Dhan server</div>
+            )}
+          </div>
+
+          <div>
+            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>DHAN IP MATCH STATUS</div>
+            <div style={{ marginTop: 4 }}>
+              <span className={`badge ${ipMatchStatus === "MATCH" ? "badge-green" : "badge-red"}`} style={{ fontSize: 10, fontWeight: 700 }}>
+                {ipMatchStatus || (isMatched ? "MATCH" : "MISMATCH")}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>TRADING ORDERS PERMITTED</div>
+            <div style={{ marginTop: 4 }}>
+              <span className={`badge ${ordersAllowed ? "badge-green" : "badge-red"}`} style={{ fontSize: 10, fontWeight: 700 }}>
+                {ordersAllowed ? "PERMITTED (ACTIVE)" : "BLOCKED (MISMATCH)"}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>PRIMARY LOCK EXPIRES</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: modifyDatePrimary ? "var(--yellow)" : "var(--green)", marginTop: 4 }}>
+              {modifyDatePrimary || "Eligible to modify"}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>SECONDARY LOCK EXPIRES</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: modifyDateSecondary ? "var(--yellow)" : "var(--green)", marginTop: 4 }}>
+              {modifyDateSecondary || "Eligible to modify"}
+            </div>
+          </div>
+        </div>
+
+        {/* Collapsible Raw Dhan JSON Viewer */}
+        {showRawDhan && rawDhan && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", letterSpacing: 1 }}>
+                RAW DHAN API RESPONSE BODY:
+              </span>
+              <button
+                type="button"
+                className="exit-btn"
+                onClick={handleCopyJson}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  fontSize: 10,
+                  padding: "3px 8px",
+                }}
+              >
+                {copiedRaw ? <Check size={11} color="var(--green)" /> : <Copy size={11} />}
+                <span>{copiedRaw ? "COPIED" : "COPY JSON"}</span>
+              </button>
+            </div>
+            <pre
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                padding: "12px 14px",
+                borderRadius: 4,
+                fontSize: 12,
+                color: "var(--text)",
+                fontFamily: "monospace",
+                overflowX: "auto",
+                maxHeight: 280,
+                margin: 0,
+              }}
+            >
+              {JSON.stringify(rawDhan, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+
       {/* 1-Click Action & Custom Whitelist Card */}
       <div className="card" style={{ padding: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: "var(--green)", letterSpacing: 1, marginBottom: 8 }}>
-          WHITELIST IP DIRECTLY ON DHAN
+          WHITELIST IP DIRECTLY ON DHAN (IPv4 & IPv6 SUPPORTED)
         </div>
         <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 18 }}>
-          Updates the registered static IP on Dhan via the API using your active access token. Note that exchange rules apply a 7-day lock-in period after modifying an IP.
+          Updates the registered static IP on Dhan via the API using your active access token. Supports both IPv4 and IPv6 addresses. Note that exchange regulations enforce a 7-day lock-in period after each modification.
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {/* Quick 1-click whitelist buttons */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            {dhanDetectedIp && dhanDetectedIp !== serverIp ? (
-              <>
-                <button
-                  type="button"
-                  disabled={whitelistMutation.isPending}
-                  onClick={() => whitelistMutation.mutate({ ip: dhanDetectedIp, ip_flag: "PRIMARY" })}
-                  style={{
-                    padding: "8px 16px",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    background: "rgba(0, 230, 118, 0.16)",
-                    border: "1px solid var(--green)",
-                    color: "var(--green)",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                  }}
-                >
-                  {whitelistMutation.isPending ? "WHITELISTING..." : `WHITELIST DHAN DETECTED IP (${dhanDetectedIp.length > 20 ? dhanDetectedIp.slice(0, 18) + '...' : dhanDetectedIp}) AS PRIMARY`}
-                </button>
-                <button
-                  type="button"
-                  disabled={whitelistMutation.isPending}
-                  onClick={() => whitelistMutation.mutate({ ip: dhanDetectedIp, ip_flag: "SECONDARY" })}
-                  style={{
-                    padding: "8px 16px",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    background: "rgba(56, 189, 248, 0.14)",
-                    border: "1px solid #38bdf8",
-                    color: "#38bdf8",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                  }}
-                >
-                  WHITELIST DETECTED AS SECONDARY
-                </button>
-              </>
-            ) : null}
-
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {/* Whitelist Server IPv4 */}
             <button
               type="button"
-              disabled={whitelistMutation.isPending || serverIp === "unknown"}
-              onClick={() => whitelistMutation.mutate({ ip: serverIp, ip_flag: "PRIMARY" })}
+              disabled={whitelistMutation.isPending || serverIpv4 === "unknown"}
+              onClick={() => whitelistMutation.mutate({ ip: serverIpv4, ip_flag: "PRIMARY" })}
               style={{
-                padding: "8px 16px",
+                padding: "8px 14px",
                 fontSize: 11,
                 fontWeight: 700,
                 background: "rgba(0, 230, 118, 0.12)",
@@ -387,15 +546,15 @@ function IpWhitelistingTab() {
                 cursor: "pointer",
               }}
             >
-              {whitelistMutation.isPending ? "WHITELISTING..." : `WHITELIST SERVER IP (${serverIp}) AS PRIMARY`}
+              {whitelistMutation.isPending ? "WHITELISTING..." : `WHITELIST SERVER IPv4 (${serverIpv4}) AS PRIMARY`}
             </button>
 
             <button
               type="button"
-              disabled={whitelistMutation.isPending || serverIp === "unknown"}
-              onClick={() => whitelistMutation.mutate({ ip: serverIp, ip_flag: "SECONDARY" })}
+              disabled={whitelistMutation.isPending || serverIpv4 === "unknown"}
+              onClick={() => whitelistMutation.mutate({ ip: serverIpv4, ip_flag: "SECONDARY" })}
               style={{
-                padding: "8px 16px",
+                padding: "8px 14px",
                 fontSize: 11,
                 fontWeight: 700,
                 background: "rgba(56, 189, 248, 0.12)",
@@ -405,21 +564,86 @@ function IpWhitelistingTab() {
                 cursor: "pointer",
               }}
             >
-              WHITELIST SERVER IP AS SECONDARY
+              WHITELIST SERVER IPv4 AS SECONDARY
             </button>
+
+            {/* Whitelist Server IPv6 (if available) */}
+            {serverIpv6 && (
+              <>
+                <button
+                  type="button"
+                  disabled={whitelistMutation.isPending}
+                  onClick={() => whitelistMutation.mutate({ ip: serverIpv6, ip_flag: "PRIMARY" })}
+                  style={{
+                    padding: "8px 14px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: "rgba(0, 230, 118, 0.12)",
+                    border: "1px solid var(--green)",
+                    color: "var(--green)",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                  title={serverIpv6}
+                >
+                  {`WHITELIST SERVER IPv6 (${serverIpv6.length > 18 ? serverIpv6.slice(0, 16) + '...' : serverIpv6}) AS PRIMARY`}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={whitelistMutation.isPending}
+                  onClick={() => whitelistMutation.mutate({ ip: serverIpv6, ip_flag: "SECONDARY" })}
+                  style={{
+                    padding: "8px 14px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: "rgba(56, 189, 248, 0.12)",
+                    border: "1px solid #38bdf8",
+                    color: "#38bdf8",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                  title={serverIpv6}
+                >
+                  WHITELIST SERVER IPv6 AS SECONDARY
+                </button>
+              </>
+            )}
+
+            {/* Whitelist Dhan Detected IP (if available and distinct) */}
+            {dhanDetectedIp && dhanDetectedIp !== serverIpv4 && dhanDetectedIp !== serverIpv6 && (
+              <button
+                type="button"
+                disabled={whitelistMutation.isPending}
+                onClick={() => whitelistMutation.mutate({ ip: dhanDetectedIp, ip_flag: "PRIMARY" })}
+                style={{
+                  padding: "8px 14px",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  background: "rgba(168, 85, 247, 0.12)",
+                  border: "1px solid #a855f7",
+                  color: "#c084fc",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                }}
+                title={dhanDetectedIp}
+              >
+                {`WHITELIST DHAN DETECTED IP (${dhanDetectedIp.length > 18 ? dhanDetectedIp.slice(0, 16) + '...' : dhanDetectedIp}) AS PRIMARY`}
+              </button>
+            )}
           </div>
 
           <div style={{ width: "100%", height: 1, background: "var(--border)", margin: "6px 0" }} />
 
-          {/* Custom IP input */}
+          {/* Custom IP input (IPv4 or IPv6) */}
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>
-              Or Whitelist a Custom Static IP Address:
+              Or Whitelist a Custom Static IP Address (IPv4 or IPv6):
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", maxWidth: 520 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", maxWidth: 580 }}>
               <input
                 type="text"
-                placeholder="e.g. 122.179.45.10"
+                placeholder="e.g. 49.36.118.79 or 2405:201:2001:21fa::1"
                 value={customIp}
                 onChange={(e) => setCustomIp(e.target.value.trim())}
                 style={{

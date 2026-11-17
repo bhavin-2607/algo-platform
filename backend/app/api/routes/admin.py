@@ -85,24 +85,29 @@ async def get_dhan_ip_verification(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Check current server public IPv4 against Dhan configured static IP.
+    Check current server public IPv4 and IPv6 against Dhan configured static IP.
     Calls Dhan v2 /ip/getIP endpoint using active broker credentials.
     """
     import requests
-    from app.broker.dhan import get_public_ipv4
+    from app.broker.dhan import get_public_ipv4, get_public_ipv6
 
-    server_ip = get_public_ipv4()
+    server_ipv4 = get_public_ipv4()
+    server_ipv6 = get_public_ipv6()
     client_id, token, account_name = await _get_active_dhan_credentials(db)
 
     if not client_id or not token:
         return {
-            "current_server_ip": server_ip,
+            "current_server_ip": server_ipv4,
+            "current_server_ipv4": server_ipv4,
+            "current_server_ipv6": server_ipv6,
+            "dhan_detected_ip": None,
             "dhan_primary_ip": None,
             "dhan_secondary_ip": None,
             "is_matched": False,
             "modify_eligible_date": None,
             "client_id": client_id or "Not configured",
             "account_name": account_name,
+            "dhan_raw_response": None,
             "status": "NO_CREDENTIALS",
             "message": "Dhan credentials (Client ID or Access Token) not found. Please link Dhan in Broker settings.",
         }
@@ -151,18 +156,28 @@ async def get_dhan_ip_verification(
             orders_allowed = body.get("ordersAllowed")
             ip_match_status = body.get("ipMatchStatus")
 
+            primary_version = "IPv6" if ":" in primary_ip else ("IPv4" if "." in primary_ip else None)
+            secondary_version = "IPv6" if ":" in secondary_ip else ("IPv4" if "." in secondary_ip else None)
+            detected_version = "IPv6" if ":" in detected_ip else ("IPv4" if "." in detected_ip else None)
+
             is_matched = bool(
                 orders_allowed is True
                 or ip_match_status == "MATCH"
-                or (server_ip and server_ip != "unknown" and (server_ip == primary_ip or server_ip == secondary_ip))
+                or (server_ipv4 and server_ipv4 != "unknown" and (server_ipv4 == primary_ip or server_ipv4 == secondary_ip))
+                or (server_ipv6 and (server_ipv6 == primary_ip or server_ipv6 == secondary_ip))
                 or (detected_ip and (detected_ip == primary_ip or detected_ip == secondary_ip))
             )
 
             return {
-                "current_server_ip": server_ip,
+                "current_server_ip": server_ipv4,
+                "current_server_ipv4": server_ipv4,
+                "current_server_ipv6": server_ipv6,
                 "dhan_detected_ip": detected_ip or None,
+                "dhan_detected_version": detected_version,
                 "dhan_primary_ip": primary_ip or None,
+                "dhan_primary_version": primary_version,
                 "dhan_secondary_ip": secondary_ip or None,
+                "dhan_secondary_version": secondary_version,
                 "is_matched": is_matched,
                 "orders_allowed": orders_allowed,
                 "ip_match_status": ip_match_status,
@@ -171,18 +186,22 @@ async def get_dhan_ip_verification(
                 "modify_eligible_date": modify_date_primary or modify_date_secondary,
                 "client_id": client_id,
                 "account_name": account_name,
+                "dhan_raw_response": data,
                 "status": "SUCCESS",
                 "message": "IP configuration verified successfully. Trading orders permitted." if is_matched else "Server IP does not match Dhan registered static IP.",
             }
         else:
             err_msg = resp.text
+            err_json = None
             try:
                 err_json = resp.json()
                 err_msg = err_json.get("remarks") or err_json.get("errorMessage") or err_msg
             except Exception:
                 pass
             return {
-                "current_server_ip": server_ip,
+                "current_server_ip": server_ipv4,
+                "current_server_ipv4": server_ipv4,
+                "current_server_ipv6": server_ipv6,
                 "dhan_detected_ip": None,
                 "dhan_primary_ip": None,
                 "dhan_secondary_ip": None,
@@ -190,12 +209,15 @@ async def get_dhan_ip_verification(
                 "modify_eligible_date": None,
                 "client_id": client_id,
                 "account_name": account_name,
+                "dhan_raw_response": err_json or {"raw_body": resp.text},
                 "status": "DHAN_ERROR",
                 "message": f"Dhan API returned {resp.status_code}: {err_msg}",
             }
     except Exception as e:
         return {
-            "current_server_ip": server_ip,
+            "current_server_ip": server_ipv4,
+            "current_server_ipv4": server_ipv4,
+            "current_server_ipv6": server_ipv6,
             "dhan_detected_ip": None,
             "dhan_primary_ip": None,
             "dhan_secondary_ip": None,
@@ -203,6 +225,7 @@ async def get_dhan_ip_verification(
             "modify_eligible_date": None,
             "client_id": client_id,
             "account_name": account_name,
+            "dhan_raw_response": {"error": str(e)},
             "status": "ERROR",
             "message": f"Could not connect to Dhan: {str(e)}",
         }

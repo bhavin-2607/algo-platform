@@ -192,6 +192,7 @@ class TestDhanCopyTrading(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.api.routes.admin._get_active_dhan_credentials", return_value=("1105204777", "token123", "Master Acc")), \
              patch("app.broker.dhan.get_public_ipv4", return_value="49.36.118.79"), \
+             patch("app.broker.dhan.get_public_ipv6", return_value="2405:201:2001:21fa:600f:3ed:c9bc:9b44"), \
              patch("requests.get") as mock_get:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
@@ -208,11 +209,16 @@ class TestDhanCopyTrading(unittest.IsolatedAsyncioTestCase):
 
             res = await get_dhan_ip_verification(admin=admin, db=mock_db)
             self.assertEqual(res["status"], "SUCCESS")
+            self.assertEqual(res["current_server_ipv4"], "49.36.118.79")
+            self.assertEqual(res["current_server_ipv6"], "2405:201:2001:21fa:600f:3ed:c9bc:9b44")
             self.assertEqual(res["dhan_primary_ip"], "49.36.117.234")
+            self.assertEqual(res["dhan_primary_version"], "IPv4")
             self.assertEqual(res["dhan_secondary_ip"], "2405:201:2001:21fa:e0d8:5af3:dbec:f0e4")
+            self.assertEqual(res["dhan_secondary_version"], "IPv6")
             self.assertEqual(res["dhan_detected_ip"], "49.36.118.79")
             self.assertEqual(res["modify_date_primary"], "2026-11-21")
             self.assertFalse(res["orders_allowed"])
+            self.assertIsNotNone(res["dhan_raw_response"])
 
 
 if __name__ == "__main__":

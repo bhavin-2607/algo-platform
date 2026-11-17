@@ -14,6 +14,7 @@ Auto-renewal: Call /v2/RenewToken before token expires.
 import logging
 import socket
 import requests
+from typing import Optional
 from app.core.config import settings
 from app.broker.base import BaseBrokerAdapter, OrderRequest, OrderResponse
 
@@ -64,9 +65,9 @@ ORDER_TYPE_MAP = {
 def get_public_ipv4() -> str:
     """Fetch current outbound public IPv4 address to assist Dhan static IP verification."""
     for url in [
+        "https://api4.ipify.org?format=json",
         "https://api.ipify.org?format=json",
         "https://ifconfig.me/all.json",
-        "https://api4.ipify.org?format=json",
     ]:
         try:
             r = requests.get(url, timeout=3)
@@ -78,6 +79,37 @@ def get_public_ipv4() -> str:
         except Exception:
             continue
     return "unknown"
+
+
+def get_public_ipv6() -> Optional[str]:
+    """Fetch current outbound public IPv6 address if available."""
+    # 1. Direct route probe to Cloudflare Public IPv6
+    try:
+        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        s.settimeout(2.0)
+        s.connect(("2606:4700:4700::1111", 80))
+        v6 = s.getsockname()[0]
+        s.close()
+        if v6 and ":" in v6 and not v6.startswith(("fe80", "::1")):
+            return v6
+    except Exception:
+        pass
+
+    # 2. External HTTP lookup fallback
+    for url in [
+        "https://api64.ipify.org?format=json",
+        "https://api6.ipify.org?format=json",
+    ]:
+        try:
+            r = requests.get(url, timeout=3)
+            if r.status_code == 200:
+                data = r.json()
+                ip = data.get("ip") or data.get("ip_addr")
+                if ip and ":" in ip:
+                    return ip
+        except Exception:
+            continue
+    return None
 
 
 class DhanAdapter(BaseBrokerAdapter):
