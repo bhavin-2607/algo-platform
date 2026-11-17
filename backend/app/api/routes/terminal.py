@@ -1079,6 +1079,11 @@ class BsaAlgoRowCreate(BaseModel):
     number_of_trades: int = 1
     target_type:      str = "T1"
     custom_target:    Optional[float] = None
+    trade_mode:       Optional[str] = "FULL"      # FULL, BUY_ONLY, SELL_ONLY
+    entry_type:       Optional[str] = "FORMULA"   # FORMULA, CUSTOM
+    custom_entry:     Optional[float] = None
+    buy_price:        Optional[float] = None
+    status:           Optional[str] = None
 
 
 class BsaAlgoRowUpdate(BaseModel):
@@ -1088,6 +1093,11 @@ class BsaAlgoRowUpdate(BaseModel):
     target_type:      Optional[str] = None
     custom_target:    Optional[float] = None
     sell_tgt:         Optional[float] = None
+    trade_mode:       Optional[str] = None
+    entry_type:       Optional[str] = None
+    custom_entry:     Optional[float] = None
+    buy_price:        Optional[float] = None
+    status:           Optional[str] = None
 
 
 class BsaManualOrderPayload(BaseModel):
@@ -1222,6 +1232,9 @@ async def list_algo_rows(
             "entry_level":      r.entry_level,
             "target_type":      r.target_type or "T1",
             "custom_target":    r.custom_target,
+            "trade_mode":       r.trade_mode or "FULL",
+            "entry_type":       r.entry_type or "FORMULA",
+            "custom_entry":     r.custom_entry,
             "pnl":              live_pnl,
             "ltp":              ltp if ltp > 0 else None,
             "signal":           sig,
@@ -1291,9 +1304,13 @@ async def add_algo_row(
         quantity          = max(1, payload.quantity),
         number_of_trades  = max(1, min(5, payload.number_of_trades)),
         is_algo_active    = False,  # Default to ALGO OFF (manual mode)
-        status            = "IDLE",
+        status            = payload.status or ("IN_POSITION" if payload.trade_mode == "SELL_ONLY" else "IDLE"),
         target_type       = payload.target_type or "T1",
         custom_target     = payload.custom_target,
+        trade_mode        = payload.trade_mode or "FULL",
+        entry_type        = payload.entry_type or "FORMULA",
+        custom_entry      = payload.custom_entry,
+        buy_price         = payload.buy_price,
     )
     db.add(new_row)
     await db.commit()
@@ -1445,6 +1462,23 @@ async def update_algo_row(
         row.sell_tgt = payload.sell_tgt
         if row.target_type == "CUSTOM":
             row.custom_target = payload.sell_tgt
+
+    if payload.trade_mode is not None:
+        row.trade_mode = payload.trade_mode
+        if payload.trade_mode == "SELL_ONLY" and row.status == "IDLE":
+            row.status = "IN_POSITION"
+
+    if payload.entry_type is not None:
+        row.entry_type = payload.entry_type
+
+    if payload.custom_entry is not None:
+        row.custom_entry = payload.custom_entry
+
+    if payload.buy_price is not None:
+        row.buy_price = payload.buy_price
+
+    if payload.status is not None:
+        row.status = payload.status
 
     await db.commit()
     return {"status": "updated", "id": str(row.id), "is_algo_active": row.is_algo_active, "target_type": row.target_type, "sell_tgt": row.sell_tgt}
@@ -1600,6 +1634,123 @@ async def manual_algo_order(
         "fill_price": fill,
         "trades_completed": row.trades_completed,
     }
+
+
+class ImportDhanPositionPayload(BaseModel):
+    symbol: str
+    exchange: Optional[str] = "NSE"
+    segment: Optional[str] = "NSE_EQ"
+    security_id: Optional[str] = None
+    quantity: int = 1
+    buy_price: float
+    target_type: Optional[str] = "T1"
+    custom_target: Optional[float] = None
+
+
+@router.get("/dhan-positions")
+async def get_dhan_positions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetch open positions from the user's active Dhan account (or Paper simulation)
+    to allow 1-click import into the Algo Trading Window for automated profit booking.
+    """
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.user_id == current_user.id,
+            BrokerAccount.is_active == True,
+        )
+    )
+    accounts = result.scalars().all()
+    master = next((a for a in accounts if a.account_role == "MASTER" and a.is_active), None)
+    if not master:
+        master = next((a for a in accounts if a.is_active), None)
+
+    if not master:
+        return {"positions": [], "message": "No active broker account linked"}
+
+    adapter = get_broker_adapter(master)
+    raw_positions = await adapter.get_positions()
+    parsed = []
+    for pos in (raw_positions or []):
+        net_qty = int(pos.get("netQty") or pos.get("quantity") or 0)
+        if net_qty != 0:
+            sym = pos.get("tradingSymbol") or pos.get("customSymbol") or pos.get("symbol") or str(pos.get("securityId") or "")
+            seg = pos.get("exchangeSegment") or pos.get("segment") or ("NSE_FNO" if is_option_symbol(sym) else "NSE_EQ")
+            exch = "NFO" if seg in ("NSE_FNO", "NFO") else ("NSE" if "NSE" in str(seg) else "BSE")
+            sec_id = str(pos.get("securityId") or "")
+            buy_avg = float(pos.get("buyAvg") or pos.get("costPrice") or pos.get("price") or 0.0)
+            ltp = float(pos.get("ltp") or pos.get("lastPrice") or 0.0)
+            pnl = float(pos.get("unrealizedProfit") or pos.get("realizedProfit") or 0.0)
+
+            parsed.append({
+                "symbol": sym,
+                "exchange": exch,
+                "segment": seg,
+                "security_id": sec_id,
+                "net_qty": net_qty,
+                "quantity": abs(net_qty),
+                "side": "BUY" if net_qty > 0 else "SELL",
+                "buy_price": buy_avg,
+                "ltp": ltp,
+                "pnl": pnl,
+                "account_name": master.account_name or master.client_id,
+            })
+
+    return {"positions": parsed, "account_name": master.account_name or master.client_id, "is_paper": master.paper_trading}
+
+
+@router.post("/algo-rows/import-position")
+async def import_dhan_position_to_algo(
+    payload: ImportDhanPositionPayload,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Import an existing Dhan holding / position directly into the Algo Trading Window
+    in SELL_ONLY mode with status IN_POSITION, ready for automated target exit / profit booking.
+    """
+    from app.models.algo_row import BsaAlgoRow
+    from app.market.market_poller import get_poller
+
+    sym = payload.symbol.upper().strip()
+    is_opt = is_option_symbol(sym, payload.segment if payload.segment != "NSE_EQ" else None)
+    target_seg = "NSE_FNO" if is_opt else (payload.segment or "NSE_EQ")
+    target_exch = "NFO" if is_opt else (payload.exchange or "NSE")
+
+    res = await db.execute(
+        select(BsaAlgoRow).where(
+            BsaAlgoRow.user_id == current_user.id,
+            BsaAlgoRow.symbol == sym,
+        )
+    )
+    row = res.scalars().first()
+    if not row:
+        row = BsaAlgoRow(
+            user_id=current_user.id,
+            symbol=sym,
+            exchange=target_exch,
+            segment=target_seg,
+            token=payload.security_id,
+        )
+        db.add(row)
+
+    row.quantity = max(1, payload.quantity)
+    row.buy_price = payload.buy_price
+    row.trade_mode = "SELL_ONLY"
+    row.status = "IN_POSITION"
+    row.is_algo_active = False  # Keep off until user clicks ALGO ON
+    row.target_type = payload.target_type or "T1"
+    row.custom_target = payload.custom_target
+
+    poller = get_poller()
+    if payload.security_id:
+        poller.add_symbol(sym, payload.security_id, target_seg)
+
+    await db.commit()
+    await db.refresh(row)
+    return {"status": "imported", "id": str(row.id), "symbol": row.symbol, "buy_price": row.buy_price, "quantity": row.quantity}
 
 
 

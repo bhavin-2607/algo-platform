@@ -414,6 +414,159 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
         self.assertEqual(row.trades_completed, 1)
         self.assertEqual(row.pnl, 500.0)  # (3550 - 3500) * 10
 
+    def test_algo_buy_only_mode(self):
+        """Verify BUY_ONLY mode executes buy and disarms algo for manual exit."""
+        import asyncio
+        engine = BsaAlgoEngine.get_instance()
+        row = BsaAlgoRow(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            symbol="INFY",
+            exchange="NSE",
+            segment="NSE_EQ",
+            is_algo_active=True,
+            trade_mode="BUY_ONLY",
+            quantity=50,
+            number_of_trades=1,
+            trades_completed=0,
+            status="IDLE",
+            target_type="T1",
+        )
+        fake_db = AsyncMock()
+
+        # Step 1: Buy executes on signal
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = 1800.0
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=1800.0,
+                    signal="BUY",
+                    entry_calc=1800.0,
+                    sl_calc=1790.0,
+                    t1=1820.0,
+                    db=fake_db,
+                )
+            )
+
+        self.assertEqual(row.status, "IN_POSITION")
+        self.assertEqual(row.buy_price, 1800.0)
+        self.assertFalse(row.is_algo_active)  # Disarmed for manual exit
+
+        # Step 2: In BUY_ONLY, when LTP reaches target, it does NOT execute auto-sell
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=1850.0,
+                    signal="BUY",
+                    entry_calc=1800.0,
+                    sl_calc=1790.0,
+                    t1=1820.0,
+                    db=fake_db,
+                )
+            )
+            mock_exec.assert_not_called()
+
+    def test_algo_sell_only_mode(self):
+        """Verify SELL_ONLY mode skips buy and executes auto-sell when target is reached for existing position."""
+        import asyncio
+        engine = BsaAlgoEngine.get_instance()
+        row = BsaAlgoRow(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            symbol="AUBANK 23 NOV 950 CALL",
+            exchange="NFO",
+            segment="NSE_FNO",
+            is_algo_active=True,
+            trade_mode="SELL_ONLY",
+            buy_price=24.50,
+            quantity=100,
+            number_of_trades=1,
+            trades_completed=0,
+            status="IN_POSITION",
+            target_type="CUSTOM",
+            custom_target=27.50,
+        )
+        fake_db = AsyncMock()
+
+        # When price reaches target (27.50), SELL executes immediately
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = 27.50
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=27.50,
+                    signal="BUY",
+                    entry_calc=24.50,
+                    sl_calc=24.38,
+                    t1=27.39,
+                    db=fake_db,
+                )
+            )
+            mock_exec.assert_called_once()
+
+        self.assertEqual(row.status, "COMPLETED")
+        self.assertFalse(row.is_algo_active)
+        self.assertEqual(row.pnl, 300.0)  # (27.50 - 24.50) * 100
+
+    def test_algo_custom_buy_entry_price(self):
+        """Verify custom entry price triggers BUY when price touches or dips to the custom entry level."""
+        import asyncio
+        engine = BsaAlgoEngine.get_instance()
+        row = BsaAlgoRow(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            symbol="SBIN",
+            exchange="NSE",
+            segment="NSE_EQ",
+            is_algo_active=True,
+            trade_mode="FULL",
+            entry_type="CUSTOM",
+            custom_entry=800.0,
+            quantity=20,
+            number_of_trades=1,
+            trades_completed=0,
+            status="IDLE",
+            target_type="T1",
+        )
+        fake_db = AsyncMock()
+
+        # 1. Price is 805.0 (> 800.0 custom entry) -> no buy
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=805.0,
+                    signal="BUY",
+                    entry_calc=805.0,
+                    sl_calc=800.0,
+                    t1=815.0,
+                    db=fake_db,
+                )
+            )
+            mock_exec.assert_not_called()
+        self.assertEqual(row.status, "IDLE")
+
+        # 2. Price touches 800.0 (<= 800.0 custom entry) -> BUY triggers!
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = 800.0
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=800.0,
+                    signal="BUY",
+                    entry_calc=805.0,
+                    sl_calc=795.0,
+                    t1=815.0,
+                    db=fake_db,
+                )
+            )
+            mock_exec.assert_called_once()
+
+        self.assertEqual(row.status, "IN_POSITION")
+        self.assertEqual(row.buy_price, 800.0)
+
 
 if __name__ == "__main__":
     unittest.main()

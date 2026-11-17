@@ -26,6 +26,9 @@ class BsaAlgoRow(Base):
 
     # Trading controls
     is_algo_active    = Column(Boolean, default=False)   # ALGO ON (automated) vs ALGO OFF (manual)
+    trade_mode        = Column(String, default="FULL")    # FULL, BUY_ONLY, SELL_ONLY
+    entry_type        = Column(String, default="FORMULA") # FORMULA, CUSTOM
+    custom_entry      = Column(Float, nullable=True)      # Custom buy trigger price
     quantity          = Column(Integer, default=1)
     number_of_trades  = Column(Integer, default=1)       # 1 to 5 only
     trades_completed  = Column(Integer, default=0)

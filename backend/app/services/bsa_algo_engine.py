@@ -193,9 +193,30 @@ class BsaAlgoEngine:
         if chosen_target > 0:
             row.sell_tgt = chosen_target
 
+        trade_mode = getattr(row, "trade_mode", "FULL") or "FULL"
+        entry_type = getattr(row, "entry_type", "FORMULA") or "FORMULA"
+        custom_entry = getattr(row, "custom_entry", None)
+
+        # In SELL_ONLY mode, if row is still in IDLE, immediately transition to IN_POSITION
+        if trade_mode == "SELL_ONLY" and row.status in ("IDLE", "WAITING_SIGNAL"):
+            row.status = "IN_POSITION"
+            if chosen_target > 0:
+                row.sell_tgt = chosen_target
+
         # ── 1. Check Entry (State: IDLE or WAITING_SIGNAL) ───────────────────
-        if row.status in ("IDLE", "WAITING_SIGNAL") and row.trades_completed < row.number_of_trades:
-            if signal == "BUY":
+        if row.status in ("IDLE", "WAITING_SIGNAL") and trade_mode != "SELL_ONLY" and row.trades_completed < row.number_of_trades:
+            # Determine if entry trigger condition is met
+            entry_triggered = False
+            if entry_type == "CUSTOM" and custom_entry and custom_entry > 0:
+                # Custom Buy Trigger: executes when price dips to or touches the custom buy price
+                if ltp <= custom_entry:
+                    entry_triggered = True
+            else:
+                # Default Formula Signal Trigger
+                if signal == "BUY":
+                    entry_triggered = True
+
+            if entry_triggered:
                 # Execute Market BUY
                 fill_price = await self._execute_order(row, side="BUY", price=ltp, db=db)
                 if fill_price:
@@ -205,11 +226,20 @@ class BsaAlgoEngine:
                     row.stop_loss = sl_calc
                     row.status = "IN_POSITION"
                     row.last_signal = "BUY"
+
+                    # If BUY_ONLY, disarm algo immediately so exit is 100% manual
+                    if trade_mode == "BUY_ONLY":
+                        row.is_algo_active = False
+                        logger.info(
+                            f"[ALGO EXEC] BUY_ONLY {row.symbol} qty={row.quantity} @ {fill_price:.2f}. "
+                            f"Algo disarmed for manual exit."
+                        )
+                    else:
+                        logger.info(
+                            f"[ALGO EXEC] BUY {row.symbol} qty={row.quantity} @ {fill_price:.2f} "
+                            f"(TGT: {row.sell_tgt:.2f}, SL: {row.stop_loss:.2f}) [Trade {row.trades_completed + 1}/{row.number_of_trades}]"
+                        )
                     await db.commit()
-                    logger.info(
-                        f"[ALGO EXEC] BUY {row.symbol} qty={row.quantity} @ {fill_price:.2f} "
-                        f"(TGT: {row.sell_tgt:.2f}, SL: {row.stop_loss:.2f}) [Trade {row.trades_completed + 1}/{row.number_of_trades}]"
-                    )
                 return
 
         # ── 2. Check Exit (State: IN_POSITION) ────────────────────────────────
@@ -218,34 +248,37 @@ class BsaAlgoEngine:
             if row.buy_price:
                 row.pnl = round((ltp - row.buy_price) * row.quantity, 2)
 
-            hit_target = bool(row.sell_tgt and ltp >= row.sell_tgt)
-            hit_sl = bool(row.stop_loss and ltp <= row.stop_loss)
+            # In BUY_ONLY mode, do not execute auto-exit (exit is manual)
+            if trade_mode != "BUY_ONLY":
+                hit_target = bool(row.sell_tgt and ltp >= row.sell_tgt)
+                hit_sl = bool(row.stop_loss and ltp <= row.stop_loss)
 
-            if hit_target or hit_sl:
-                reason = "TARGET HIT" if hit_target else "STOP LOSS HIT"
-                exit_fill = await self._execute_order(row, side="SELL", price=ltp, db=db)
-                if exit_fill:
-                    row.trades_completed += 1
-                    if row.buy_price:
-                        row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
+                if hit_target or hit_sl:
+                    reason = "TARGET HIT" if hit_target else "STOP LOSS HIT"
+                    exit_fill = await self._execute_order(row, side="SELL", price=ltp, db=db)
+                    if exit_fill:
+                        row.trades_completed += 1
+                        if row.buy_price:
+                            row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
 
-                    logger.info(
-                        f"[ALGO EXEC] SELL {row.symbol} qty={row.quantity} @ {exit_fill:.2f} ({reason}) "
-                        f"[Completed {row.trades_completed}/{row.number_of_trades} trades]"
-                    )
+                        logger.info(
+                            f"[ALGO EXEC] SELL {row.symbol} qty={row.quantity} @ {exit_fill:.2f} ({reason}) "
+                            f"[Mode: {trade_mode}, Completed {row.trades_completed}/{row.number_of_trades} trades]"
+                        )
 
-                    if row.trades_completed >= row.number_of_trades:
-                        row.status = "COMPLETED"
-                        row.is_algo_active = False  # Completed all planned trades
-                    else:
-                        # Waiting for price to return to entry price before repeating
-                        row.status = "WAITING_RETURN"
+                        # If SELL_ONLY mode or reached max trades, complete and turn off algo
+                        if trade_mode == "SELL_ONLY" or row.trades_completed >= row.number_of_trades:
+                            row.status = "COMPLETED"
+                            row.is_algo_active = False  # Completed
+                        else:
+                            # Waiting for price to return to entry price before repeating
+                            row.status = "WAITING_RETURN"
 
-                    await db.commit()
-                return
+                        await db.commit()
+                    return
 
         # ── 3. Check Return to Entry (State: WAITING_RETURN) ─────────────────
-        if row.status == "WAITING_RETURN" and row.trades_completed < row.number_of_trades:
+        if row.status == "WAITING_RETURN" and trade_mode == "FULL" and row.trades_completed < row.number_of_trades:
             # Rule: Repeat trade ONLY if price returns to entry price
             ref_entry = row.entry_level or row.buy_price or entry_calc
             if ref_entry and ltp <= ref_entry:

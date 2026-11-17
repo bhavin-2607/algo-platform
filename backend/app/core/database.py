@@ -40,6 +40,15 @@ async def init_db():
         await conn.exec_driver_sql(
             "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS custom_target FLOAT"
         )
+        await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS trade_mode VARCHAR DEFAULT 'FULL'"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS entry_type VARCHAR DEFAULT 'FORMULA'"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS custom_entry FLOAT"
+        )
         # Ensure options contracts in bsa_algo_rows have segment = 'NSE_FNO'
         await conn.exec_driver_sql("""
             UPDATE bsa_algo_rows

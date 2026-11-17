@@ -148,6 +148,7 @@ export default function TerminalPage() {
   const [showColumns, setShowColumns] = useState(false);
   const [signalsOpen, setSignalsOpen] = useState(false);
   const [orderPanel,  setOrderPanel]  = useState<{symbol:string,security_id:string,segment:string,prefillSide?:string,prefillPrice?:number}|null>(null);
+  const [showImportPositions, setShowImportPositions] = useState(false);
   const wsRef = useRef<WebSocket|null>(null);
 
   // ── Watchlist (persisted to DB) ─────────────────────────────────────────────
@@ -442,6 +443,26 @@ export default function TerminalPage() {
     onError: (err: any) => toast.error(err?.response?.data?.detail || "Failed to activate kill switch"),
   });
 
+  const importPositionMutation = useMutation({
+    mutationFn: (payload: {
+      symbol: string;
+      quantity: number;
+      buy_price: number;
+      exchange?: string;
+      segment?: string;
+      security_id?: string;
+      target_type?: string;
+      custom_target?: number;
+    }) => api.post("/terminal/algo-rows/import-position", payload),
+    onSuccess: (res: any) => {
+      toast.success(res.data?.message || "Position imported to Algo Window");
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail || "Failed to import position");
+    },
+  });
+
   const applyBatchMutation = useMutation({
     mutationFn: ({ batch, book }: { batch: string; book: string }) =>
       api.post("/terminal/columns/apply-batch", { batch, book }),
@@ -579,6 +600,16 @@ export default function TerminalPage() {
         <AdminColumnManager isAdmin={isAdmin} onClose={() => setShowColumns(false)} />
       )}
 
+      {/* ── Import Dhan Positions Modal ──────────────────────────────────── */}
+      {showImportPositions && (
+        <ImportDhanPositionsModal
+          isOpen={showImportPositions}
+          onClose={() => setShowImportPositions(false)}
+          onImport={(payload) => importPositionMutation.mutateAsync(payload)}
+          existingSymbols={(algoRows ?? []).map((r: any) => r.symbol)}
+        />
+      )}
+
       {orderPanel && (
         <OrderPanel
           symbol={orderPanel.symbol}
@@ -702,6 +733,7 @@ export default function TerminalPage() {
             onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
             onManualOrder={(id, side) => manualAlgoOrderMutation.mutate({ id, side })}
             onKillRow={(id) => killAlgoMutation.mutate(id)}
+            onOpenImportPositions={() => setShowImportPositions(true)}
           />
         </div>
       )}
@@ -1506,6 +1538,295 @@ function normalizeTargetType(targetType: string): string {
   return map[tt] || tt;
 }
 
+// ── Import Dhan Positions Modal ──────────────────────────────────────────────
+function ImportDhanPositionsModal({
+  isOpen,
+  onClose,
+  onImport,
+  existingSymbols = [],
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onImport: (pos: any) => Promise<any> | void;
+  existingSymbols?: string[];
+}) {
+  const [selectedTargets, setSelectedTargets] = useState<Record<string, string>>({});
+  const [importingSym, setImportingSym] = useState<string | null>(null);
+
+  const { data, isLoading, isFetching, refetch, error } = useQuery({
+    queryKey: ["dhan-positions"],
+    queryFn: () => api.get("/terminal/dhan-positions").then((r) => r.data),
+    enabled: isOpen,
+    staleTime: 5000,
+  });
+
+  if (!isOpen) return null;
+
+  const positions: any[] = data?.positions || [];
+  const accountName = data?.account_name || "Dhan";
+  const isPaper = Boolean(data?.is_paper);
+
+  const handleImport = async (pos: any) => {
+    const sym = pos.symbol;
+    const targetType = selectedTargets[sym] || "T1";
+    setImportingSym(sym);
+    try {
+      await onImport({
+        symbol: pos.symbol,
+        quantity: pos.quantity || Math.abs(pos.net_qty),
+        buy_price: pos.buy_price || 0,
+        segment: pos.segment || "NSE_EQ",
+        exchange: pos.exchange || "NSE",
+        security_id: pos.security_id || "",
+        target_type: targetType,
+      });
+    } finally {
+      setImportingSym(null);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: "rgba(0,0,0,0.85)",
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          width: 840,
+          maxWidth: "95vw",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          borderRadius: 4,
+          boxShadow: "0 10px 40px rgba(0,0,0,0.7)",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            padding: "14px 18px",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "rgba(56, 189, 248, 0.05)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8", letterSpacing: 1.2 }}>
+              IMPORT DHAN POSITIONS INTO ALGO WINDOW
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              Import live open positions or holdings directly into SELL ONLY mode for automated target exit (T1-T9 / Custom) and Stop Loss.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--muted)",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Account Info and Refresh bar */}
+        <div
+          style={{
+            padding: "10px 18px",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "rgba(0,0,0,0.2)",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>Account:</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>{accountName}</span>
+            <span className={`badge ${isPaper ? "badge-yellow" : "badge-green"}`} style={{ fontSize: 9, fontWeight: 700 }}>
+              {isPaper ? "PAPER TRADING" : "LIVE BROKER"}
+            </span>
+            <span className="badge badge-gray" style={{ fontSize: 9 }}>
+              {positions.length} OPEN POSITIONS
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            style={{
+              padding: "4px 10px",
+              fontSize: 10,
+              fontWeight: 700,
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+              borderRadius: 3,
+              cursor: "pointer",
+            }}
+          >
+            {isFetching ? "FETCHING..." : "REFRESH POSITIONS"}
+          </button>
+        </div>
+
+        {/* Body / Table */}
+        <div style={{ padding: "16px 18px" }}>
+          {isLoading ? (
+            <div style={{ padding: "40px 0", textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+              Fetching live positions from broker...
+            </div>
+          ) : error ? (
+            <div style={{ padding: "30px 0", textAlign: "center", color: "var(--red)", fontSize: 12 }}>
+              Failed to load positions from broker. Please ensure broker is connected and active.
+            </div>
+          ) : positions.length === 0 ? (
+            <div style={{ padding: "40px 0", textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+              No open positions found in linked broker account.
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)", background: "rgba(0,0,0,0.2)" }}>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "left" }}>SCRIPT / SYMBOL</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "left" }}>SEGMENT</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>QTY</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>BUY AVG</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>LTP</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>P&L</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "center", width: 110 }}>EXIT TARGET</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "center", width: 120 }}>ACTION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map((pos: any, idx: number) => {
+                    const isAlreadyImported = existingSymbols.includes(pos.symbol);
+                    const currentTgt = selectedTargets[pos.symbol] || "T1";
+                    const isImporting = importingSym === pos.symbol;
+
+                    return (
+                      <tr key={idx} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td style={{ padding: "8px 6px", fontWeight: 700, color: "var(--green)" }}>
+                          {pos.symbol}
+                        </td>
+                        <td style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)" }}>
+                          {pos.segment} ({pos.exchange})
+                        </td>
+                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: pos.net_qty > 0 ? "var(--green)" : "var(--red)" }}>
+                          {pos.net_qty > 0 ? `+${pos.net_qty}` : pos.net_qty}
+                        </td>
+                        <td style={{ padding: "8px 6px", textAlign: "right", color: "var(--text)" }}>
+                          ₹{Number(pos.buy_price || 0).toLocaleString()}
+                        </td>
+                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: "var(--text)" }}>
+                          ₹{Number(pos.ltp || 0).toLocaleString()}
+                        </td>
+                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: (pos.pnl || 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                          {(pos.pnl || 0) >= 0 ? "+" : ""}₹{Number(pos.pnl || 0).toLocaleString()}
+                        </td>
+                        <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                          <select
+                            value={currentTgt}
+                            onChange={(e) => setSelectedTargets({ ...selectedTargets, [pos.symbol]: e.target.value })}
+                            style={{
+                              padding: "2px 4px",
+                              fontSize: 10,
+                              background: "#141923",
+                              border: "1px solid rgba(0, 230, 118, 0.4)",
+                              color: "#4ade80",
+                              borderRadius: 3,
+                              colorScheme: "dark",
+                            }}
+                          >
+                            {TARGET_COLS.map((tc) => (
+                              <option key={tc.key} value={tc.key}>
+                                {tc.label}
+                              </option>
+                            ))}
+                            <option value="CUSTOM">CUSTOM</option>
+                          </select>
+                        </td>
+                        <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                          <button
+                            type="button"
+                            disabled={isImporting}
+                            onClick={() => handleImport(pos)}
+                            style={{
+                              padding: "4px 8px",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              background: isAlreadyImported ? "rgba(56, 189, 248, 0.15)" : "rgba(0, 230, 118, 0.15)",
+                              border: `1px solid ${isAlreadyImported ? "#38bdf8" : "var(--green)"}`,
+                              color: isAlreadyImported ? "#38bdf8" : "var(--green)",
+                              borderRadius: 3,
+                              cursor: "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {isImporting ? "IMPORTING..." : isAlreadyImported ? "UPDATE ALGO" : "IMPORT TO ALGO"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div
+          style={{
+            padding: "12px 18px",
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            justifyContent: "flex-end",
+            background: "rgba(0,0,0,0.1)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: "5px 14px",
+              fontSize: 11,
+              fontWeight: 600,
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+              borderRadius: 3,
+              cursor: "pointer",
+            }}
+          >
+            CLOSE
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Algo Trading Window Table (Fibonacci Automation + Custom Target) ─────────
 function AlgoWindowTable({
   algoRows,
@@ -1516,6 +1837,7 @@ function AlgoWindowTable({
   onResetRow,
   onManualOrder,
   onKillRow,
+  onOpenImportPositions,
 }: {
   algoRows: any[];
   isPaper?: boolean;
@@ -1525,6 +1847,7 @@ function AlgoWindowTable({
   onResetRow: (id: string) => void;
   onManualOrder: (id: string, side: "BUY" | "SELL") => void;
   onKillRow: (id: string) => void;
+  onOpenImportPositions?: () => void;
 }) {
   const activeCount = algoRows.filter((r) => r.is_algo_active).length;
 
@@ -1550,6 +1873,31 @@ function AlgoWindowTable({
             {algoRows.length} SCRIPTS
           </span>
         </div>
+
+        {onOpenImportPositions && (
+          <button
+            type="button"
+            onClick={onOpenImportPositions}
+            style={{
+              padding: "5px 12px",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 0.5,
+              borderRadius: 4,
+              cursor: "pointer",
+              background: "rgba(56, 189, 248, 0.12)",
+              border: "1px solid #38bdf8",
+              color: "#38bdf8",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              transition: "all 0.15s",
+            }}
+            title="Fetch open positions from Dhan and import them into SELL ONLY mode for automated target exit"
+          >
+            IMPORT FROM DHAN POSITIONS
+          </button>
+        )}
       </div>
 
       {algoRows.length === 0 ? (
@@ -1563,9 +1911,10 @@ function AlgoWindowTable({
               <tr style={{ background: "var(--surface)", borderBottom: "2px solid var(--border)" }}>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}>#</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "left", minWidth: 105 }}>SCRIPT</th>
+                <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>MODE</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 80 }}>LTP</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 75 }}>ENTRY</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 100 }}>ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
                 {TARGET_COLS.map((tc) => (
                   <th key={tc.key} style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: tc.color, textAlign: "right", minWidth: 65 }}>
@@ -1607,6 +1956,39 @@ function AlgoWindowTable({
                       <div style={{ color: "var(--green)", fontSize: 12 }}>{r.symbol}</div>
                       <div style={{ fontSize: 9, color: "var(--muted)" }}>{r.segment || "NSE_EQ"}</div>
                     </td>
+
+                    {/* Trade Mode column */}
+                    <td style={{ padding: "8px 6px", textAlign: "center", minWidth: 95 }}>
+                      <select
+                        value={r.trade_mode || "FULL"}
+                        onChange={(e) => {
+                          const newMode = e.target.value;
+                          const updates: any = { trade_mode: newMode };
+                          if (newMode === "SELL_ONLY" && r.status === "IDLE" && r.buy_price) {
+                            updates.status = "IN_POSITION";
+                          }
+                          onUpdateRow(r.id, updates);
+                        }}
+                        style={{
+                          padding: "3px 4px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          background: r.trade_mode === "BUY_ONLY" ? "rgba(0, 230, 118, 0.12)" : r.trade_mode === "SELL_ONLY" ? "rgba(251, 191, 36, 0.12)" : "#141923",
+                          border: `1px solid ${r.trade_mode === "BUY_ONLY" ? "var(--green)" : r.trade_mode === "SELL_ONLY" ? "#f59e0b" : "var(--border)"}`,
+                          color: r.trade_mode === "BUY_ONLY" ? "#4ade80" : r.trade_mode === "SELL_ONLY" ? "#fbbf24" : "var(--text)",
+                          borderRadius: 3,
+                          cursor: "pointer",
+                          colorScheme: "dark",
+                          width: "100%",
+                        }}
+                        title="Trade Mode: FULL (Buy+Sell cycle), BUY ONLY (Auto entry, manual exit), or SELL ONLY (Auto profit target / SL on existing holding)"
+                      >
+                        <option value="FULL" style={{ background: "#141923", color: "var(--text)" }}>FULL</option>
+                        <option value="BUY_ONLY" style={{ background: "#141923", color: "#4ade80" }}>BUY ONLY</option>
+                        <option value="SELL_ONLY" style={{ background: "#141923", color: "#fbbf24" }}>SELL ONLY</option>
+                      </select>
+                    </td>
+
                     <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 700, fontSize: 12, color: "var(--text)" }}>
                       {r.ltp != null ? `₹${Number(r.ltp).toLocaleString()}` : "—"}
                     </td>
@@ -1615,9 +1997,96 @@ function AlgoWindowTable({
                         {r.signal || "—"}
                       </span>
                     </td>
-                    <td style={{ padding: "8px 8px", textAlign: "right", color: "var(--text)", fontSize: 12 }}>
-                      {r.entry != null ? `₹${Number(r.entry).toLocaleString()}` : "—"}
+
+                    {/* ENTRY column with Formula / Custom Buy Entry Price */}
+                    <td style={{ padding: "8px 8px", textAlign: "right", minWidth: 100 }}>
+                      {r.trade_mode === "SELL_ONLY" ? (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                          <span className="badge badge-yellow" style={{ fontSize: 8, padding: "1px 5px", fontWeight: 700 }}>
+                            HOLDING
+                          </span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--green)" }}>
+                            {r.buy_price != null ? `₹${Number(r.buy_price).toLocaleString()}` : "—"}
+                          </span>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                            <select
+                              value={r.entry_type || "FORMULA"}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === "CUSTOM") {
+                                  const initEntry = r.custom_entry || r.entry || r.ltp || 0;
+                                  onUpdateRow(r.id, { entry_type: "CUSTOM", custom_entry: initEntry });
+                                } else {
+                                  onUpdateRow(r.id, { entry_type: "FORMULA" });
+                                }
+                              }}
+                              style={{
+                                padding: "1px 4px",
+                                fontSize: 9,
+                                fontWeight: 700,
+                                background: r.entry_type === "CUSTOM" ? "#0c1929" : "#141923",
+                                border: `1px solid ${r.entry_type === "CUSTOM" ? "#38bdf8" : "var(--border)"}`,
+                                color: r.entry_type === "CUSTOM" ? "#38bdf8" : "var(--muted)",
+                                borderRadius: 3,
+                                cursor: "pointer",
+                                colorScheme: "dark",
+                              }}
+                              title="Toggle formula entry vs custom buy price"
+                            >
+                              <option value="FORMULA" style={{ background: "#141923", color: "var(--text)" }}>FORMULA</option>
+                              <option value="CUSTOM" style={{ background: "#141923", color: "#38bdf8" }}>CUSTOM</option>
+                            </select>
+                          </div>
+
+                          {r.entry_type === "CUSTOM" ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                              <span style={{ fontSize: 10, color: "#38bdf8", fontWeight: 700 }}>₹</span>
+                              <input
+                                type="number"
+                                step="0.05"
+                                placeholder="Buy Price"
+                                defaultValue={r.custom_entry ?? r.entry ?? ""}
+                                onBlur={(e) => {
+                                  const num = parseFloat(e.target.value);
+                                  if (!isNaN(num) && num > 0) {
+                                    onUpdateRow(r.id, { custom_entry: num });
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    const num = parseFloat((e.target as HTMLInputElement).value);
+                                    if (!isNaN(num) && num > 0) {
+                                      onUpdateRow(r.id, { custom_entry: num });
+                                      (e.target as HTMLInputElement).blur();
+                                    }
+                                  }
+                                }}
+                                style={{
+                                  width: 62,
+                                  padding: "2px 4px",
+                                  fontSize: 11,
+                                  background: "#0c1017",
+                                  border: "1px solid #38bdf8",
+                                  color: "#38bdf8",
+                                  borderRadius: 3,
+                                  textAlign: "right",
+                                  fontWeight: 700,
+                                }}
+                                title="Custom buy trigger price: buys when LTP <= custom price"
+                              />
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+                              {r.entry != null ? `₹${Number(r.entry).toLocaleString()}` : "—"}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
+
                     <td style={{ padding: "8px 8px", textAlign: "right", color: "var(--red)", fontSize: 12 }}>
                       {r.sl != null ? `₹${Number(r.sl).toLocaleString()}` : "—"}
                     </td>
@@ -1648,6 +2117,11 @@ function AlgoWindowTable({
 
                     {/* Active Target Selector / Kill Switch Dropdown + Custom Target */}
                     <td style={{ padding: "8px 8px", textAlign: "center", minWidth: 145 }}>
+                      {r.trade_mode === "BUY_ONLY" && (
+                        <div style={{ fontSize: 8, fontWeight: 700, color: "var(--muted)", marginBottom: 3, letterSpacing: 0.5 }}>
+                          MANUAL EXIT MODE
+                        </div>
+                      )}
                       <select
                         value={normalizedTgt}
                         onChange={(e) => {
@@ -1809,6 +2283,8 @@ function AlgoWindowTable({
                           ₹{Number(r.sell_tgt).toLocaleString()}
                           {r.target_type === "CUSTOM" && <span style={{ fontSize: 9, marginLeft: 3, color: "#38bdf8" }}>[CUST]</span>}
                         </span>
+                      ) : r.trade_mode === "BUY_ONLY" ? (
+                        <span style={{ fontSize: 10, color: "var(--muted)" }}>MANUAL</span>
                       ) : "—"}
                     </td>
 
