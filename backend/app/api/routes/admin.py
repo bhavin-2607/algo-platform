@@ -117,25 +117,62 @@ async def get_dhan_ip_verification(
     }
 
     try:
-        resp = requests.get(url, headers=headers, timeout=5)
+        resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
             data = resp.json()
             body = data.get("data") if isinstance(data.get("data"), dict) else data
-            primary_ip = str(body.get("primaryIp") or body.get("ip") or "").strip()
-            secondary_ip = str(body.get("secondaryIp") or "").strip()
-            eligible_date = body.get("modifyEligibleDate") or body.get("eligibleDate")
 
-            is_matched = bool(server_ip and server_ip != "unknown" and (server_ip == primary_ip or server_ip == secondary_ip))
+            # Extract fields with case-insensitive / alternate key fallbacks
+            raw_primary = (
+                body.get("primaryIP")
+                or body.get("primaryIp")
+                or body.get("primary_ip")
+                or body.get("ip")
+                or ""
+            )
+            raw_secondary = (
+                body.get("secondaryIP")
+                or body.get("secondaryIp")
+                or body.get("secondary_ip")
+                or ""
+            )
+
+            primary_ip = str(raw_primary).strip()
+            if primary_ip.upper() in ("NA", "NONE", "NULL"):
+                primary_ip = ""
+
+            secondary_ip = str(raw_secondary).strip()
+            if secondary_ip.upper() in ("NA", "NONE", "NULL"):
+                secondary_ip = ""
+
+            detected_ip = str(body.get("detectedIP") or body.get("detectedIp") or body.get("detected_ip") or "").strip()
+            modify_date_primary = body.get("modifyDatePrimary") or body.get("modifyEligibleDate") or body.get("eligibleDate")
+            modify_date_secondary = body.get("modifyDateSecondary")
+            orders_allowed = body.get("ordersAllowed")
+            ip_match_status = body.get("ipMatchStatus")
+
+            is_matched = bool(
+                orders_allowed is True
+                or ip_match_status == "MATCH"
+                or (server_ip and server_ip != "unknown" and (server_ip == primary_ip or server_ip == secondary_ip))
+                or (detected_ip and (detected_ip == primary_ip or detected_ip == secondary_ip))
+            )
+
             return {
                 "current_server_ip": server_ip,
+                "dhan_detected_ip": detected_ip or None,
                 "dhan_primary_ip": primary_ip or None,
                 "dhan_secondary_ip": secondary_ip or None,
                 "is_matched": is_matched,
-                "modify_eligible_date": eligible_date,
+                "orders_allowed": orders_allowed,
+                "ip_match_status": ip_match_status,
+                "modify_date_primary": modify_date_primary,
+                "modify_date_secondary": modify_date_secondary,
+                "modify_eligible_date": modify_date_primary or modify_date_secondary,
                 "client_id": client_id,
                 "account_name": account_name,
                 "status": "SUCCESS",
-                "message": "IP configuration verified successfully." if is_matched else "Server IP does not match Dhan whitelisted IP.",
+                "message": "IP configuration verified successfully. Trading orders permitted." if is_matched else "Server IP does not match Dhan registered static IP.",
             }
         else:
             err_msg = resp.text
@@ -146,6 +183,7 @@ async def get_dhan_ip_verification(
                 pass
             return {
                 "current_server_ip": server_ip,
+                "dhan_detected_ip": None,
                 "dhan_primary_ip": None,
                 "dhan_secondary_ip": None,
                 "is_matched": False,
@@ -158,6 +196,7 @@ async def get_dhan_ip_verification(
     except Exception as e:
         return {
             "current_server_ip": server_ip,
+            "dhan_detected_ip": None,
             "dhan_primary_ip": None,
             "dhan_secondary_ip": None,
             "is_matched": False,
@@ -176,8 +215,10 @@ async def whitelist_dhan_ip(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Whitelist or update static IP on Dhan directly using access token via PUT /v2/ip/modifyIP.
+    Whitelist or update static IP on Dhan directly using access token via PUT /v2/ip/modifyIP or POST /v2/ip/setIP.
+    Supports both IPv4 and IPv6 addresses.
     """
+    import ipaddress
     import requests
     from app.broker.dhan import get_public_ipv4
 
@@ -185,14 +226,21 @@ async def whitelist_dhan_ip(
     if not target_ip:
         target_ip = get_public_ipv4()
 
-    if not target_ip or target_ip == "unknown" or "." not in target_ip:
-        raise HTTPException(status_code=400, detail="Invalid IPv4 address")
+    if not target_ip or target_ip == "unknown":
+        raise HTTPException(status_code=400, detail="Invalid IP address")
+
+    try:
+        ipaddress.ip_address(target_ip)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid IP address format: '{target_ip}'. Must be a valid IPv4 or IPv6 address.",
+        )
 
     client_id, token, account_name = await _get_active_dhan_credentials(db)
     if not client_id or not token:
         raise HTTPException(status_code=400, detail="Active Dhan credentials not found")
 
-    url = "https://api.dhan.co/v2/ip/modifyIP"
     headers = {
         "access-token": token,
         "client-id": client_id,
@@ -207,7 +255,13 @@ async def whitelist_dhan_ip(
     }
 
     try:
-        resp = requests.put(url, headers=headers, json=body, timeout=8)
+        # First attempt modifyIP (for updating existing IPs), fallback to setIP (for fresh setups)
+        resp = requests.put("https://api.dhan.co/v2/ip/modifyIP", headers=headers, json=body, timeout=8)
+        if resp.status_code not in (200, 201) and resp.status_code in (400, 404):
+            resp_set = requests.post("https://api.dhan.co/v2/ip/setIP", headers=headers, json=body, timeout=8)
+            if resp_set.status_code in (200, 201):
+                resp = resp_set
+
         if resp.status_code in (200, 201):
             data = resp.json()
             return {
@@ -220,14 +274,14 @@ async def whitelist_dhan_ip(
             err_msg = resp.text
             try:
                 err_json = resp.json()
-                err_msg = err_json.get("remarks") or err_json.get("errorMessage") or err_msg
+                err_msg = err_json.get("remarks") or err_json.get("errorMessage") or err_json.get("message") or err_msg
             except Exception:
                 pass
             raise HTTPException(status_code=resp.status_code, detail=f"Dhan IP Whitelisting failed: {err_msg}")
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error connecting to Dhan modifyIP: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Error connecting to Dhan IP service: {str(e)}")
 
 
 # ── User management ───────────────────────────────────────────────────────────

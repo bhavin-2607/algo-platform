@@ -182,6 +182,38 @@ class TestDhanCopyTrading(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client_id, "1100354422")
         self.assertEqual(name, "Primary Dhan")
 
+    async def test_admin_dhan_ip_parsing(self):
+        """Verify get_dhan_ip_verification correctly extracts Dhan primaryIP and secondaryIP casing."""
+        from app.api.routes.admin import get_dhan_ip_verification
+        from app.models.user import User, UserRole
+
+        mock_db = AsyncMock()
+        admin = User(id=uuid.uuid4(), email="admin@test.com", role=UserRole.admin)
+
+        with patch("app.api.routes.admin._get_active_dhan_credentials", return_value=("1105204777", "token123", "Master Acc")), \
+             patch("app.broker.dhan.get_public_ipv4", return_value="49.36.118.79"), \
+             patch("requests.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "modifyDatePrimary": "2026-11-21",
+                "modifyDateSecondary": "2026-11-21",
+                "primaryIP": "49.36.117.234",
+                "secondaryIP": "2405:201:2001:21fa:e0d8:5af3:dbec:f0e4",
+                "detectedIP": "49.36.118.79",
+                "ipMatchStatus": "MISMATCH",
+                "ordersAllowed": False,
+            }
+            mock_get.return_value = mock_resp
+
+            res = await get_dhan_ip_verification(admin=admin, db=mock_db)
+            self.assertEqual(res["status"], "SUCCESS")
+            self.assertEqual(res["dhan_primary_ip"], "49.36.117.234")
+            self.assertEqual(res["dhan_secondary_ip"], "2405:201:2001:21fa:e0d8:5af3:dbec:f0e4")
+            self.assertEqual(res["dhan_detected_ip"], "49.36.118.79")
+            self.assertEqual(res["modify_date_primary"], "2026-11-21")
+            self.assertFalse(res["orders_allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()
