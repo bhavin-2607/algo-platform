@@ -23,13 +23,16 @@ def get_broker_adapter(account: BrokerAccount) -> BaseBrokerAdapter:
     # ── Dhan (primary) ────────────────────────────────────────────────────────
     if broker == BrokerName.dhan:
         client_id = account.client_id or settings.DHAN_CLIENT_ID
-        access_token = settings.DHAN_ACCESS_TOKEN
-        if account.encrypted_access_token:
+        access_token = None
+        # Only decrypt stored token for child/secondary accounts that have their own credentials
+        if account.account_role != "MASTER" and account.client_id != settings.DHAN_CLIENT_ID and account.encrypted_access_token:
             from app.core.security import decrypt_broker_token
             try:
                 access_token = decrypt_broker_token(account.encrypted_access_token)
             except Exception as exc:
                 raise ValueError(f"Could not decrypt this account's Dhan token: {exc}") from exc
+        if not access_token:
+            access_token = settings.DHAN_ACCESS_TOKEN
         if not client_id or not access_token:
             raise ValueError("Missing Dhan client id or access token for this account")
         return DhanAdapter(

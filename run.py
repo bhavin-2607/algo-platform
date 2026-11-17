@@ -188,7 +188,7 @@ class ProcessSupervisor:
             "--port", str(self.port),
         ]
         if self.dev_mode:
-            api_cmd.append("--reload")
+            api_cmd.extend(["--reload", "--reload-include", "*.env"])
 
         api_proc = subprocess.Popen(
             api_cmd, cwd=BACKEND_DIR, env=env,

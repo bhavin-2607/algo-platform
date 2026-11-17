@@ -52,8 +52,40 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID:   str = ""
     FEED_STALE_SEC:     int = 90
 
+    def reload_from_disk(self):
+        """Re-read credentials and settings directly from .env files on disk without restarting."""
+        from app.core.env_files import existing_env_files
+        for env_path in existing_env_files():
+            try:
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        if hasattr(self, k):
+                            current_val = getattr(self, k)
+                            if isinstance(current_val, bool):
+                                setattr(self, k, v.lower() in ("true", "1", "yes"))
+                            elif isinstance(current_val, int):
+                                try:
+                                    setattr(self, k, int(v))
+                                except ValueError:
+                                    pass
+                            elif isinstance(current_val, float):
+                                try:
+                                    setattr(self, k, float(v))
+                                except ValueError:
+                                    pass
+                            else:
+                                setattr(self, k, v)
+            except Exception:
+                pass
+
     class Config:
-        env_file = ".env"
+        from app.core.env_files import env_file_candidates
+        _candidates = [str(p) for p in env_file_candidates()]
+        env_file = _candidates if _candidates else ".env"
         extra    = "ignore"
 
 
