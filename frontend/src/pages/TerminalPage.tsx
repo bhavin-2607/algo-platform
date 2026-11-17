@@ -1538,6 +1538,23 @@ function normalizeTargetType(targetType: string): string {
   return map[tt] || tt;
 }
 
+function normalizeEntryType(entryType: string): string {
+  const et = (entryType || "FORMULA").toUpperCase().trim();
+  if (et === "CUSTOM" || et === "FORMULA") return et;
+  const map: Record<string, string> = {
+    "T11.8": "T1", "T11_8": "T1", "TGT1": "T1",
+    "T23.8": "T2", "T23_8": "T2", "TGT2": "T2",
+    "T38.2": "T3", "T38_2": "T3", "TGT3": "T3",
+    "T50": "T4",
+    "T61.8": "T5", "T61_8": "T5",
+    "T78.6": "T6", "T78_6": "T6",
+    "T100": "T7",
+    "T1.618": "T8", "T1_618": "T8",
+    "T2.618": "T9", "T2_618": "T9",
+  };
+  return map[et] || et;
+}
+
 // ── Import Dhan Positions Modal ──────────────────────────────────────────────
 function ImportDhanPositionsModal({
   isOpen,
@@ -1914,14 +1931,15 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>MODE</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 80 }}>LTP</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 100 }}>ENTRY</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>BUY TARGET / ENTRY</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 85 }}>ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
                 {TARGET_COLS.map((tc) => (
                   <th key={tc.key} style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1, color: tc.color, textAlign: "right", minWidth: 65 }}>
                     {tc.label}
                   </th>
                 ))}
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>TARGET / KILL SWITCH</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>SELL TARGET / EXIT</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>ALGO ON/OFF</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 85 }}>TRADES</th>
@@ -1939,6 +1957,7 @@ function AlgoWindowTable({
                 const rowBg = inPos ? "rgba(0,230,118,0.04)" : "transparent";
                 const isOpt = isOptionScript(r.symbol, r.segment);
                 const normalizedTgt = normalizeTargetType(r.target_type);
+                const normalizedEntry = normalizeEntryType(r.entry_type);
 
                 return (
                   <tr
@@ -1998,57 +2017,67 @@ function AlgoWindowTable({
                       </span>
                     </td>
 
-                    {/* ENTRY column with Formula / Custom Buy Entry Price */}
-                    <td style={{ padding: "8px 8px", textAlign: "right", minWidth: 100 }}>
+                    {/* BUY TARGET / ENTRY Dropdown + Custom Entry */}
+                    <td style={{ padding: "8px 8px", textAlign: "center", minWidth: 145 }}>
                       {r.trade_mode === "SELL_ONLY" ? (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                          <span className="badge badge-yellow" style={{ fontSize: 8, padding: "1px 5px", fontWeight: 700 }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                          <span className="badge badge-yellow" style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px" }}>
                             HOLDING
                           </span>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--green)" }}>
-                            {r.buy_price != null ? `₹${Number(r.buy_price).toLocaleString()}` : "—"}
-                          </span>
+                          <span style={{ fontSize: 9, color: "var(--muted)" }}>NO BUY NEEDED</span>
                         </div>
                       ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                            <select
-                              value={r.entry_type || "FORMULA"}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === "CUSTOM") {
-                                  const initEntry = r.custom_entry || r.entry || r.ltp || 0;
-                                  onUpdateRow(r.id, { entry_type: "CUSTOM", custom_entry: initEntry });
-                                } else {
-                                  onUpdateRow(r.id, { entry_type: "FORMULA" });
-                                }
-                              }}
-                              style={{
-                                padding: "1px 4px",
-                                fontSize: 9,
-                                fontWeight: 700,
-                                background: r.entry_type === "CUSTOM" ? "#0c1929" : "#141923",
-                                border: `1px solid ${r.entry_type === "CUSTOM" ? "#38bdf8" : "var(--border)"}`,
-                                color: r.entry_type === "CUSTOM" ? "#38bdf8" : "var(--muted)",
-                                borderRadius: 3,
-                                cursor: "pointer",
-                                colorScheme: "dark",
-                              }}
-                              title="Toggle formula entry vs custom buy price"
-                            >
-                              <option value="FORMULA" style={{ background: "#141923", color: "var(--text)" }}>FORMULA</option>
-                              <option value="CUSTOM" style={{ background: "#141923", color: "#38bdf8" }}>CUSTOM</option>
-                            </select>
-                          </div>
+                        <>
+                          <select
+                            value={normalizedEntry}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === "CUSTOM") {
+                                const initCustom = r.custom_entry || r.buy_entry_price || r.entry || r.ltp || 0;
+                                onUpdateRow(r.id, { entry_type: "CUSTOM", custom_entry: initCustom });
+                              } else {
+                                onUpdateRow(r.id, { entry_type: val });
+                              }
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "5px 8px",
+                              fontSize: 11,
+                              background: "#141923",
+                              border: `1px solid ${r.entry_type === "CUSTOM" ? "#38bdf8" : "rgba(0, 230, 118, 0.4)"}`,
+                              color: r.entry_type === "CUSTOM" ? "#38bdf8" : "#4ade80",
+                              borderRadius: 3,
+                              cursor: "pointer",
+                              fontWeight: 700,
+                              colorScheme: "dark",
+                            }}
+                            title="Select trigger condition for BUY order (Formula Entry, T1-T9 Target level, or Custom Buy price)"
+                          >
+                            <option value="FORMULA" style={{ background: "#141923", color: "var(--text)" }}>
+                              ENTRY (FORMULA)
+                            </option>
+                            {TARGET_COLS.map((tc) => {
+                              const sign = r.signal === "SELL" ? "-" : "+";
+                              const pct = isOpt ? tc.pctOption : tc.pctEquity;
+                              return (
+                                <option key={tc.key} value={tc.key} style={{ background: "#141923", color: "#4ade80" }}>
+                                  {`${tc.label} (${sign}${pct})`}
+                                </option>
+                              );
+                            })}
+                            <option value="CUSTOM" style={{ background: "#141923", color: "#38bdf8", fontWeight: 700 }}>
+                              CUSTOM BUY PRICE
+                            </option>
+                          </select>
 
-                          {r.entry_type === "CUSTOM" ? (
-                            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                          {r.entry_type === "CUSTOM" && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 4 }}>
                               <span style={{ fontSize: 10, color: "#38bdf8", fontWeight: 700 }}>₹</span>
                               <input
                                 type="number"
                                 step="0.05"
                                 placeholder="Buy Price"
-                                defaultValue={r.custom_entry ?? r.entry ?? ""}
+                                defaultValue={r.custom_entry || r.buy_entry_price || r.entry || ""}
                                 onBlur={(e) => {
                                   const num = parseFloat(e.target.value);
                                   if (!isNaN(num) && num > 0) {
@@ -2065,8 +2094,8 @@ function AlgoWindowTable({
                                   }
                                 }}
                                 style={{
-                                  width: 62,
-                                  padding: "2px 4px",
+                                  width: "100%",
+                                  padding: "2px 6px",
                                   fontSize: 11,
                                   background: "#0c1017",
                                   border: "1px solid #38bdf8",
@@ -2075,13 +2104,33 @@ function AlgoWindowTable({
                                   textAlign: "right",
                                   fontWeight: 700,
                                 }}
-                                title="Custom buy trigger price: buys when LTP <= custom price"
+                                title="Enter custom buy trigger price and press Enter or click away"
                               />
                             </div>
-                          ) : (
-                            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
-                              {r.entry != null ? `₹${Number(r.entry).toLocaleString()}` : "—"}
-                            </span>
+                          )}
+                        </>
+                      )}
+                    </td>
+
+                    {/* Numeric ENTRY price column */}
+                    <td style={{ padding: "8px 8px", textAlign: "right", fontSize: 12, fontWeight: 700, minWidth: 85 }}>
+                      {r.trade_mode === "SELL_ONLY" ? (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                          <span style={{ color: "var(--green)" }}>
+                            {r.buy_price != null ? `₹${Number(r.buy_price).toLocaleString()}` : "—"}
+                          </span>
+                          <span style={{ fontSize: 9, color: "var(--muted)" }}>BOUGHT</span>
+                        </div>
+                      ) : (
+                        <div>
+                          <span style={{ color: r.entry_type === "CUSTOM" ? "#38bdf8" : (r.entry_type && r.entry_type !== "FORMULA" ? "#4ade80" : "var(--text)") }}>
+                            ₹{Number(r.buy_entry_price ?? r.entry ?? 0).toLocaleString()}
+                          </span>
+                          {r.entry_type === "CUSTOM" && (
+                            <span style={{ fontSize: 9, marginLeft: 3, color: "#38bdf8", fontWeight: 700 }}>[CUST]</span>
+                          )}
+                          {r.entry_type && r.entry_type !== "FORMULA" && r.entry_type !== "CUSTOM" && (
+                            <span style={{ fontSize: 9, marginLeft: 3, color: "#4ade80", fontWeight: 700 }}>[{r.entry_type}]</span>
                           )}
                         </div>
                       )}

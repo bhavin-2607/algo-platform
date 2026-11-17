@@ -567,6 +567,70 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
         self.assertEqual(row.status, "IN_POSITION")
         self.assertEqual(row.buy_price, 800.0)
 
+    def test_algo_target_level_buy_entry(self):
+        """Verify that BsaAlgoRow with entry_type='T2' executes BUY when price reaches T2 level."""
+        import asyncio
+
+        engine = BsaAlgoEngine.get_instance()
+        row = BsaAlgoRow(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            symbol="INFY",
+            exchange="NSE",
+            segment="NSE_EQ",
+            is_algo_active=True,
+            trade_mode="FULL",
+            entry_type="T2",
+            quantity=15,
+            number_of_trades=1,
+            trades_completed=0,
+            status="IDLE",
+            target_type="T4",
+        )
+        fake_db = AsyncMock()
+
+        # 1. Price is 815.0 (< 820.0 T2 target) -> no buy
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=815.0,
+                    signal="BUY",
+                    entry_calc=800.0,
+                    sl_calc=795.0,
+                    t1=810.0,
+                    t2=820.0,
+                    t3=830.0,
+                    t4=840.0,
+                    db=fake_db,
+                )
+            )
+            mock_exec.assert_not_called()
+        self.assertEqual(row.status, "IDLE")
+
+        # 2. Price reaches 820.0 (>= 820.0 T2 target) -> BUY triggers!
+        with patch.object(engine, "_execute_order", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = 820.0
+            asyncio.run(
+                engine._process_row(
+                    row=row,
+                    ltp=820.0,
+                    signal="BUY",
+                    entry_calc=800.0,
+                    sl_calc=795.0,
+                    t1=810.0,
+                    t2=820.0,
+                    t3=830.0,
+                    t4=840.0,
+                    db=fake_db,
+                )
+            )
+            mock_exec.assert_called_once()
+
+        self.assertEqual(row.status, "IN_POSITION")
+        self.assertEqual(row.buy_price, 820.0)
+        self.assertEqual(row.entry_level, 820.0)
+
 
 if __name__ == "__main__":
     unittest.main()

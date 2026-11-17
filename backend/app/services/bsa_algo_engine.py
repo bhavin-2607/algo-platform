@@ -207,12 +207,27 @@ class BsaAlgoEngine:
         if row.status in ("IDLE", "WAITING_SIGNAL") and trade_mode != "SELL_ONLY" and row.trades_completed < row.number_of_trades:
             # Determine if entry trigger condition is met
             entry_triggered = False
-            if entry_type == "CUSTOM" and custom_entry and custom_entry > 0:
+            entry_type_norm = (entry_type or "FORMULA").upper().strip()
+            active_buy_price = entry_calc
+
+            if entry_type_norm == "CUSTOM" and custom_entry and custom_entry > 0:
                 # Custom Buy Trigger: executes when price dips to or touches the custom buy price
-                if ltp <= custom_entry:
+                active_buy_price = float(custom_entry)
+                if ltp <= active_buy_price:
                     entry_triggered = True
+            elif entry_type_norm in target_map:
+                # Target Buy Trigger (T1 - T9 breakout or level reach)
+                active_buy_price = float(target_map.get(entry_type_norm) or 0.0)
+                if active_buy_price > 0:
+                    if signal == "SELL":
+                        if ltp <= active_buy_price:
+                            entry_triggered = True
+                    else:
+                        if ltp >= active_buy_price:
+                            entry_triggered = True
             else:
                 # Default Formula Signal Trigger
+                active_buy_price = entry_calc
                 if signal == "BUY":
                     entry_triggered = True
 
@@ -221,7 +236,7 @@ class BsaAlgoEngine:
                 fill_price = await self._execute_order(row, side="BUY", price=ltp, db=db)
                 if fill_price:
                     row.buy_price = fill_price
-                    row.entry_level = entry_calc if entry_calc > 0 else fill_price
+                    row.entry_level = active_buy_price if active_buy_price > 0 else fill_price
                     row.sell_tgt = chosen_target
                     row.stop_loss = sl_calc
                     row.status = "IN_POSITION"

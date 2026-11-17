@@ -1210,6 +1210,15 @@ async def list_algo_rows(
 
         display_sell_tgt = r.sell_tgt if (r.status == "IN_POSITION" and r.sell_tgt) else active_target
 
+        # Active buy entry price calculation (FORMULA, T1-T9, or CUSTOM)
+        entry_type_upper = (r.entry_type or "FORMULA").upper().strip()
+        if entry_type_upper == "CUSTOM" and r.custom_entry and r.custom_entry > 0:
+            active_entry_price = float(r.custom_entry)
+        elif entry_type_upper in target_map:
+            active_entry_price = float(target_map.get(entry_type_upper) or ent)
+        else:
+            active_entry_price = ent
+
         # Current trade PnL
         live_pnl = r.pnl
         if r.status == "IN_POSITION" and r.buy_price and ltp > 0:
@@ -1235,6 +1244,7 @@ async def list_algo_rows(
             "trade_mode":       r.trade_mode or "FULL",
             "entry_type":       r.entry_type or "FORMULA",
             "custom_entry":     r.custom_entry,
+            "buy_entry_price":  active_entry_price,
             "pnl":              live_pnl,
             "ltp":              ltp if ltp > 0 else None,
             "signal":           sig,
