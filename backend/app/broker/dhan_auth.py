@@ -84,8 +84,10 @@ class DhanAuthManager:
                 return None
 
             new_token = (
+                data.get("token") or
                 data.get("accessToken") or
                 data.get("access_token") or
+                (data.get("data") or {}).get("token") or
                 (data.get("data") or {}).get("accessToken")
             )
 

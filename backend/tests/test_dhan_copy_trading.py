@@ -220,6 +220,43 @@ class TestDhanCopyTrading(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(res["orders_allowed"])
             self.assertIsNotNone(res["dhan_raw_response"])
 
+    def test_dhan_renew_token_response_parsing(self):
+        """Verify that renew_token parses Dhan's exact payload containing 'token'."""
+        import asyncio
+        from app.broker.dhan_auth import DhanAuthManager
+        from app.broker.dhan import DhanAdapter
+
+        mock_payload = {
+            "createTime": "2026-11-17T16:05:19.501",
+            "expiryTime": "2026-11-18T16:05:19.5",
+            "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.renewed_token_value",
+        }
+
+        # 1. Test DhanAuthManager.renew_token()
+        mgr = DhanAuthManager()
+        with patch("requests.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = mock_payload
+            mock_get.return_value = mock_resp
+
+            result = mgr.renew_token()
+            self.assertIsNotNone(result)
+            self.assertEqual(result["access_token"], mock_payload["token"])
+            self.assertEqual(result["expires_at"], mock_payload["expiryTime"])
+
+        # 2. Test DhanAdapter.renew_token()
+        adapter = DhanAdapter(client_id="1105204777", access_token="old_token")
+        with patch("requests.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = mock_payload
+            mock_get.return_value = mock_resp
+
+            ok = asyncio.run(adapter.renew_token())
+            self.assertTrue(ok)
+            self.assertEqual(adapter._access_token, mock_payload["token"])
+
 
 if __name__ == "__main__":
     unittest.main()

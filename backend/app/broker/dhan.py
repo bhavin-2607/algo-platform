@@ -183,13 +183,18 @@ class DhanAdapter(BaseBrokerAdapter):
                 timeout=10,
             )
             data = resp.json()
-            if data.get("status") == "success":
-                new_token = data.get("accessToken")
-                if new_token:
-                    self._access_token = new_token
-                    self._dhan = None  # reset SDK with new token
-                    logger.info("Dhan token renewed successfully")
-                    return True
+            new_token = (
+                data.get("token") or
+                data.get("accessToken") or
+                data.get("access_token") or
+                (data.get("data") or {}).get("token") or
+                (data.get("data") or {}).get("accessToken")
+            )
+            if new_token:
+                self._access_token = new_token
+                self._dhan = None  # reset SDK with new token
+                logger.info("Dhan token renewed successfully")
+                return True
             logger.error(f"Dhan token renewal failed: {data}")
             return False
         except Exception as e:

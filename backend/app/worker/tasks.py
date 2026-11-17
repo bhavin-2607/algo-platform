@@ -288,6 +288,12 @@ def renew_dhan_token():
                 if success and adapter._access_token:
                     account.encrypted_access_token = encrypt_broker_token(adapter._access_token)
                     await db.commit()
+                    # Also persist renewed token to .env files and runtime settings
+                    try:
+                        from app.broker.dhan_auth import get_auth_manager
+                        get_auth_manager()._apply_token(adapter._access_token)
+                    except Exception as exc:
+                        logger.warning(f"Could not persist renewed token to .env: {exc}")
                 logger.info(f"Dhan token renewal for {client_id}: {'OK' if success else 'FAILED'}")
 
     _run(_renew)
