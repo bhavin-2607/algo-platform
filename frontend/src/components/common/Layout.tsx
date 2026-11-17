@@ -1,27 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/utils/api";
 import toast from "react-hot-toast";
 import {
-  Terminal,
-  TrendingUp,
-  Copy,
-  LayoutDashboard,
   Settings,
   SlidersHorizontal,
   Sun,
   Moon,
   LogOut,
+  ChevronDown,
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { path: "/terminal",     label: "TERMINAL",     icon: Terminal },
-  { path: "/trading",      label: "POSITIONS",    icon: TrendingUp },
-  { path: "/copy-trading", label: "COPY TRADING", icon: Copy },
-  { path: "/dashboard",    label: "DASHBOARD",    icon: LayoutDashboard },
-  { path: "/settings",     label: "SETTINGS",     icon: Settings },
+  { path: "/dashboard",    label: "Dashboard" },
+  { path: "/terminal",     label: "Terminal" },
+  { path: "/positions",    label: "Positions" },
+  { path: "/copy-trading", label: "Copy Trading" },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -30,11 +26,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [menuOpen]);
 
   // Broker status query for global telemetry
   const { data: brokerAccounts } = useQuery({
@@ -71,171 +84,263 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="layout">
       {/* ── Top Navigation Bar ────────────────────────────────────────── */}
       <header className="top-nav">
-        {/* Left Zone: Brand + Nav Links */}
+        {/* LEFT SIDE: [LOGO] Algo Platform | Dashboard | Terminal | Positions | Copy Trading */}
         <div className="top-nav-left">
-          <Link to="/terminal" className="top-nav-brand">
+          <Link
+            to="/terminal"
+            className="top-nav-brand"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              textDecoration: "none",
+              color: "var(--text)",
+            }}
+          >
             <img
               src="/branding/algo-symbol.svg"
               alt="Algo Platform"
-              style={{ width: 24, height: 24, borderRadius: 5, flexShrink: 0 }}
+              style={{ width: 22, height: 22, borderRadius: 5, flexShrink: 0 }}
             />
-            <span>
-              ALGO<b style={{ color: "var(--ba-cyan, #08B6DE)" }}>PLATFORM</b>
+            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.3 }}>
+              Algo Platform
             </span>
           </Link>
 
-          <div style={{ width: 1, height: 20, background: "var(--border)" }} />
+          <span style={{ color: "var(--border)", fontSize: 13, userSelect: "none" }}>|</span>
 
           <nav className="top-nav-links">
-            {NAV_ITEMS.map(({ path, label, icon: Icon }) => {
-              const isActive = pathname === path;
+            {NAV_ITEMS.map(({ path, label }) => {
+              const isActive = pathname === path || (path === "/positions" && pathname === "/trading");
               return (
                 <Link
                   key={path}
                   to={path}
                   className={`top-nav-link${isActive ? " active" : ""}`}
                 >
-                  <Icon size={14} />
                   <span>{label}</span>
                 </Link>
               );
             })}
-
-            {isAdmin && (
-              <Link
-                to="/admin"
-                className={`top-nav-link${pathname === "/admin" ? " active" : ""}`}
-              >
-                <SlidersHorizontal size={14} />
-                <span>ADMIN CONSOLE</span>
-              </Link>
-            )}
           </nav>
         </div>
 
-        {/* Center Zone: Endorsement */}
-        <div className="top-nav-center">
+        {/* RIGHT SIDE: LIVE STATUS | [Gear ICON] Logged in username with dropdown menu */}
+        <div className="top-nav-right">
+          {/* LIVE STATUS */}
           <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 8,
-              padding: "3px 10px",
-              background: "rgba(0,0,0,0.25)",
+              padding: "4px 10px",
+              background: "rgba(0,0,0,0.22)",
               border: "1px solid var(--border)",
               borderRadius: 4,
             }}
-            title="An Independent Product by Bhavin Amesara"
+            title={isPaperMode ? "Simulation Paper Trading Mode" : "Connected to DhanHQ Live Trading"}
           >
-            <img
-              src="/branding/ba-monogram.svg"
-              alt="BA"
-              style={{ width: 18, height: 13, opacity: 0.85 }}
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: isPaperMode ? "var(--yellow)" : "var(--green)",
+                boxShadow: isPaperMode
+                  ? "0 0 6px rgba(251, 191, 36, 0.6)"
+                  : "0 0 6px rgba(0, 230, 118, 0.7)",
+              }}
             />
-            <span style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>
-              BHAVIN AMESARA
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 0.8,
+                color: isPaperMode ? "var(--yellow)" : "var(--green)",
+              }}
+            >
+              {isPaperMode ? "PAPER SIM" : (activeBroker?.account_name || "DHAN LIVE")}
             </span>
-          </div>
-        </div>
 
-        {/* Right Zone: System Telemetry, Vitals & User Controls */}
-        <div className="top-nav-right">
-          {activeCopyCount > 0 && (
-            <Link
-              to="/copy-trading"
+            {fundsData?.availMargin != null && (
+              <>
+                <span style={{ color: "var(--border)", fontSize: 11 }}>•</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)" }}>
+                  ₹{Number(fundsData.availMargin).toLocaleString()}
+                </span>
+              </>
+            )}
+
+            {activeCopyCount > 0 && (
+              <>
+                <span style={{ color: "var(--border)", fontSize: 11 }}>•</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#38bdf8" }}>
+                  COPY: {activeCopyCount}
+                </span>
+              </>
+            )}
+          </div>
+
+          <span style={{ color: "var(--border)", fontSize: 13, userSelect: "none" }}>|</span>
+
+          {/* User Menu: [Gear ICON] Logged in username with dropdown menu */}
+          <div ref={menuRef} style={{ position: "relative" }}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="top-nav-user-btn"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: 5,
-                padding: "2px 8px",
-                fontSize: 10,
-                fontWeight: 700,
-                background: "rgba(56, 189, 248, 0.12)",
-                border: "1px solid #38bdf8",
-                color: "#38bdf8",
+                gap: 7,
+                padding: "4px 10px",
+                background: menuOpen ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.03)",
+                border: `1px solid ${menuOpen ? "var(--green)" : "var(--border)"}`,
                 borderRadius: 4,
-                textDecoration: "none",
-              }}
-              title="Active follower accounts copying trades"
-            >
-              <Copy size={11} />
-              <span>COPY: {activeCopyCount} ACCTS</span>
-            </Link>
-          )}
-
-          {fundsData?.availMargin != null && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
+                cursor: "pointer",
                 color: "var(--text)",
-                background: "rgba(255,255,255,0.03)",
-                padding: "3px 8px",
-                borderRadius: 4,
-                border: "1px solid var(--border)",
+                fontFamily: "var(--font)",
+                transition: "all 0.15s ease",
               }}
-              title="Available trading margin from active broker account"
+              title="User Account Menu"
             >
-              Margin: ₹{Number(fundsData.availMargin).toLocaleString()}
-            </span>
-          )}
+              <Settings size={14} style={{ color: menuOpen ? "var(--green)" : "var(--muted)" }} />
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{user?.username ?? "Trader"}</span>
+              <ChevronDown
+                size={12}
+                style={{
+                  color: "var(--muted)",
+                  transform: menuOpen ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.15s",
+                }}
+              />
+            </button>
 
-          <span
-            className={`badge ${isPaperMode ? "badge-yellow" : "badge-green"}`}
-            style={{ fontSize: 10, fontWeight: 700 }}
-          >
-            {isPaperMode ? "PAPER SIM" : (activeBroker?.account_name || "DHAN LIVE")}
-          </span>
+            {menuOpen && (
+              <div className="user-dropdown-menu">
+                {/* 1. User Profile */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    navigate("/settings");
+                  }}
+                  className="user-dropdown-item"
+                >
+                  <div
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: "50%",
+                      background: "var(--green-dim)",
+                      border: "1px solid var(--green)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "var(--green)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {user?.username?.[0]?.toUpperCase() ?? "U"}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>User Profile</div>
+                    <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                      Profile details, Broker & Token settings
+                    </div>
+                  </div>
+                </button>
 
-          <button
-            type="button"
-            className="top-nav-btn"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
-          >
-            {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-          </button>
+                {/* 2. Admin Console (only shown when admin is logged in) */}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate("/admin");
+                    }}
+                    className="user-dropdown-item"
+                  >
+                    <SlidersHorizontal size={15} style={{ color: "var(--yellow)", flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>Admin Console</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                        IP Whitelisting, Users & System Overview
+                      </div>
+                    </div>
+                  </button>
+                )}
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid var(--border)",
-              padding: "3px 8px",
-              borderRadius: 4,
-            }}
-          >
-            <div
-              style={{
-                width: 20,
-                height: 20,
-                borderRadius: "50%",
-                background: "var(--green-dim)",
-                border: "1px solid var(--green)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--green)",
-                fontSize: 10,
-                fontWeight: 700,
-              }}
-            >
-              {user?.username?.[0]?.toUpperCase() ?? "T"}
-            </div>
-            <span style={{ fontSize: 11, fontWeight: 600 }}>{user?.username ?? "trader"}</span>
+                {/* 3. Light Dark option */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTheme(theme === "dark" ? "light" : "dark");
+                  }}
+                  className="user-dropdown-item"
+                  style={{ justifyContent: "space-between" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {theme === "dark" ? (
+                      <Sun size={15} style={{ color: "var(--yellow)", flexShrink: 0 }} />
+                    ) : (
+                      <Moon size={15} style={{ color: "var(--ba-cyan, #08B6DE)", flexShrink: 0 }} />
+                    )}
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>Theme Mode</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                        Switch to {theme === "dark" ? "Light" : "Dark"} Mode
+                      </div>
+                    </div>
+                  </div>
+                  <span className="badge badge-gray" style={{ fontSize: 9 }}>
+                    {theme.toUpperCase()}
+                  </span>
+                </button>
+
+                {/* 4. Personal Branding */}
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    background: "rgba(0, 0, 0, 0.2)",
+                    borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <img
+                    src="/branding/ba-monogram.svg"
+                    alt="BA"
+                    style={{ width: 22, height: 16, opacity: 0.9, flexShrink: 0 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: "var(--text)" }}>
+                      BHAVIN AMESARA
+                    </div>
+                    <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 0.3 }}>
+                      Independent Quantitative Architecture
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Logout Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleLogout();
+                  }}
+                  className="user-dropdown-item dropdown-logout-btn"
+                >
+                  <LogOut size={15} style={{ color: "var(--red)", flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>Logout</span>
+                </button>
+              </div>
+            )}
           </div>
-
-          <button
-            type="button"
-            className="top-nav-logout"
-            onClick={handleLogout}
-            title="Sign out of algo platform"
-          >
-            <LogOut size={13} />
-            <span>LOGOUT</span>
-          </button>
         </div>
       </header>
 

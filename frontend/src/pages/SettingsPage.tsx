@@ -14,48 +14,93 @@ export default function SettingsPage() {
     <Layout>
       <div className="page-header">
         <div>
-          <h1 className="page-title">SETTINGS</h1>
-          <p className="page-sub">Account configuration & broker connections</p>
+          <h1 className="page-title">USER PROFILE & SETTINGS</h1>
+          <p className="page-sub">Account details, connected broker configuration & Dhan token authentication</p>
         </div>
       </div>
       <div className="settings-board">
-        <AboutCard />
-        <PasswordCard />
-        <BrokerSettingsSection />
-        {isAdmin && <TokenRenewalCard qc={qc} />}
+        {/* Left Column: User Profile & Security */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <UserProfileCard />
+          <PasswordCard />
+        </div>
+
+        {/* Right Column: Connected Broker & Token Refresh */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <BrokerSettingsSection />
+          <TokenRenewalCard qc={qc} />
+        </div>
       </div>
     </Layout>
   );
 }
 
-function AboutCard() {
+function UserProfileCard() {
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === "admin";
+
   return (
-    <div className="settings-card" style={{ gridColumn: "1 / -1", padding: "18px 20px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <img
-            src="/branding/algo-symbol.svg"
-            alt="Algo Platform"
-            style={{ width: 44, height: 44, borderRadius: 10, boxShadow: "0 4px 16px rgba(8, 182, 222, 0.2)" }}
-          />
+    <div className="card settings-card">
+      <div className="card-header">
+        <span className="card-title">USER PROFILE</span>
+        <span className={`badge ${isAdmin ? "badge-green" : "badge-gray"}`}>
+          {isAdmin ? "ADMINISTRATOR" : "TRADER"}
+        </span>
+      </div>
+      <div style={{ padding: "18px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              background: "var(--green-dim)",
+              border: "2px solid var(--green)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--green)",
+              fontSize: 18,
+              fontWeight: 800,
+              flexShrink: 0,
+            }}
+          >
+            {user?.username?.[0]?.toUpperCase() ?? "U"}
+          </div>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: 0.5 }}>
-              ALGO PLATFORM
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text)" }}>
+              {user?.username ?? "Trader"}
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-              High-Frequency Strategy Execution, Quantitative Signals & Risk Management
+              {user?.email || `${user?.username || "trader"}@algo-platform.local`}
             </div>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <img
-            src="/branding/endorsed-by-ba-dark.svg"
-            alt="An Independent Product by Bhavin Amesara"
-            style={{ height: 28, opacity: 0.9 }}
-          />
-          <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "right", borderLeft: "1px solid var(--border)", paddingLeft: 14 }}>
-            <div>Version: <strong style={{ color: "var(--green)" }}>1.0.0</strong></div>
-            <div>Broker: <strong style={{ color: "var(--yellow)" }}>DhanHQ Live</strong></div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+          <div>
+            <div className="field-label">ACCOUNT STATUS</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--green)", marginTop: 3 }}>
+              ACTIVE TRADING
+            </div>
+          </div>
+          <div>
+            <div className="field-label">AUTHENTICATION</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginTop: 3 }}>
+              JWT ENCRYPTED
+            </div>
+          </div>
+          <div>
+            <div className="field-label">USER ID</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3, fontFamily: "monospace" }}>
+              {user?.id ? user.id.slice(0, 16) + "..." : "Local Trader"}
+            </div>
+          </div>
+          <div>
+            <div className="field-label">SYSTEM ROLE</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: isAdmin ? "var(--yellow)" : "var(--text)", marginTop: 3 }}>
+              {isAdmin ? "SUPER ADMIN" : "STANDARD TRADER"}
+            </div>
           </div>
         </div>
       </div>
@@ -96,7 +141,7 @@ function TokenRenewalCard({qc}: {qc: any}) {
   return (
     <div className="card settings-card">
       <div className="card-header">
-        <span className="card-title">DHAN TOKEN</span>
+        <span className="card-title">DHAN TOKEN REFRESH</span>
         <span className={`badge ${dhan.token_valid ? "badge-green" : "badge-red"}`}>
           {dhan.token_valid ? "CONNECTED" : "NEEDS TOKEN"}
         </span>
@@ -167,7 +212,7 @@ function PasswordCard() {
   return (
     <div className="card settings-card">
       <div className="card-header">
-        <span className="card-title">PASSWORD</span>
+        <span className="card-title">PASSWORD & SECURITY</span>
       </div>
       <div style={{padding:"16px 20px", display:"grid", gap:12}}>
         <div className="field">
@@ -185,7 +230,7 @@ function PasswordCard() {
         <button className="connect-btn" style={{justifySelf:"start"}} onClick={submit} disabled={mutation.isPending}>
           {mutation.isPending ? "SAVING" : "UPDATE PASSWORD"}
         </button>
-        <p className="token-note">
+        <p className="token-note" style={{ padding: 0 }}>
           This needs the current password. If it is forgotten, an admin can set a new one from Console → Users → Reset.
         </p>
       </div>
@@ -322,7 +367,6 @@ function BrokerSettingsSection() {
 }
 
 function BrokerRow({ broker: b, onActivate, onRemove, onDeactivate }: any) {
-
   return (
     <div style={{borderTop:"1px solid var(--border)"}}>
       <div style={{padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>

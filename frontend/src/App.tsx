@@ -34,7 +34,8 @@ export default function App() {
           <Route path="/login"        element={<LoginPage />} />
           <Route path="/register"     element={<Navigate to="/login" replace />} />
           <Route path="/terminal"     element={<Protected><TerminalPage /></Protected>} />
-          <Route path="/trading"      element={<Protected><TradingPage /></Protected>} />
+          <Route path="/positions"    element={<Protected><TradingPage /></Protected>} />
+          <Route path="/trading"      element={<Navigate to="/positions" replace />} />
           <Route path="/copy-trading" element={<Protected><CopyTradingPage /></Protected>} />
           <Route path="/dashboard"    element={<Protected><DashboardPage /></Protected>} />
           <Route path="/settings"     element={<Protected><SettingsPage /></Protected>} />
