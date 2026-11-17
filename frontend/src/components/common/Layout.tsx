@@ -124,6 +124,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     refetchInterval: 15_000,
   });
 
+  // DhanHQ token status query for global telemetry
+  const { data: dhanStatus } = useQuery({
+    queryKey: ["dhan-auth-token-status"],
+    queryFn: () => api.get("/dhan-auth/token-status").then((r) => r.data).catch(() => null),
+    refetchInterval: 15_000,
+  });
+  const tokenOffline = dhanStatus && !dhanStatus.valid;
+
   function handleLogout() {
     logout();
     toast.success("Logged out");
@@ -192,32 +200,66 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               gap: 8,
               padding: "4px 10px",
               background: "var(--surface2)",
-              border: "1px solid var(--border)",
+              border: `1px solid ${tokenOffline ? "rgba(255, 23, 68, 0.45)" : "var(--border)"}`,
               borderRadius: 4,
             }}
-            title={isPaperMode ? "Simulation Paper Trading Mode" : "Connected to DhanHQ Live Trading"}
+            title={
+              tokenOffline
+                ? "DhanHQ session offline or token expired. Please refresh token in Settings / Profile."
+                : isPaperMode
+                ? "Simulation Paper Trading Mode"
+                : "Connected to DhanHQ Live Trading"
+            }
           >
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: isPaperMode ? "var(--yellow)" : "var(--green)",
-                boxShadow: isPaperMode
-                  ? "0 0 6px rgba(251, 191, 36, 0.6)"
-                  : "0 0 6px rgba(0, 230, 118, 0.7)",
-              }}
-            />
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: 0.8,
-                color: isPaperMode ? "var(--yellow)" : "var(--green)",
-              }}
-            >
-              {isPaperMode ? "PAPER SIM" : (activeBroker?.account_name || "DHAN LIVE")}
-            </span>
+            {tokenOffline ? (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  fontSize: 10,
+                  fontWeight: 800,
+                  letterSpacing: 0.8,
+                  color: "var(--red)",
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: "var(--red)",
+                    boxShadow: "0 0 6px rgba(255, 23, 68, 0.85)",
+                  }}
+                />
+                OFFLINE
+              </span>
+            ) : (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.8,
+                  color: isPaperMode ? "var(--yellow)" : "var(--green)",
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: isPaperMode ? "var(--yellow)" : "var(--green)",
+                    boxShadow: isPaperMode
+                      ? "0 0 6px rgba(251, 191, 36, 0.6)"
+                      : "0 0 6px rgba(0, 230, 118, 0.7)",
+                  }}
+                />
+                {isPaperMode ? "PAPER SIM" : (activeBroker?.account_name || "DHAN LIVE")}
+              </span>
+            )}
 
             {fundsData?.availMargin != null && (
               <>

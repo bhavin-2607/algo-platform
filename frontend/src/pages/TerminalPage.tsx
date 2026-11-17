@@ -103,9 +103,9 @@ const SECURITY_IDS: Record<string, {security_id:string, segment:string}> = {
 const T_HEADERS: Record<string, string> = {
   "T11.8": "T1", "T23.8": "T2", "T38.2": "T3", "T50": "T4", "T61.8": "T5",
   "T78.6": "T6", "T100": "T7", "T1.618": "T8", "T2.618": "T9",
-  "p_high": "PREV HIGH", "p_low": "PREV LOW", "p_close": "PREV CLOSE",
-  "P_HIGH": "PREV HIGH", "P_LOW": "PREV LOW", "P_CLOSE": "PREV CLOSE",
-  "P.HIGH": "PREV HIGH", "P.LOW": "PREV LOW", "P.CLOSE": "PREV CLOSE",
+  "p_high": "PREV HIGH", "p_low": "PREV LOW",
+  "P_HIGH": "PREV HIGH", "P_LOW": "PREV LOW",
+  "P.HIGH": "PREV HIGH", "P.LOW": "PREV LOW",
 };
 
 function isOptionScript(symbol: string, segment?: string): boolean {
@@ -126,19 +126,6 @@ function isOptionScript(symbol: string, segment?: string): boolean {
 function columnTitle(name: string) {
   return T_HEADERS[name] ?? name;
 }
-
-const LiveClock = memo(function LiveClock() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-  return (
-    <span style={{ fontSize: 10, color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>
-      {now.toLocaleTimeString()}
-    </span>
-  );
-});
 
 export default function TerminalPage() {
   const qc = useQueryClient();
@@ -233,7 +220,10 @@ export default function TerminalPage() {
 
   const visibleCols = useMemo(() => {
     return (allCols ?? [])
-      .filter((c: any) => c.is_visible)
+      .filter((c: any) => {
+        const k = (c.col_key || c.name || "").toLowerCase().trim();
+        return c.is_visible && k !== "p_close" && k !== "p.close" && k !== "prev close";
+      })
       .sort((a: any, b: any) => a.col_order - b.col_order);
   }, [allCols]);
 
@@ -248,7 +238,7 @@ export default function TerminalPage() {
     const seen = new Set<string>();
     return forBook.filter((c: any) => {
       const key = (c.col_key || c.name || "").toLowerCase().trim();
-      if (!key || key === "symbol" || seen.has(key)) return false;
+      if (!key || key === "symbol" || key === "p_close" || key === "p.close" || key === "prev close" || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
@@ -304,14 +294,6 @@ export default function TerminalPage() {
     refetchInterval: 1000,
     placeholderData: (prev) => prev,
   });
-
-  const { data: tokenStatus, isError: tokenError, isSuccess: tokenLoaded } = useQuery({
-    queryKey: ["dhan-token-status"],
-    queryFn: () => api.get("/dhan-auth/token-status").then(r => r.data),
-    refetchInterval: 60_000,
-  });
-  const tokenOffline = tokenError || (tokenLoaded && !tokenStatus?.valid);
-
 
   const hideColMutation = useMutation({
     mutationFn: ({id, visible}: any) =>
@@ -471,46 +453,71 @@ export default function TerminalPage() {
 
   return (
     <Layout>
-      {/* ── Account Summary Bar (Row 1 of Excel) ──────────────────────────── */}
-      <div style={{
-        display: "flex", flexWrap: "wrap", gap: 0, marginBottom: 16,
-        border: "1px solid var(--border)", background: "var(--surface)",
-      }}>
-        {[
-          { label: "AVAIL BALANCE", value: funds?.availabelBalance != null ? `₹${Number(funds.availabelBalance).toLocaleString()}` : "—" },
-          { label: "USED MARGIN",   value: funds?.utilizedAmount   != null ? `₹${Number(funds.utilizedAmount).toLocaleString()}`   : "—" },
-          { label: "OVERALL P&L",   value: `${overallPnl >= 0 ? "+" : ""}₹${overallPnl.toLocaleString()}`,
-            color: overallPnl >= 0 ? "var(--green)" : "var(--red)" },
-        ].map(({label, value, color}) => (
-          <div key={label} style={{
-            flex: 1, padding: "12px 20px",
-            borderRight: "1px solid var(--border)",
-          }}>
-            <div style={{fontSize: 9, letterSpacing: 2, color: "var(--muted)", marginBottom: 4}}>{label}</div>
-            <div style={{fontSize: 18, fontWeight: 700, color: color ?? "var(--text)"}}>{value}</div>
+      {/* ── Account Summary Bar (Compact Fit) ──────────────────────────── */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: 12,
+          padding: "8px 14px",
+          marginBottom: 14,
+          borderRadius: 4,
+          border: "1px solid var(--border)",
+          background: "var(--surface)",
+        }}
+      >
+        {/* Left: Compact Vitals */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+            <span style={{ fontSize: 10, letterSpacing: 0.8, color: "var(--muted)", fontWeight: 700 }}>
+              AVAIL BALANCE
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+              {funds?.availabelBalance != null ? `₹${Number(funds.availabelBalance).toLocaleString()}` : "—"}
+            </span>
           </div>
-        ))}
 
-        {/* Status + controls */}
-        <div style={{display:"flex", alignItems:"center", gap:12, padding:"0 20px", marginLeft:"auto"}}>
-          <LiveClock />
-          {[
-            {label:"SYMBOLS", value: watchlist.length},
-            {label:"ACTIVE", value: screenRows.filter((r:any)=>r.is_active).length},
-            {label:"IN POSITION", value: screenRows.filter((r:any)=>r.status==="active").length},
-            {label:"LIVE DATA", value: tokenOffline ? "OFFLINE" : isLive ? "WEBSOCKET" : "POLLING"},
-          ].map(({label, value}) => (
-            <div key={label} style={{fontSize:10, color:"var(--muted)", letterSpacing:1}}>
-              {label} <b style={{color:"var(--text)"}}>{value}</b>
-            </div>
-          ))}
-          <div style={{display:"flex", alignItems:"center", gap:6,
-            color: tokenOffline ? "var(--red)" : isLive ? "var(--green)" : "var(--muted)", fontSize: 11}}>
-            <span style={{width:7, height:7, borderRadius:"50%", display:"inline-block",
-              background: tokenOffline ? "var(--red)" : isLive ? "var(--green)" : "var(--muted)",
-              boxShadow: !tokenOffline && isLive ? "0 0 6px var(--green)" : "none"}} />
-            {tokenOffline ? "OFFLINE" : isLive ? "LIVE" : "POLLING"}
+          <span style={{ color: "var(--border)", fontSize: 12 }}>|</span>
+
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+            <span style={{ fontSize: 10, letterSpacing: 0.8, color: "var(--muted)", fontWeight: 700 }}>
+              USED MARGIN
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+              {funds?.utilizedAmount != null ? `₹${Number(funds.utilizedAmount).toLocaleString()}` : "—"}
+            </span>
           </div>
+
+          <span style={{ color: "var(--border)", fontSize: 12 }}>|</span>
+
+          <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+            <span style={{ fontSize: 10, letterSpacing: 0.8, color: "var(--muted)", fontWeight: 700 }}>
+              OVERALL P&L
+            </span>
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: overallPnl >= 0 ? "var(--green)" : "var(--red)",
+              }}
+            >
+              {`${overallPnl >= 0 ? "+" : ""}₹${overallPnl.toLocaleString()}`}
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Status counts & action buttons */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginLeft: "auto" }}>
+          <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.6 }}>
+            ACTIVE <b style={{ color: "var(--text)" }}>{screenRows.filter((r: any) => r.is_active).length}</b>
+          </div>
+          <span style={{ color: "var(--border)", fontSize: 11 }}>•</span>
+          <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.6 }}>
+            IN POSITION <b style={{ color: "var(--text)" }}>{screenRows.filter((r: any) => r.status === "active").length}</b>
+          </div>
+
           {copySummary?.active_copy_count > 0 && (
             <Link
               to="/copy-trading"
@@ -519,7 +526,7 @@ export default function TerminalPage() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 5,
-                padding: "3px 8px",
+                padding: "2px 7px",
                 fontSize: 10,
                 fontWeight: 700,
                 color: "var(--green)",
@@ -531,38 +538,34 @@ export default function TerminalPage() {
               title="Click to open Dhan Copy Trading Hub"
             >
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--green)" }} />
-              COPY: {copySummary.active_copy_count} ACCOUNTS
+              COPY: {copySummary.active_copy_count}
             </Link>
           )}
-          {isAdmin && (
-            <>
-              <button
-                className="exit-btn"
-                style={{
-                  fontSize: 11,
-                  padding: "6px 14px",
-                  color: "var(--green)",
-                  borderColor: "rgba(0,230,118,0.3)",
-                  background: "rgba(0,230,118,0.06)",
-                }}
-                onClick={() => {
-                  if (confirm("Apply Fibonacci Formula batch across tables?")) {
-                    applyBatchMutation.mutate({ batch: "Fibonacci Formula", book: "both" });
-                  }
-                }}
-                title="Apply Fibonacci Formula Batch Across All Tables"
-              >
-                FIBONACCI BATCH
-              </button>
-            </>
-          )}
-          <button className="exit-btn" style={{fontSize:11, padding:"6px 14px",
-            color:"var(--yellow)", borderColor:"rgba(255,183,3,0.3)"}}
-            onClick={() => setShowColumns(true)}>
+
+          <button
+            type="button"
+            className="exit-btn"
+            style={{
+              fontSize: 11,
+              padding: "4px 10px",
+              color: "var(--yellow)",
+              borderColor: "rgba(255,183,3,0.3)",
+              lineHeight: 1.2,
+            }}
+            onClick={() => setShowColumns(true)}
+          >
             COLUMNS
           </button>
-          <button className="connect-btn" style={{fontSize:11, padding:"6px 14px"}}
-            onClick={() => { setShowAdd(v => !v); }}>
+          <button
+            type="button"
+            className="connect-btn"
+            style={{
+              fontSize: 11,
+              padding: "4px 12px",
+              lineHeight: 1.2,
+            }}
+            onClick={() => { setShowAdd((v) => !v); }}
+          >
             {showAdd ? "CANCEL" : "+ ADD SYMBOL"}
           </button>
         </div>
@@ -623,28 +626,28 @@ export default function TerminalPage() {
               className={`tab-btn ${viewMode === "all" ? "active" : ""}`}
               onClick={() => setViewMode("all")}
             >
-              ALL WATCHLISTS ({watchlist.length})
+              ALL WATCHLISTS
             </button>
             <button
               type="button"
               className={`tab-btn ${viewMode === "equity" ? "active" : ""}`}
               onClick={() => setViewMode("equity")}
             >
-              EQUITY ({equitySymbols.length})
+              EQUITY
             </button>
             <button
               type="button"
               className={`tab-btn ${viewMode === "options" ? "active" : ""}`}
               onClick={() => setViewMode("options")}
             >
-              OPTIONS ({optionSymbols.length})
+              OPTIONS
             </button>
             <button
               type="button"
               className={`tab-btn ${viewMode === "algo" ? "active" : ""}`}
               onClick={() => setViewMode("algo")}
             >
-              ALGO WINDOW ({(algoRows ?? []).length})
+              ALGO WINDOW
             </button>
           </div>
           <div style={{fontSize:11, color:"var(--muted)", display:"flex", alignItems:"center", gap:6}}>
@@ -1004,7 +1007,7 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
     const seen = new Set<string>();
     return raw.filter((col: any) => {
       const k = (col.col_key || col.name || "").toLowerCase().trim();
-      if (!k || seen.has(k)) return false;
+      if (!k || k === "p_close" || k === "p.close" || k === "prev close" || seen.has(k)) return false;
       seen.add(k);
       return true;
     });
@@ -2460,9 +2463,6 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
             color: title === "OPTIONS" ? "var(--yellow)" : "var(--green)"
           }}>
             {title === "OPTIONS" ? "OPTIONS WATCHLIST" : "EQUITY WATCHLIST"}
-          </span>
-          <span className="badge badge-gray" style={{fontSize:10}}>
-            {watchlist.length} {title === "OPTIONS" ? "CONTRACTS" : "SYMBOLS"}
           </span>
         </div>
       </div>

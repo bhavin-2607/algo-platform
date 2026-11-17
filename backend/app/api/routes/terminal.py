@@ -614,6 +614,15 @@ async def _column_for_editor(db: AsyncSession, col_id: str, current_user: User):
 async def _shared_columns(db: AsyncSession, current_user: User):
     """Column definitions belong to admin accounts so every terminal shows the same set."""
     from app.models.terminal_column import TerminalColumn, DEFAULT_COLUMNS
+    from sqlalchemy import delete as sa_delete
+
+    # Remove any obsolete p_close columns
+    await db.execute(
+        sa_delete(TerminalColumn).where(
+            (TerminalColumn.col_key == "p_close") | (TerminalColumn.name == "P.CLOSE") | (TerminalColumn.name == "PREV CLOSE")
+        )
+    )
+    await db.commit()
 
     admins = await db.execute(
         select(User.id).where(User.role == UserRole.admin).order_by(User.created_at)
@@ -633,6 +642,11 @@ async def _shared_columns(db: AsyncSession, current_user: User):
         existing_keys = {c.col_key for c in cols if c.col_key}
         owner_id = cols[0].user_id
         added = False
+        default_order_map = {d["col_key"]: d["col_order"] for d in DEFAULT_COLUMNS if d.get("col_key")}
+        for c in cols:
+            if c.col_key in default_order_map and c.col_order != default_order_map[c.col_key]:
+                c.col_order = default_order_map[c.col_key]
+                added = True
         for d in DEFAULT_COLUMNS:
             if d.get("col_key") and d["col_key"] not in existing_keys:
                 db.add(TerminalColumn(
@@ -643,7 +657,7 @@ async def _shared_columns(db: AsyncSession, current_user: User):
                     formula=d.get("formula"),
                     col_order=d["col_order"],
                     width=d["width"],
-                    is_visible=True,
+                    is_visible=d.get("is_visible", True),
                     color_rules=d.get("color_rules"),
                     book="shared",
                 ))
@@ -668,7 +682,7 @@ async def _shared_columns(db: AsyncSession, current_user: User):
                 formula=d.get("formula"),
                 col_order=d["col_order"],
                 width=d["width"],
-                is_visible=True,
+                is_visible=d.get("is_visible", True),
                 color_rules=d["color_rules"],
                 book="shared",
             ))
@@ -946,8 +960,8 @@ async def reset_columns(
             col_type    = d["col_type"],
             col_order   = d["col_order"],
             width       = d["width"],
-            is_visible  = True,
-            color_rules = d["color_rules"],
+            is_visible  = d.get("is_visible", True),
+            color_rules = d.get("color_rules"),
             book        = "shared",
         ))
     await db.commit()
@@ -1073,7 +1087,7 @@ async def apply_formula_batch(
                 col_type    = d["col_type"],
                 col_order   = d["col_order"],
                 width       = d["width"],
-                is_visible  = True,
+                is_visible  = d.get("is_visible", True),
                 color_rules = d.get("color_rules"),
                 book        = b,
             ))
