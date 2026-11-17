@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.deps import require_admin
 from app.core.security import hash_password
 from app.models.user import User, UserRole
-from app.models.broker import BrokerAccount
+from app.models.broker import BrokerAccount, BrokerName
 from app.models.strategy import Strategy, UserStrategyMap, StrategyStatus
 from app.models.trade import Trade
 from app.models.signal import Signal
@@ -61,7 +61,7 @@ async def _get_active_dhan_credentials(db: AsyncSession) -> tuple[Optional[str],
 
     result = await db.execute(
         select(BrokerAccount).where(
-            BrokerAccount.broker == "DHAN",
+            BrokerAccount.broker == BrokerName.dhan,
             BrokerAccount.is_active == True,
         )
     )

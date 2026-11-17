@@ -160,6 +160,28 @@ class TestDhanCopyTrading(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(res["children"]), 2)
             self.assertEqual(res["total_children_succeeded"], 2)
 
+    async def test_admin_get_active_dhan_credentials(self):
+        """Verify _get_active_dhan_credentials successfully queries BrokerName.dhan without invalid enum error."""
+        from app.api.routes.admin import _get_active_dhan_credentials
+
+        mock_db = AsyncMock()
+        mock_acc = BrokerAccount(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            broker=BrokerName.dhan,
+            client_id="1100354422",
+            account_role="MASTER",
+            account_name="Primary Dhan",
+            is_active=True,
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_acc]
+        mock_db.execute.return_value = mock_result
+
+        client_id, token, name = await _get_active_dhan_credentials(mock_db)
+        self.assertEqual(client_id, "1100354422")
+        self.assertEqual(name, "Primary Dhan")
+
 
 if __name__ == "__main__":
     unittest.main()
