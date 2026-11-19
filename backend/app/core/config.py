@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -36,6 +37,13 @@ class Settings(BaseSettings):
     LIVE_TRADING_ENABLED: bool = False
     ORDER_FILL_TIMEOUT_SEC: int = 30
     ORDER_FILL_POLL_INTERVAL_SEC: float = 0.5
+
+    @field_validator("ORDER_FILL_TIMEOUT_SEC", mode="before")
+    @classmethod
+    def validate_order_timeout(cls, v):
+        if v is None or str(v).strip() == "":
+            return 30
+        return int(v)
 
     # ── Dhan (primary broker) ─────────────────────────────────────────────────
     DHAN_PIN:         str = ""

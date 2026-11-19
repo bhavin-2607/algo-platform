@@ -1,6 +1,7 @@
 """
 Market Data Routes — serves OHLCV candles, quotes and instrument search.
 """
+import asyncio
 import logging
 import random
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -16,7 +17,7 @@ _SCRIP_CACHE: dict = {"mtime": None, "frame": None}
 
 
 def _scrip_frame():
-    """Scrip master is about 200k rows. Read it once per file change."""
+    """Scrip master has ~225k rows. Read it once per file change and prepare search indexes."""
     import os
     import pandas as pd
     csv_path = os.path.abspath(os.path.join(
@@ -26,6 +27,18 @@ def _scrip_frame():
     if _SCRIP_CACHE["frame"] is not None and _SCRIP_CACHE["mtime"] == mtime:
         return _SCRIP_CACHE["frame"]
     frame = pd.read_csv(csv_path, header=0, low_memory=False)
+
+    # Pre-clean string columns for fast search
+    disp = frame["DISPLAY_NAME"].fillna("").astype(str).str.upper()
+    sym = frame["SYMBOL_NAME"].fillna("").astype(str).str.upper()
+    und = frame["UNDERLYING_SYMBOL"].fillna("").astype(str).str.upper()
+    inst = frame["INSTRUMENT"].fillna("").astype(str).str.upper()
+    opt = frame["OPTION_TYPE"].fillna("").astype(str).str.upper()
+    exch = frame["EXCH_ID"].fillna("").astype(str).str.upper()
+    srs = frame["SERIES"].fillna("").astype(str).str.upper()
+    opt_aliases = opt.map({"CE": "CE CALL", "PE": "PE PUT"}).fillna("")
+
+    frame["SEARCH_BLOB"] = (disp + " " + sym + " " + und + " " + inst + " " + opt_aliases + " " + exch + " " + srs).values
     _SCRIP_CACHE["mtime"] = mtime
     _SCRIP_CACHE["frame"] = frame
     return frame
@@ -477,7 +490,7 @@ async def _load_instruments() -> list:
             if results:
                 _instrument_cache = results
                 _cache_loaded_at  = now
-                logger.info(f"✅ Loaded {len(results)} instruments from {csv_path}")
+                logger.info(f"Loaded {len(results)} instruments from {csv_path}")
                 return results
 
         except Exception as e:
@@ -496,128 +509,220 @@ async def _load_instruments() -> list:
 
 
 
+def resolve_exchange_segment(row) -> tuple[str, str, str]:
+    """
+    Returns (exchange_segment, exchange, series) mapped to Dhan API specifications.
+    Valid Dhan marketfeed quote segments:
+    - IDX_I: Indices
+    - NSE_EQ: NSE Cash Equity
+    - BSE_EQ: BSE Cash Equity
+    - NSE_FNO: NSE Derivatives (Futures & Options)
+    - BSE_FNO: BSE Derivatives (Futures & Options)
+    - MCX_COMM: MCX Commodities (Futures & Options)
+    - NSE_CURR: NSE Currency Derivatives
+    - BSE_CURR: BSE Currency Derivatives
+    """
+    exch = str(row.get("EXCH_ID") or "").strip().upper()
+    seg  = str(row.get("SEGMENT") or "").strip().upper()
+    inst = str(row.get("INSTRUMENT") or "").strip().upper()
+
+    if seg == "I" or inst == "INDEX":
+        return "IDX_I", exch, "INDEX"
+    if exch == "MCX" or seg == "M":
+        return "MCX_COMM", "MCX", inst or "COMM"
+    if seg == "C" or inst in ("FUTCUR", "OPTCUR"):
+        return f"{exch}_CURR" if exch in ("NSE", "BSE") else "NSE_CURR", exch, inst
+    if seg == "D" or inst in ("FUTIDX", "FUTSTK", "OPTIDX", "OPTSTK", "OPTFUT"):
+        opt = str(row.get("OPTION_TYPE") or "").strip()
+        series = opt if opt and opt not in ("XX", "nan") else inst
+        return f"{exch}_FNO" if exch in ("NSE", "BSE") else "NSE_FNO", exch, series
+    if exch == "BSE":
+        return "BSE_EQ", "BSE", str(row.get("SERIES") or "E")
+    return "NSE_EQ", "NSE", str(row.get("SERIES") or "EQ")
+
+
+def _search_instruments_sync(q: str, limit: int = 30) -> list[dict]:
+    """
+    Synchronous unrestricted search across all 225,137 instruments.
+    Executed in a background thread via asyncio.to_thread to keep the event loop responsive.
+    """
+    q_clean = q.strip()
+    if not q_clean:
+        return []
+
+    q_upper = q_clean.upper()
+    raw_tokens = q_upper.split()
+    tokens = []
+    for t in raw_tokens:
+        if t in ("CALL", "CALLS"):
+            tokens.append("CALL")
+        elif t in ("PUT", "PUTS"):
+            tokens.append("PUT")
+        elif t in ("FUTURE", "FUTURES"):
+            tokens.append("FUT")
+        else:
+            tokens.append(t)
+
+    try:
+        df = _scrip_frame()
+        if "SEARCH_BLOB" not in df.columns:
+            return []
+
+        # Multi-token boolean intersection
+        mask = df["SEARCH_BLOB"].str.contains(tokens[0], regex=False, na=False)
+        for tok in tokens[1:]:
+            mask = mask & df["SEARCH_BLOB"].str.contains(tok, regex=False, na=False)
+
+        hits = df[mask]
+        if hits.empty:
+            return []
+
+        first_tok = tokens[0]
+
+        def rank_score(r):
+            sym = str(r.get("SYMBOL_NAME") or "").strip().upper()
+            disp = str(r.get("DISPLAY_NAME") or "").strip().upper()
+            und = str(r.get("UNDERLYING_SYMBOL") or "").strip().upper()
+            inst = str(r.get("INSTRUMENT") or "").strip().upper()
+            seg = str(r.get("SEGMENT") or "").strip().upper()
+            exch = str(r.get("EXCH_ID") or "").strip().upper()
+            series = str(r.get("SERIES") or "").strip().upper()
+            expiry = str(r.get("SM_EXPIRY_DATE") or "9999-99-99").strip()
+            if expiry in ("nan", "0001-01-01"):
+                expiry = "9999-99-99"
+
+            is_idx = seg == "I" or inst == "INDEX"
+            is_fut = inst.startswith("FUT")
+            is_opt = inst.startswith("OPT")
+            is_eq  = inst == "EQUITY"
+
+            # Tier 0: Exact match to the whole query string
+            if disp == q_upper or sym == q_upper or und == q_upper:
+                if is_idx:
+                    return (0, 0, expiry)
+                if is_eq and series == "EQ":
+                    return (0, 1 if exch == "NSE" else 2, expiry)
+                if is_eq:
+                    return (0, 3, expiry)
+                if is_fut:
+                    return (0, 4, expiry)
+                if is_opt:
+                    return (0, 5, expiry)
+                return (0, 6, expiry)
+
+            # Tier 1: Single token search where underlying matches exactly
+            if len(tokens) == 1:
+                if und == q_upper or sym == q_upper:
+                    if is_idx:
+                        return (1, 0, expiry)
+                    if is_eq and series == "EQ":
+                        return (1, 1 if exch == "NSE" else 2, expiry)
+                    if is_eq:
+                        return (1, 3, expiry)
+                    if is_fut:
+                        return (1, 4, expiry)
+                    if is_opt:
+                        return (1, 5, expiry)
+                    return (1, 6, expiry)
+
+            # Tier 2: Futures matching the underlying / leading token
+            if is_fut and (und == first_tok or sym.startswith(first_tok)):
+                return (2, 0, expiry)
+
+            # Tier 3: Starts with query
+            if disp.startswith(q_upper) or sym.startswith(q_upper):
+                if is_idx:
+                    return (3, 0, expiry)
+                if is_eq and series == "EQ":
+                    return (3, 1 if exch == "NSE" else 2, expiry)
+                if is_fut:
+                    return (3, 3, expiry)
+                if is_opt:
+                    return (3, 4, expiry)
+                return (3, 5, expiry)
+
+            # Tier 4: Options matching the leading token
+            if is_opt and (und == first_tok or sym.startswith(first_tok)):
+                return (4, 0, expiry)
+
+            # Tier 5: Everything else
+            return (5, 0, expiry)
+
+        scored_rows = []
+        for _, row in hits.iterrows():
+            scored_rows.append((rank_score(row), row))
+
+        scored_rows.sort(key=lambda item: item[0])
+
+        results = []
+        seen_keys = set()
+
+        for _, row in scored_rows:
+            segment, exch, srs = resolve_exchange_segment(row)
+            sec_id = str(int(float(row["SECURITY_ID"])))
+            dedup_key = f"{segment}_{sec_id}"
+            if dedup_key in seen_keys:
+                continue
+            seen_keys.add(dedup_key)
+
+            disp_name = str(row.get("DISPLAY_NAME") or "").strip()
+            sym_name = str(row.get("SYMBOL_NAME") or "").strip()
+            und_sym = str(row.get("UNDERLYING_SYMBOL") or "").strip()
+            isin = str(row.get("ISIN") or "")
+            if isin == "nan":
+                isin = ""
+
+            if segment == "IDX_I":
+                symbol = und_sym or sym_name or disp_name
+                name = disp_name or sym_name
+            elif segment in ("NSE_EQ", "BSE_EQ"):
+                symbol = und_sym or sym_name or disp_name
+                name = disp_name or sym_name
+            else:
+                symbol = disp_name or sym_name
+                opt_type = str(row.get("OPTION_TYPE") or "").strip()
+                expiry = str(row.get("SM_EXPIRY_DATE") or "").strip()
+                strike = str(row.get("STRIKE_PRICE") or "").strip()
+                if opt_type and opt_type not in ("XX", "nan"):
+                    name = f"{und_sym} {strike} {opt_type} {expiry}".strip()
+                elif expiry and expiry not in ("0001-01-01", "nan"):
+                    name = f"{und_sym} {expiry} {srs}".strip()
+                else:
+                    name = sym_name or disp_name
+
+            results.append({
+                "symbol":           symbol,
+                "name":             name,
+                "security_id":      sec_id,
+                "exchange_segment": segment,
+                "exchange":         exch,
+                "series":           srs,
+                "isin":             isin if segment in ("NSE_EQ", "BSE_EQ") else "",
+            })
+
+            if len(results) >= limit:
+                break
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Unrestricted instrument search error: {e}")
+        return []
+
+
 @router.get("/instruments/search")
 async def search_instruments_csv(
     q:    str = Query(..., min_length=1),
     exch: str = Query("NSE"),
     current_user: User = Depends(get_current_user),
 ):
-    """Search instruments from CSV — NSE first, BSE as fallback."""
-    q_upper = q.upper().strip()
-
-    try:
-        df = _scrip_frame()
-
-        # Equity + Indices + MCX Commodities
-        eq_df = df[
-            ((df["EXCH_ID"] == "NSE") & (df["SERIES"] == "EQ")) |
-            ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))  |
-            ((df["EXCH_ID"].isin(["NSE", "BSE"])) & (df["SEGMENT"] == "I")) |
-            ((df["EXCH_ID"] == "MCX") & (df["INSTRUMENT"].isin(["FUTCOM", "FUTIDX"])))
-        ]
-
-        mask = (
-            eq_df["SYMBOL_NAME"].str.upper().str.contains(q_upper, na=False, regex=False) |
-            eq_df["DISPLAY_NAME"].str.upper().str.contains(q_upper, na=False, regex=False) |
-            eq_df["UNDERLYING_SYMBOL"].str.upper().str.contains(q_upper, na=False, regex=False)
-        )
-        matches = eq_df[mask].head(60)
-
-        # Deduplicate by ISIN / Security ID — NSE first, then BSE, then MCX
-        seen_isin = {}
-        results   = []
-
-        for _, row in matches[matches["EXCH_ID"] == "NSE"].iterrows():
-            isin = str(row["ISIN"])
-            is_index = str(row.get("SEGMENT") or "") == "I"
-            sec_id = str(int(float(row["SECURITY_ID"])))
-            dedup_key = f"NSE_IDX_{sec_id}" if is_index else (isin if isin and isin != "nan" else f"NSE_{sec_id}")
-            entry = {
-                "symbol":           str(row["UNDERLYING_SYMBOL"] or row["DISPLAY_NAME"]).strip().upper() if is_index else str(row["DISPLAY_NAME"]),
-                "name":             str(row["DISPLAY_NAME"] if is_index else row["SYMBOL_NAME"]),
-                "security_id":      sec_id,
-                "exchange_segment": "IDX_I" if is_index else "NSE_EQ",
-                "exchange":         "NSE",
-                "series":           "IDX" if is_index else "EQ",
-                "isin":             isin if not is_index else "",
-            }
-            seen_isin[dedup_key] = len(results)
-            results.append(entry)
-
-        for _, row in matches[matches["EXCH_ID"] == "BSE"].iterrows():
-            isin = str(row["ISIN"])
-            is_index = str(row.get("SEGMENT") or "") == "I"
-            sec_id = str(int(float(row["SECURITY_ID"])))
-            sym = str(row["SYMBOL_NAME"] or row["UNDERLYING_SYMBOL"] or row["DISPLAY_NAME"]).strip().upper() if is_index else str(row["DISPLAY_NAME"])
-            dedup_key = f"BSE_IDX_{sec_id}" if is_index else (isin if isin and isin != "nan" else f"BSE_{sec_id}")
-            if dedup_key not in seen_isin:
-                seen_isin[dedup_key] = len(results)
-                results.append({
-                    "symbol":           sym,
-                    "name":             str(row["DISPLAY_NAME"] if is_index else row["SYMBOL_NAME"]),
-                    "security_id":      sec_id,
-                    "exchange_segment": "IDX_I" if is_index else "BSE_EQ",
-                    "exchange":         "BSE",
-                    "series":           "IDX" if is_index else "E",
-                    "isin":             "" if is_index else isin,
-                })
-
-        for _, row in matches[matches["EXCH_ID"] == "MCX"].iterrows():
-            results.append({
-                "symbol":           str(row["DISPLAY_NAME"] or row["SYMBOL_NAME"]),
-                "name":             str(row["SYMBOL_NAME"] or row["DISPLAY_NAME"]),
-                "security_id":      str(int(float(row["SECURITY_ID"]))),
-                "exchange_segment": "MCX_COMM",
-                "exchange":         "MCX",
-                "series":           str(row.get("INSTRUMENT") or "FUTCOM"),
-                "isin":             "",
-            })
-
-        # Sort: exact match first, then starts-with, then contains
-        def sort_key(r):
-            s = r["symbol"].upper()
-            n = r["name"].upper()
-            if s == q_upper or n == q_upper:          return 0
-            if s.startswith(q_upper) or n.startswith(q_upper): return 1
-            return 2
-
-        results.sort(key=sort_key)
-
-        # Option contracts join this search when the query names a strike, CE/PE, or commodity
-        # Equity and index rows stay first so a plain symbol search is unchanged.
-        if _query_includes_option(q_upper):
-            from app.api.routes.options import match_option_contracts
-            results = results[:8]
-            seen = {r["security_id"] for r in results}
-            for opt in match_option_contracts(q_upper, limit=16):
-                if opt["security_id"] in seen:
-                    continue
-                results.append({
-                    "symbol":           opt["symbol"],
-                    "name":             f"{opt['underlying']} {opt['strike']:g} {opt['option_type']} {opt['expiry']}",
-                    "security_id":      opt["security_id"],
-                    "exchange_segment": opt.get("exchange_segment", "NSE_FNO"),
-                    "exchange":         opt.get("exchange", "NSE"),
-                    "series":           opt["option_type"],
-                    "isin":             "",
-                })
-            return results[:20]
-        return results[:20]
-
-    except Exception as e:
-        logger.error(f"Instrument search error: {e}")
-        return []
-
-
-def _query_includes_option(q: str) -> bool:
-    if any(ch.isdigit() for ch in q):
-        return True
-    words = set(q.split())
-    if words & {"CE", "PE", "CALL", "PUT"}:
-        return True
-    if words & {"GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "MCX"}:
-        return True
-    return False
+    """
+    Unrestricted full-market instrument search across all 225,137 instruments:
+    Equities (NSE & BSE all series), Indices, Stock Futures, Index Futures,
+    Index Options, Stock Options, Commodity Futures & Options (MCX),
+    and Currency Futures & Options.
+    """
+    return await asyncio.to_thread(_search_instruments_sync, q, 30)
 
 
 BUNDLED_INSTRUMENTS = [
@@ -741,23 +846,23 @@ async def add_to_watchlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # If BSE symbol, try to find NSE equivalent before saving
-    if body.get("exchange_segment", "").startswith("BSE"):
+    # If BSE cash equity, try to find NSE equivalent before saving
+    if body.get("exchange_segment") == "BSE_EQ":
         try:
             df = _scrip_frame()
             sid = str(body.get("security_id", "")).replace(".0", "")
-            ids = df["SECURITY_ID"].map(lambda value: str(value).replace(".0", ""))
-            bse_row = df[(df["EXCH_ID"] == "BSE") & (ids == sid)]
+            bse_row = df[(df["EXCH_ID"] == "BSE") & (df["SECURITY_ID"].astype(str) == sid)]
             if not bse_row.empty:
                 isin = bse_row.iloc[0]["ISIN"]
-                nse_row = df[(df["EXCH_ID"] == "NSE") & (df["ISIN"] == isin) & (df["SERIES"] == "EQ")]
-                if not nse_row.empty:
-                    body["security_id"] = str(int(float(nse_row.iloc[0]["SECURITY_ID"])))
-                    body["exchange_segment"] = "NSE_EQ"
-                    ticker = str(nse_row.iloc[0]["UNDERLYING_SYMBOL"] or "").strip()
-                    if ticker:
-                        body["symbol"] = ticker
-                    logger.info(f"Watchlist: BSE→NSE for {body.get('symbol')}")
+                if isin and str(isin) != "nan":
+                    nse_row = df[(df["EXCH_ID"] == "NSE") & (df["ISIN"] == isin) & (df["SERIES"] == "EQ")]
+                    if not nse_row.empty:
+                        body["security_id"] = str(int(float(nse_row.iloc[0]["SECURITY_ID"])))
+                        body["exchange_segment"] = "NSE_EQ"
+                        ticker = str(nse_row.iloc[0]["UNDERLYING_SYMBOL"] or "").strip()
+                        if ticker:
+                            body["symbol"] = ticker
+                        logger.info(f"Watchlist: BSE→NSE for {body.get('symbol')}")
         except Exception as e:
             logger.warning(f"Watchlist BSE→NSE lookup failed: {e}")
 

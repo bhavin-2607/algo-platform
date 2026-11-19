@@ -261,17 +261,34 @@ export default function TerminalPage() {
            s.startsWith("NICKEL") || s.startsWith("ALUMINIUM") || s.startsWith("LEAD");
   }, [instrMap]);
 
-  const isOptionSymbol = useCallback((sym: string) => {
-    if (isMcxSymbol(sym)) return false;
+  const isIndexSymbol = useCallback((sym: string) => {
     const inst = instrMap[sym];
     const seg = inst?.segment || (SECURITY_IDS as Record<string, {segment: string}>)[sym]?.segment;
-    if (seg === "NSE_FNO" || seg === "BSE_FNO") return true;
-    return /\s\d{2,}\s(CE|PE|CALL|PUT)$/i.test(sym) || /-(CE|PE)$/i.test(sym);
-  }, [isMcxSymbol, instrMap]);
+    if (seg === "IDX_I") return true;
+    const s = sym.toUpperCase();
+    return s === "SENSEX" || s === "NIFTY50" || s === "NIFTY" || s === "BANKNIFTY" || s === "FINNIFTY" || s === "MIDCPNIFTY" || s === "BANKEX";
+  }, [instrMap]);
+
+  const isOptionSymbol = useCallback((sym: string) => {
+    if (isMcxSymbol(sym)) return false;
+    if (isIndexSymbol(sym)) return true;
+    const inst = instrMap[sym];
+    const seg = inst?.segment || (SECURITY_IDS as Record<string, {segment: string}>)[sym]?.segment;
+    if (seg === "NSE_FNO" || seg === "BSE_FNO" || seg === "NSE_CURR" || seg === "BSE_CURR") return true;
+    return /\s\d{2,}\s(CE|PE|CALL|PUT)$/i.test(sym) || /-(CE|PE)$/i.test(sym) || /\sFUT$/i.test(sym);
+  }, [isMcxSymbol, isIndexSymbol, instrMap]);
+
+  const isEquitySymbol = useCallback((sym: string) => {
+    if (isMcxSymbol(sym)) return false;
+    if (isIndexSymbol(sym)) return true;
+    const inst = instrMap[sym];
+    const seg = inst?.segment || (SECURITY_IDS as Record<string, {segment: string}>)[sym]?.segment;
+    return seg !== "NSE_FNO" && seg !== "BSE_FNO" && seg !== "NSE_CURR" && seg !== "BSE_CURR";
+  }, [isMcxSymbol, isIndexSymbol, instrMap]);
 
   const mcxSymbols = useMemo(() => watchlist.filter(isMcxSymbol), [watchlist, isMcxSymbol]);
-  const optionSymbols = useMemo(() => watchlist.filter((sym) => !isMcxSymbol(sym) && isOptionSymbol(sym)), [watchlist, isMcxSymbol, isOptionSymbol]);
-  const equitySymbols = useMemo(() => watchlist.filter((sym) => !isMcxSymbol(sym) && !isOptionSymbol(sym)), [watchlist, isMcxSymbol, isOptionSymbol]);
+  const optionSymbols = useMemo(() => watchlist.filter(isOptionSymbol), [watchlist, isOptionSymbol]);
+  const equitySymbols = useMemo(() => watchlist.filter(isEquitySymbol), [watchlist, isEquitySymbol]);
 
   const ticksRef = useRef<Record<string, any>>({});
   ticksRef.current = liveData;
@@ -2825,8 +2842,8 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        const seg = book === "option" ? "NSE_FNO" : (instrMap[sym]?.segment || "NSE_EQ");
-                        const exch = book === "option" ? "NFO" : ((instrMap[sym] as any)?.exchange || "NSE");
+                        const seg = instrMap[sym]?.segment || (book === "option" ? "NSE_FNO" : (book === "mcx" ? "MCX_COMM" : "NSE_EQ"));
+                        const exch = (instrMap[sym] as any)?.exchange || (seg.startsWith("BSE") ? "BSE" : (seg === "MCX_COMM" ? "MCX" : (book === "option" ? "NFO" : "NSE")));
                         onAddToAlgo(sym, seg, exch);
                       }}
                       style={{
