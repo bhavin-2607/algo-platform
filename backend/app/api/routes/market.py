@@ -204,32 +204,95 @@ DHAN_SECURITY_IDS = {
 }
 
 
+import time
 import requests as _http
+
+# Central in-memory quote cache and rate limiter
+_QUOTE_CACHE: dict = {}
+_LAST_DHAN_CALL_TIME: float = 0.0
+_RATE_LIMITED_UNTIL: float = 0.0
+_QUOTE_CACHE_TTL: float = 2.5
+_MIN_REQUEST_GAP: float = 1.2
 
 
 def _dhan_quote(securities: dict, client_id: str, access_token: str) -> dict:
     """
-    Call Dhan /marketfeed/quote — returns full market data per instrument.
-    Includes: LTP, OHLC, Volume, OI, average_price (VWAP), market depth (buy/sell).
-    securities: {"NSE_EQ": ["2885", "1333"], "IDX_I": ["13"]}
-    Returns nested dict keyed by segment → security_id.
+    Call Dhan /marketfeed/quote with rate limiting, TTL caching, and 805 backoff.
+    Returns nested dict keyed by segment -> security_id.
     """
-    resp = _http.post(
-        "https://api.dhan.co/v2/marketfeed/quote",
-        headers={
-            "access-token": access_token,
-            "client-id":    client_id,
-            "Content-Type": "application/json",
-            "Accept":       "application/json",
-        },
-        json={seg: [int(sid) for sid in sids] for seg, sids in securities.items()},
-        timeout=5,
-    )
-    data = resp.json()
-    if data.get("status") == "success":
-        return data.get("data", {})
-    logger.warning(f"Dhan Quote API error: {data}")
-    return {}
+    global _LAST_DHAN_CALL_TIME, _RATE_LIMITED_UNTIL
+    now = time.time()
+
+    result = {}
+    missing = {}
+
+    # Check which securities can be satisfied from cache
+    for seg, sids in securities.items():
+        for sid in sids:
+            sid_str = str(sid)
+            cached_entry = _QUOTE_CACHE.get((seg, sid_str))
+            if cached_entry and (now - cached_entry["time"]) < _QUOTE_CACHE_TTL:
+                result.setdefault(seg, {})[sid_str] = cached_entry["data"]
+            else:
+                missing.setdefault(seg, []).append(int(sid))
+
+    # If all requested instruments are fresh in cache, return immediately
+    if not missing:
+        return result
+
+    # If currently rate-limited by Dhan, serve stale cached data to prevent ban
+    if now < _RATE_LIMITED_UNTIL:
+        for seg, sids in missing.items():
+            for sid in sids:
+                sid_str = str(sid)
+                cached_entry = _QUOTE_CACHE.get((seg, sid_str))
+                if cached_entry:
+                    result.setdefault(seg, {})[sid_str] = cached_entry["data"]
+        return result
+
+    # Enforce minimum gap between consecutive calls to Dhan API
+    elapsed = now - _LAST_DHAN_CALL_TIME
+    if elapsed < _MIN_REQUEST_GAP:
+        time.sleep(_MIN_REQUEST_GAP - elapsed)
+
+    try:
+        _LAST_DHAN_CALL_TIME = time.time()
+        resp = _http.post(
+            "https://api.dhan.co/v2/marketfeed/quote",
+            headers={
+                "access-token": access_token,
+                "client-id":    client_id,
+                "Content-Type": "application/json",
+                "Accept":       "application/json",
+            },
+            json={seg: [int(sid) for sid in sids] for seg, sids in missing.items()},
+            timeout=5,
+        )
+        data = resp.json()
+        if data.get("status") == "success":
+            raw_data = data.get("data", {})
+            call_time = time.time()
+            for seg, sids_data in raw_data.items():
+                for sid_str, q in sids_data.items():
+                    _QUOTE_CACHE[(seg, str(sid_str))] = {"time": call_time, "data": q}
+                    result.setdefault(seg, {})[str(sid_str)] = q
+            return result
+        elif "805" in str(data):
+            _RATE_LIMITED_UNTIL = time.time() + 8.0
+            logger.warning("Dhan rate limit (805) encountered. Backing off for 8 seconds and serving cached data.")
+            for seg, sids in missing.items():
+                for sid in sids:
+                    sid_str = str(sid)
+                    cached_entry = _QUOTE_CACHE.get((seg, sid_str))
+                    if cached_entry:
+                        result.setdefault(seg, {})[sid_str] = cached_entry["data"]
+            return result
+        else:
+            logger.warning(f"Dhan Quote API error: {data}")
+            return result
+    except Exception as e:
+        logger.warning(f"Dhan quote request failed: {e}")
+        return result
 
 
 # Keep alias for backward compat
@@ -382,6 +445,23 @@ async def get_live_quotes(
 async def get_ticker(current_user: User = Depends(get_current_user)):
     """Live ticker for NIFTY50 and BANKNIFTY — used by header bar."""
     from app.core.config import settings
+
+    # Check shared poller cache first (avoids hitting Dhan API)
+    from app.market.market_poller import get_poller
+    poller = get_poller()
+    if poller._last_data:
+        cached = {t["symbol"]: t for t in poller._last_data}
+        ticker = []
+        for sym in ["NIFTY50", "BANKNIFTY", "SENSEX"]:
+            if sym in cached:
+                ticker.append({
+                    "symbol":     sym,
+                    "ltp":        cached[sym]["ltp"],
+                    "change_pct": cached[sym].get("change_pct", 0),
+                    "source":     "dhan_live",
+                })
+        if len(ticker) >= 2:
+            return ticker
 
     if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
         try:
