@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import sys
 import tkinter as tk
 from collections import deque
 from typing import List, Optional, Tuple
@@ -124,7 +125,7 @@ class TerminalWidget(ctk.CTkFrame):
 
     def _build_console(self):
         """Build scrolled text box with monospace font and color tags."""
-        font_family = "Consolas" if "win" in tk.TkVersion else "Menlo"
+        font_family = "Consolas" if sys.platform.startswith("win") else "Menlo"
         self.textbox = ctk.CTkTextbox(
             self,
             fg_color="#050608",
