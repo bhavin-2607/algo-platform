@@ -79,6 +79,9 @@ class TestSupervisorUtilities(unittest.TestCase):
     def test_find_python_interpreter(self):
         py_exe = find_python_interpreter()
         self.assertTrue(os.path.exists(py_exe))
+        import subprocess
+        res = subprocess.run([py_exe, "-c", "import uvicorn, celery"], capture_output=True)
+        self.assertEqual(res.returncode, 0, f"Interpreter {py_exe} missing uvicorn/celery: {res.stderr.decode()}")
 
     def test_is_port_in_use_structure(self):
         # Port 0 or a very unlikely port should be false

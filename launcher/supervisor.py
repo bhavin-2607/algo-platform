@@ -67,7 +67,9 @@ def find_python_interpreter() -> str:
     ]
     for c in candidates:
         if c.is_file() and os.access(c, os.X_OK):
-            return str(c.resolve())
+            # Do not dereference symlinks with .resolve(), as virtual environment
+            # binaries rely on their path within the venv to activate site-packages.
+            return str(c.absolute())
     return sys.executable
 
 
@@ -147,6 +149,14 @@ class ProcessSupervisor:
         env["PYTHONPATH"] = str(backend_dir)
         env["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
         env["PYTHONUNBUFFERED"] = "1"
+
+        # Propagate virtual environment PATH and VIRTUAL_ENV
+        py_path = Path(python_exe)
+        bin_dir = str(py_path.parent)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+        venv_root = py_path.parent.parent
+        if (venv_root / "pyvenv.cfg").is_file():
+            env["VIRTUAL_ENV"] = str(venv_root)
 
         creationflags = 0
         if sys.platform == "win32":
