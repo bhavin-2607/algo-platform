@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Algo Platform - Native Standalone Desktop Executable Launcher."""
 
+import multiprocessing
 import os
 import subprocess
 import sys
+
+multiprocessing.freeze_support()
 
 root_dir = os.path.dirname(os.path.abspath(__file__))
 backend_dir = os.path.join(root_dir, "backend")
@@ -12,6 +15,12 @@ if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
+
+# Headless background service runner (child processes spawned by supervisor)
+if len(sys.argv) > 1 and sys.argv[1] == "--service":
+    from launcher.app import main
+    main()
+    sys.exit(0)
 
 
 def _ensure_runtime_environment():

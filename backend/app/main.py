@@ -98,14 +98,35 @@ async def health():
 
 # ── Serve Built Frontend SPA (Standalone Mode) ────────────────────────────────
 import os
+import sys
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi import HTTPException
 
-_frontend_dist = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
-)
-if os.path.exists(_frontend_dist):
+
+def _find_frontend_dist() -> str:
+    candidates = []
+    # If running inside PyInstaller bundle
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidates.append(os.path.join(sys._MEIPASS, "frontend", "dist"))
+    # If running alongside the frozen executable
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, "frontend", "dist"))
+        candidates.append(os.path.join(exe_dir, "dist"))
+    # Standard development relative paths
+    candidates.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")))
+    candidates.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")))
+    candidates.append(os.path.abspath(os.path.join(os.getcwd(), "frontend", "dist")))
+
+    for path in candidates:
+        if os.path.exists(os.path.join(path, "index.html")):
+            return path
+    return ""
+
+
+_frontend_dist = _find_frontend_dist()
+if _frontend_dist and os.path.exists(_frontend_dist):
     _assets_dir = os.path.join(_frontend_dist, "assets")
     if os.path.exists(_assets_dir):
         app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")

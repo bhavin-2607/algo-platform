@@ -31,6 +31,9 @@ if not defined PYTHON_EXE (
 
 REM 2. Verify compilation dependencies
 echo [*] Checking build dependencies...
+if exist "backend\requirements.txt" (
+    !PYTHON_EXE! -m pip install -r backend\requirements.txt --quiet
+)
 !PYTHON_EXE! -m pip install pyinstaller customtkinter pystray Pillow psutil --quiet
 
 REM 3. Close running instances to release Windows file lock

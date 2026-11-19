@@ -485,24 +485,43 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--service":
         service_name = sys.argv[2] if len(sys.argv) > 2 else ""
         if service_name == "backend":
-            import uvicorn
-            port = 80
-            if "--port" in sys.argv:
-                try:
-                    port = int(sys.argv[sys.argv.index("--port") + 1])
-                except Exception:
-                    port = 80
-            uvicorn.run("app.main:app", host="0.0.0.0", port=port, log_level="info")
+            try:
+                import uvicorn
+                from app.main import app as fastapi_app
+                port = 80
+                if "--port" in sys.argv:
+                    try:
+                        port = int(sys.argv[sys.argv.index("--port") + 1])
+                    except Exception:
+                        port = 80
+                uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="info")
+            except Exception as e:
+                import traceback
+                print(f"[FATAL] Backend server failed to start: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                sys.exit(1)
             return
         elif service_name == "worker":
-            from app.worker.celery_app import celery_app
-            pool_type = "solo" if (sys.platform in ("darwin", "win32")) else "prefork"
-            celery_app.worker_main(argv=["worker", "--loglevel=info", "-P", pool_type])
+            try:
+                from app.worker.celery_app import celery_app
+                pool_type = "solo" if (sys.platform in ("darwin", "win32")) else "prefork"
+                celery_app.worker_main(argv=["worker", "--loglevel=info", "-P", pool_type])
+            except Exception as e:
+                import traceback
+                print(f"[FATAL] Celery Worker failed to start: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                sys.exit(1)
             return
         elif service_name == "beat":
-            from app.worker.celery_app import celery_app
-            beat = celery_app.Beat(loglevel="info")
-            beat.run()
+            try:
+                from app.worker.celery_app import celery_app
+                beat = celery_app.Beat(loglevel="info")
+                beat.run()
+            except Exception as e:
+                import traceback
+                print(f"[FATAL] Celery Beat failed to start: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                sys.exit(1)
             return
 
     # Normal GUI Mode

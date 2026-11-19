@@ -145,8 +145,12 @@ class ProcessSupervisor:
         is_frozen = getattr(sys, "frozen", False)
         python_exe = sys.executable if is_frozen else find_python_interpreter()
 
+        # In standalone executable mode, backend/ does not exist as an extracted folder on disk;
+        # code is bundled inside the executable. Use root so cwd is always a valid directory.
+        working_dir = str(backend_dir if backend_dir.is_dir() else root)
+
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(backend_dir)
+        env["PYTHONPATH"] = str(backend_dir if backend_dir.is_dir() else root)
         env["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
         env["PYTHONUNBUFFERED"] = "1"
 
@@ -175,7 +179,7 @@ class ProcessSupervisor:
         self.log("PLATFORM", f"Spawning Backend API (Uvicorn on port {self.port})...", "#06B6D4")
         try:
             api_proc = subprocess.Popen(
-                api_cmd, cwd=str(backend_dir), env=env,
+                api_cmd, cwd=working_dir, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 creationflags=creationflags,
             )
@@ -201,7 +205,7 @@ class ProcessSupervisor:
         self.log("PLATFORM", "Spawning Celery Strategy Worker...", "#10B981")
         try:
             worker_proc = subprocess.Popen(
-                worker_cmd, cwd=str(backend_dir), env=env,
+                worker_cmd, cwd=working_dir, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 creationflags=creationflags,
             )
@@ -225,7 +229,7 @@ class ProcessSupervisor:
         self.log("PLATFORM", "Spawning Celery Beat Scheduler...", "#D946EF")
         try:
             beat_proc = subprocess.Popen(
-                beat_cmd, cwd=str(backend_dir), env=env,
+                beat_cmd, cwd=working_dir, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 creationflags=creationflags,
             )

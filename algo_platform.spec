@@ -4,10 +4,15 @@
 import os
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 project_root = Path.cwd()
+
+# Ensure backend directory is in sys.path during spec evaluation
+backend_path = str(project_root / "backend")
+if backend_path not in sys.path:
+    sys.path.insert(0, backend_path)
 
 # 1. Collect CustomTkinter assets
 ctk_datas = []
@@ -20,6 +25,7 @@ except Exception:
 datas = [
     ("launcher/assets", "launcher/assets"),
     ("backend/app/market/instruments.csv", "app/market"),
+    ("backend/app", "app"),
 ]
 
 # Include production frontend build if present
@@ -37,34 +43,25 @@ hiddenimports = [
     "PIL.Image",
     "PIL.ImageDraw",
     "psutil",
-    "uvicorn",
-    "uvicorn.logging",
-    "uvicorn.loops",
-    "uvicorn.loops.auto",
-    "uvicorn.protocols",
-    "uvicorn.protocols.http",
-    "uvicorn.protocols.http.auto",
-    "uvicorn.lifespan",
-    "uvicorn.lifespan.on",
-    "fastapi",
-    "celery",
-    "celery.worker",
-    "celery.beat",
-    "kombu",
-    "redis",
-    "asyncpg",
-    "sqlalchemy",
-    "sqlalchemy.dialects.postgresql",
     "dhanhq",
     "dotenv",
-    "launcher.app",
-    "launcher.config",
-    "launcher.ip_guard",
-    "launcher.settings_dialog",
-    "launcher.supervisor",
-    "launcher.terminal_widget",
-    "launcher.tray",
+    "asyncpg",
+    "passlib",
+    "passlib.handlers",
+    "passlib.handlers.bcrypt",
+    "bcrypt",
+    "jose",
+    "jwt",
+    "pyotp",
+    "websockets",
+    "prometheus_fastapi_instrumentator",
 ]
+
+for pkg in ["app", "launcher", "uvicorn", "celery", "kombu", "fastapi", "sqlalchemy"]:
+    try:
+        hiddenimports += collect_submodules(pkg)
+    except Exception:
+        pass
 
 if sys.platform == "win32":
     hiddenimports += [
