@@ -188,6 +188,7 @@ class DesktopApp(ctk.CTk if ctk else object):
         strip = ctk.CTkFrame(self, fg_color="transparent")
         strip.pack(fill="x", padx=14, pady=(10, 4))
         strip.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        strip.grid_rowconfigure(0, weight=1)
 
         # Card 1: Backend API
         self.card_backend = self._create_status_card(strip, 0, "BACKEND API", "INITIALIZING...", "#94A3B8", "Port: --")
@@ -202,12 +203,11 @@ class DesktopApp(ctk.CTk if ctk else object):
         self.card_ip = self._create_status_card(strip, 3, "SEBI IP GUARD", "CHECKING...", "#94A3B8", "Resolving IP...")
 
     def _create_status_card(self, parent, col: int, title: str, status: str, color: str, subtext: str) -> dict:
-        frame = ctk.CTkFrame(parent, fg_color="#0E1015", border_color="#1E2026", border_width=1, corner_radius=6, height=76)
+        frame = ctk.CTkFrame(parent, fg_color="#0E1015", border_color="#1E2026", border_width=1, corner_radius=6)
         frame.grid(row=0, column=col, padx=4, sticky="nsew")
-        frame.pack_propagate(False)
 
         top_row = ctk.CTkFrame(frame, fg_color="transparent")
-        top_row.pack(fill="x", padx=10, pady=(6, 0))
+        top_row.pack(fill="x", padx=10, pady=(8, 2))
 
         dot = ctk.CTkLabel(top_row, text="•", font=ctk.CTkFont(size=12, weight="bold"), text_color=color)
         dot.pack(side="left", padx=(0, 4))
@@ -216,10 +216,10 @@ class DesktopApp(ctk.CTk if ctk else object):
         lbl_title.pack(side="left")
 
         lbl_status = ctk.CTkLabel(frame, text=status, font=ctk.CTkFont(size=12, weight="bold"), text_color=color)
-        lbl_status.pack(anchor="w", padx=10, pady=(2, 0))
+        lbl_status.pack(anchor="w", padx=10, pady=(1, 2))
 
         lbl_sub = ctk.CTkLabel(frame, text=subtext, font=ctk.CTkFont(size=10), text_color="#64748B")
-        lbl_sub.pack(anchor="w", padx=10, pady=(0, 6))
+        lbl_sub.pack(anchor="w", padx=10, pady=(0, 8))
 
         return {"frame": frame, "dot": dot, "title": lbl_title, "status": lbl_status, "sub": lbl_sub}
 
@@ -371,10 +371,10 @@ class DesktopApp(ctk.CTk if ctk else object):
 
         # Update Backend Card
         if self.supervisor.backend_ready:
-            port_label = f":{port}" if port != 80 else " (Zero-Port 80)"
+            port_label = f"(PORT {port})"
             self.card_backend["dot"].configure(text_color="#10B981")
             self.card_backend["status"].configure(text=f"ACTIVE {port_label}", text_color="#10B981")
-            self.card_backend["sub"].configure(text="http://0.0.0.0:" + str(port))
+            self.card_backend["sub"].configure(text=f"http://0.0.0.0:{port}")
         else:
             self.card_backend["dot"].configure(text_color="#EF4444")
             self.card_backend["status"].configure(text="STOPPED", text_color="#EF4444")
@@ -388,6 +388,7 @@ class DesktopApp(ctk.CTk if ctk else object):
         else:
             self.card_worker["dot"].configure(text_color="#EF4444")
             self.card_worker["status"].configure(text="STOPPED", text_color="#EF4444")
+            self.card_worker["sub"].configure(text="Worker Inactive")
 
         # Update Beat Card
         if self.supervisor.beat_ready:
@@ -397,6 +398,7 @@ class DesktopApp(ctk.CTk if ctk else object):
         else:
             self.card_beat["dot"].configure(text_color="#EF4444")
             self.card_beat["status"].configure(text="STOPPED", text_color="#EF4444")
+            self.card_beat["sub"].configure(text="Scheduler Inactive")
 
         # Update Overall Header Pill
         all_active = self.supervisor.backend_ready and self.supervisor.worker_ready and self.supervisor.beat_ready
