@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import queue
@@ -47,7 +48,7 @@ class DesktopApp(ctk.CTk if ctk else object):
 
         self.title("Algo Platform - Desktop Launcher & Engine Supervisor")
         self.geometry("980x680")
-        self.minsize(840, 540)
+        self.minsize(860, 560)
         self.configure(fg_color="#050608")
 
         # Set titlebar and taskbar icons
@@ -71,13 +72,15 @@ class DesktopApp(ctk.CTk if ctk else object):
         self._build_toolbar()
         self._build_terminal()
         self._build_footer()
+        self._bind_global_shortcuts()
 
         # Intercept window close (X) to minimize to system tray
         self.protocol("WM_DELETE_WINDOW", self._minimize_to_tray)
 
-        # Start background services & queue polling
+        # Start background services, queue polling, and clock tick
         self.after(100, self._initial_startup)
         self.after(50, self._poll_log_queue)
+        self.after(1000, self._update_clock)
 
     def _set_app_icon(self):
         """Configure Windows icon using resolved asset path."""
@@ -99,49 +102,79 @@ class DesktopApp(ctk.CTk if ctk else object):
 
     def _build_header(self):
         """Top brand bar and quick exit action."""
-        hdr = ctk.CTkFrame(self, fg_color="#0A0B0E", height=42, corner_radius=0)
+        hdr = ctk.CTkFrame(self, fg_color="#0A0B0E", height=44, corner_radius=0)
         hdr.pack(fill="x", side="top")
         hdr.pack_propagate(False)
 
+        # Left brand title
+        brand_box = ctk.CTkFrame(hdr, fg_color="transparent")
+        brand_box.pack(side="left", padx=14)
+
         title = ctk.CTkLabel(
-            hdr,
-            text="ALGO PLATFORM — ENGINE SUPERVISOR",
+            brand_box,
+            text="ALGO PLATFORM",
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color="#FFFFFF",
         )
-        title.pack(side="left", padx=14)
+        title.pack(side="left")
 
-        # Right-side button to close directly if desired
+        sep = ctk.CTkLabel(
+            brand_box,
+            text="|",
+            font=ctk.CTkFont(size=12),
+            text_color="#2E323D",
+        )
+        sep.pack(side="left", padx=8)
+
+        subtitle = ctk.CTkLabel(
+            brand_box,
+            text="ENGINE SUPERVISOR",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#64748B",
+        )
+        subtitle.pack(side="left")
+
+        # Global status pill badge
+        self.header_pill = ctk.CTkFrame(hdr, fg_color="#181A20", corner_radius=12, height=24)
+        self.header_pill.pack(side="left", padx=10)
+
+        self.lbl_header_dot = ctk.CTkLabel(self.header_pill, text="•", font=ctk.CTkFont(size=14, weight="bold"), text_color="#F59E0B")
+        self.lbl_header_dot.pack(side="left", padx=(8, 2))
+
+        self.lbl_header_status = ctk.CTkLabel(self.header_pill, text="STARTING...", font=ctk.CTkFont(size=10, weight="bold"), text_color="#E2E8F0")
+        self.lbl_header_status.pack(side="left", padx=(0, 8))
+
+        # Right-side button to close directly or minimize
         exit_btn = ctk.CTkButton(
             hdr,
             text="Exit App",
             command=self._on_full_exit,
-            width=65,
-            height=24,
-            font=ctk.CTkFont(size=10),
-            fg_color="#1E2026",
-            hover_color="#EF4444",
+            width=70,
+            height=26,
+            font=ctk.CTkFont(size=11),
+            fg_color="#181A20",
+            hover_color="#DC2626",
             text_color="#A1A1AA",
         )
-        exit_btn.pack(side="right", padx=10, pady=8)
+        exit_btn.pack(side="right", padx=(4, 12), pady=9)
 
         min_btn = ctk.CTkButton(
             hdr,
             text="Minimize to Tray",
             command=self._minimize_to_tray,
-            width=100,
-            height=24,
-            font=ctk.CTkFont(size=10),
-            fg_color="#1E2026",
+            width=105,
+            height=26,
+            font=ctk.CTkFont(size=11),
+            fg_color="#181A20",
             hover_color="#2E323D",
             text_color="#A1A1AA",
         )
-        min_btn.pack(side="right", padx=4, pady=8)
+        min_btn.pack(side="right", padx=4, pady=9)
 
     def _build_status_cards(self):
         """Build status strip showing Backend API, Celery Worker, Celery Beat, and IP Guard."""
         strip = ctk.CTkFrame(self, fg_color="transparent")
-        strip.pack(fill="x", padx=12, pady=(8, 4))
+        strip.pack(fill="x", padx=14, pady=(10, 4))
         strip.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         # Card 1: Backend API
@@ -157,25 +190,31 @@ class DesktopApp(ctk.CTk if ctk else object):
         self.card_ip = self._create_status_card(strip, 3, "SEBI IP GUARD", "CHECKING...", "#94A3B8", "Resolving IP...")
 
     def _create_status_card(self, parent, col: int, title: str, status: str, color: str, subtext: str) -> dict:
-        frame = ctk.CTkFrame(parent, fg_color="#101114", border_color="#1E2026", border_width=1, corner_radius=6, height=72)
+        frame = ctk.CTkFrame(parent, fg_color="#0E1015", border_color="#1E2026", border_width=1, corner_radius=6, height=76)
         frame.grid(row=0, column=col, padx=4, sticky="nsew")
         frame.pack_propagate(False)
 
-        lbl_title = ctk.CTkLabel(frame, text=title, font=ctk.CTkFont(size=10, weight="bold"), text_color="#A1A1AA")
-        lbl_title.pack(anchor="w", padx=10, pady=(6, 0))
+        top_row = ctk.CTkFrame(frame, fg_color="transparent")
+        top_row.pack(fill="x", padx=10, pady=(6, 0))
+
+        dot = ctk.CTkLabel(top_row, text="•", font=ctk.CTkFont(size=12, weight="bold"), text_color=color)
+        dot.pack(side="left", padx=(0, 4))
+
+        lbl_title = ctk.CTkLabel(top_row, text=title, font=ctk.CTkFont(size=10, weight="bold"), text_color="#94A3B8")
+        lbl_title.pack(side="left")
 
         lbl_status = ctk.CTkLabel(frame, text=status, font=ctk.CTkFont(size=12, weight="bold"), text_color=color)
-        lbl_status.pack(anchor="w", padx=10, pady=(0, 0))
+        lbl_status.pack(anchor="w", padx=10, pady=(2, 0))
 
         lbl_sub = ctk.CTkLabel(frame, text=subtext, font=ctk.CTkFont(size=10), text_color="#64748B")
-        lbl_sub.pack(anchor="w", padx=10, pady=(0, 4))
+        lbl_sub.pack(anchor="w", padx=10, pady=(0, 6))
 
-        return {"frame": frame, "title": lbl_title, "status": lbl_status, "sub": lbl_sub}
+        return {"frame": frame, "dot": dot, "title": lbl_title, "status": lbl_status, "sub": lbl_sub}
 
     def _build_toolbar(self):
         """Action toolbar with Open Browser, Restart, Settings, and LAN URLs."""
-        tb = ctk.CTkFrame(self, fg_color="#101114", height=42, corner_radius=6, border_color="#1E2026", border_width=1)
-        tb.pack(fill="x", padx=12, pady=4)
+        tb = ctk.CTkFrame(self, fg_color="#0E1015", height=44, corner_radius=6, border_color="#1E2026", border_width=1)
+        tb.pack(fill="x", padx=14, pady=6)
         tb.pack_propagate(False)
 
         # Left actions
@@ -183,71 +222,80 @@ class DesktopApp(ctk.CTk if ctk else object):
             tb,
             text="Open Platform",
             command=self._open_in_browser,
-            width=110,
-            height=28,
+            width=115,
+            height=30,
             font=ctk.CTkFont(size=11, weight="bold"),
             fg_color="#08B6DE",
             hover_color="#0693B3",
             text_color="#FFFFFF",
         )
-        self.btn_browser.pack(side="left", padx=8, pady=6)
+        self.btn_browser.pack(side="left", padx=8, pady=7)
 
         self.btn_restart = ctk.CTkButton(
             tb,
             text="Restart Services",
             command=self.supervisor.restart_all,
-            width=105,
-            height=28,
+            width=110,
+            height=30,
             font=ctk.CTkFont(size=11),
-            fg_color="#1E2026",
+            fg_color="#181A20",
             hover_color="#2E323D",
+            border_color="#27272A",
+            border_width=1,
             text_color="#CBD5E1",
         )
-        self.btn_restart.pack(side="left", padx=4, pady=6)
+        self.btn_restart.pack(side="left", padx=4, pady=7)
 
         self.btn_settings = ctk.CTkButton(
             tb,
             text="Settings (.env)",
             command=self._open_settings,
-            width=100,
-            height=28,
+            width=105,
+            height=30,
             font=ctk.CTkFont(size=11),
-            fg_color="#1E2026",
+            fg_color="#181A20",
             hover_color="#2E323D",
+            border_color="#27272A",
+            border_width=1,
             text_color="#CBD5E1",
         )
-        self.btn_settings.pack(side="left", padx=4, pady=6)
+        self.btn_settings.pack(side="left", padx=4, pady=7)
 
-        # Right: URL Labels with 1-click Copy buttons
-        self.lbl_lan_url = ctk.CTkLabel(
-            tb,
-            text="LAN URL: Resolving...",
-            font=ctk.CTkFont(size=11),
-            text_color="#38BDF8",
-        )
-        self.lbl_lan_url.pack(side="right", padx=(4, 10))
-
+        # Right: URL Badge and Copy Button
         btn_copy_url = ctk.CTkButton(
             tb,
             text="Copy URL",
             command=self._copy_lan_url,
-            width=65,
-            height=24,
+            width=70,
+            height=28,
             font=ctk.CTkFont(size=10),
-            fg_color="#1E2026",
+            fg_color="#181A20",
             hover_color="#2E323D",
+            border_color="#27272A",
+            border_width=1,
             text_color="#A1A1AA",
         )
-        btn_copy_url.pack(side="right", padx=4)
+        btn_copy_url.pack(side="right", padx=(4, 8), pady=7)
+
+        self.url_badge = ctk.CTkFrame(tb, fg_color="#13151B", border_color="#1E2026", border_width=1, corner_radius=4)
+        self.url_badge.pack(side="right", padx=4, pady=7)
+
+        self.lbl_lan_url = ctk.CTkLabel(
+            self.url_badge,
+            text="LAN URL: Resolving...",
+            font=ctk.CTkFont(size=11),
+            text_color="#38BDF8",
+        )
+        self.lbl_lan_url.pack(side="left", padx=8, pady=2)
 
     def _build_terminal(self):
         """Center embedded terminal widget."""
         self.terminal = TerminalWidget(self)
-        self.terminal.pack(fill="both", expand=True, padx=12, pady=(4, 8))
+        self.terminal.pack(fill="both", expand=True, padx=14, pady=(2, 6))
 
     def _build_footer(self):
-        """Bottom status bar with quick system metrics."""
-        footer = ctk.CTkFrame(self, fg_color="#0A0B0E", height=24, corner_radius=0)
+        """Bottom status bar with quick system metrics and live clock."""
+        footer = ctk.CTkFrame(self, fg_color="#0A0B0E", height=26, corner_radius=0)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
 
@@ -257,7 +305,27 @@ class DesktopApp(ctk.CTk if ctk else object):
             font=ctk.CTkFont(size=10),
             text_color="#64748B",
         )
-        self.lbl_footer.pack(side="left", padx=12)
+        self.lbl_footer.pack(side="left", padx=14)
+
+        self.lbl_clock = ctk.CTkLabel(
+            footer,
+            text="",
+            font=ctk.CTkFont(size=10),
+            text_color="#94A3B8",
+        )
+        self.lbl_clock.pack(side="right", padx=14)
+
+    def _bind_global_shortcuts(self):
+        """Bind global shortcuts for keyboard navigation."""
+        # Ctrl-, or Command-, to open Settings
+        modifier = "Command" if sys.platform == "darwin" else "Control"
+        self.bind(f"<{modifier}-comma>", lambda e: self._open_settings())
+
+    def _update_clock(self):
+        """Update live IST clock in footer."""
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        self.lbl_clock.configure(text=f"{now} IST")
+        self.after(1000, self._update_clock)
 
     def _initial_startup(self):
         """Execute initial background checks, start supervisor, and initialize tray."""
@@ -280,8 +348,9 @@ class DesktopApp(ctk.CTk if ctk else object):
 
     def _update_ip_card(self):
         """Update SEBI IP guard status card in UI."""
+        self.card_ip["dot"].configure(text_color=self.ip_status.color)
         self.card_ip["status"].configure(text=self.ip_status.status_label, text_color=self.ip_status.color)
-        self.card_ip["sub"].configure(text=f"IP: {self.ip_status.public_ipv4}")
+        self.card_ip["sub"].configure(text=f"IP: {self.ip_status.public_ipv4 or 'Not Detected'}")
         self.tray.set_status(is_running=self.supervisor.is_running, is_ip_matched=self.ip_status.is_matched)
 
     def _update_status_cards(self):
@@ -291,30 +360,46 @@ class DesktopApp(ctk.CTk if ctk else object):
         # Update Backend Card
         if self.supervisor.backend_ready:
             port_label = f":{port}" if port != 80 else " (Zero-Port 80)"
+            self.card_backend["dot"].configure(text_color="#10B981")
             self.card_backend["status"].configure(text=f"ACTIVE {port_label}", text_color="#10B981")
             self.card_backend["sub"].configure(text="http://0.0.0.0:" + str(port))
         else:
+            self.card_backend["dot"].configure(text_color="#EF4444")
             self.card_backend["status"].configure(text="STOPPED", text_color="#EF4444")
             self.card_backend["sub"].configure(text="Service Inactive")
 
         # Update Worker Card
         if self.supervisor.worker_ready:
+            self.card_worker["dot"].configure(text_color="#10B981")
             self.card_worker["status"].configure(text="RUNNING (SOLO)", text_color="#10B981")
             self.card_worker["sub"].configure(text="Celery Algo Engine")
         else:
+            self.card_worker["dot"].configure(text_color="#EF4444")
             self.card_worker["status"].configure(text="STOPPED", text_color="#EF4444")
 
         # Update Beat Card
         if self.supervisor.beat_ready:
+            self.card_beat["dot"].configure(text_color="#10B981")
             self.card_beat["status"].configure(text="ACTIVE", text_color="#10B981")
             self.card_beat["sub"].configure(text="Periodic Tasks")
         else:
+            self.card_beat["dot"].configure(text_color="#EF4444")
             self.card_beat["status"].configure(text="STOPPED", text_color="#EF4444")
+
+        # Update Overall Header Pill
+        all_active = self.supervisor.backend_ready and self.supervisor.worker_ready and self.supervisor.beat_ready
+        if all_active:
+            self.lbl_header_dot.configure(text_color="#10B981")
+            port_label = f"PORT {port}" if port != 80 else "ZERO-PORT 80"
+            self.lbl_header_status.configure(text=f"ALL SYSTEMS ACTIVE ({port_label})")
+        else:
+            self.lbl_header_dot.configure(text_color="#F59E0B")
+            self.lbl_header_status.configure(text="STARTING / DEGRADED")
 
         # Update LAN URL Display
         lan_url = self._get_lan_url()
-        self.lbl_lan_url.configure(text=f"Access URL: {lan_url}")
-        self.lbl_footer.configure(text=f"Platform Active on {lan_url} | Minimize to Tray (X)")
+        self.lbl_lan_url.configure(text=f"LAN URL: {lan_url}")
+        self.lbl_footer.configure(text=f"Platform Active on {lan_url} | Closing (X) minimizes to tray")
 
         self.tray.set_status(is_running=self.supervisor.is_running, is_ip_matched=self.ip_status.is_matched)
 

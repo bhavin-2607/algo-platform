@@ -1,4 +1,4 @@
-"""High-performance dark embedded terminal widget with real-time streaming and filtering."""
+"""High-performance dark embedded terminal widget with real-time streaming, filtering, and smooth scrolling."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ class TerminalWidget(ctk.CTkFrame):
 
         self._build_toolbar()
         self._build_console()
+        self._attach_scroll_handlers()
 
     def _build_toolbar(self):
         """Build terminal control toolbar (filter, search, auto-scroll, clear, copy)."""
@@ -38,13 +39,13 @@ class TerminalWidget(ctk.CTkFrame):
 
         # Left: Filter
         filter_label = ctk.CTkLabel(bar, text="Filter:", text_color="#A1A1AA", font=ctk.CTkFont(size=11))
-        filter_label.pack(side="left", padx=(10, 4), pady=4)
+        filter_label.pack(side="left", padx=(10, 4), pady=6)
 
         self.filter_menu = ctk.CTkOptionMenu(
             bar,
             values=["ALL", "BACKEND", "WORKER", "BEAT", "PLATFORM", "ERRORS"],
             command=self._on_filter_changed,
-            width=95,
+            width=100,
             height=26,
             font=ctk.CTkFont(size=10),
             fg_color="#1E2026",
@@ -53,61 +54,65 @@ class TerminalWidget(ctk.CTkFrame):
             text_color="#FFFFFF",
         )
         self.filter_menu.set("ALL")
-        self.filter_menu.pack(side="left", padx=4, pady=4)
+        self.filter_menu.pack(side="left", padx=4, pady=6)
 
         # Search box
         self.search_entry = ctk.CTkEntry(
             bar,
             placeholder_text="Search logs...",
-            width=140,
+            width=150,
             height=26,
             font=ctk.CTkFont(size=10),
             fg_color="#080A0F",
             border_color="#27272A",
             text_color="#FFFFFF",
         )
-        self.search_entry.pack(side="left", padx=8, pady=4)
+        self.search_entry.pack(side="left", padx=8, pady=6)
         self.search_entry.bind("<KeyRelease>", self._on_search_changed)
+
+        # Search match indicator label
+        self.lbl_matches = ctk.CTkLabel(bar, text="", font=ctk.CTkFont(size=10), text_color="#38BDF8")
+        self.lbl_matches.pack(side="left", padx=(0, 4), pady=6)
 
         # Right-side buttons: Copy, Clear, Pause, Auto-scroll
         copy_btn = ctk.CTkButton(
             bar,
             text="Copy",
             command=self._copy_all,
-            width=50,
+            width=52,
             height=24,
             font=ctk.CTkFont(size=10),
             fg_color="#1E2026",
             hover_color="#2E323D",
             text_color="#CBD5E1",
         )
-        copy_btn.pack(side="right", padx=(4, 10), pady=4)
+        copy_btn.pack(side="right", padx=(4, 10), pady=6)
 
         clear_btn = ctk.CTkButton(
             bar,
             text="Clear",
             command=self.clear,
-            width=50,
+            width=52,
             height=24,
             font=ctk.CTkFont(size=10),
             fg_color="#1E2026",
             hover_color="#2E323D",
             text_color="#CBD5E1",
         )
-        clear_btn.pack(side="right", padx=4, pady=4)
+        clear_btn.pack(side="right", padx=4, pady=6)
 
         self.pause_btn = ctk.CTkButton(
             bar,
             text="Pause",
             command=self._toggle_pause,
-            width=55,
+            width=58,
             height=24,
             font=ctk.CTkFont(size=10),
             fg_color="#1E2026",
             hover_color="#2E323D",
             text_color="#CBD5E1",
         )
-        self.pause_btn.pack(side="right", padx=4, pady=4)
+        self.pause_btn.pack(side="right", padx=4, pady=6)
 
         self.scroll_check = ctk.CTkCheckBox(
             bar,
@@ -121,7 +126,7 @@ class TerminalWidget(ctk.CTkFrame):
             text_color="#A1A1AA",
         )
         self.scroll_check.select()
-        self.scroll_check.pack(side="right", padx=8, pady=4)
+        self.scroll_check.pack(side="right", padx=8, pady=6)
 
     def _build_console(self):
         """Build scrolled text box with monospace font and color tags."""
@@ -147,6 +152,44 @@ class TerminalWidget(ctk.CTkFrame):
         text_widget.tag_configure("IP-GUARD", foreground="#F5A623")
         text_widget.tag_configure("ERROR", foreground="#EF4444")
         text_widget.tag_configure("text", foreground="#CBD5E1")
+
+    def _attach_scroll_handlers(self):
+        """Attach smooth touchpad and mousewheel scrolling handlers."""
+        tk_text = self.textbox._textbox
+
+        def _on_wheel(event):
+            # Calculate scroll delta across macOS, Windows, Linux
+            if sys.platform == "darwin":
+                # macOS trackpad emits fine deltas (1, -1); physical mice emit larger
+                if abs(event.delta) < 6:
+                    delta = -int(event.delta * 3)
+                else:
+                    delta = -int(event.delta / 4)
+            elif sys.platform.startswith("win"):
+                delta = -int(event.delta / 30)
+            else:
+                # Linux Button-4 (up) and Button-5 (down)
+                delta = -3 if getattr(event, "num", None) == 4 else 3
+
+            if delta != 0:
+                tk_text.yview_scroll(delta, "units")
+
+                # Detect if user scrolled away from bottom to pause auto-scroll
+                yview = tk_text.yview()
+                if yview[1] < 0.97:
+                    if self._auto_scroll:
+                        self._auto_scroll = False
+                        self.scroll_check.deselect()
+                elif yview[1] >= 0.99:
+                    if not self._auto_scroll:
+                        self._auto_scroll = True
+                        self.scroll_check.select()
+
+            return "break"
+
+        tk_text.bind("<MouseWheel>", _on_wheel, add=True)
+        tk_text.bind("<Button-4>", _on_wheel, add=True)
+        tk_text.bind("<Button-5>", _on_wheel, add=True)
 
     def append_log(self, tag: str, color: str, text: str):
         """Append a single log event and apply formatting tags."""
@@ -205,9 +248,16 @@ class TerminalWidget(ctk.CTkFrame):
         text_widget = self.textbox._textbox
         text_widget.delete("1.0", "end")
 
+        matches = 0
         for now, tag, color, text in self._log_history:
             if self._matches_filter(tag, text):
                 self._render_line(now, tag, color, text)
+                matches += 1
+
+        if self._search_query:
+            self.lbl_matches.configure(text=f"{matches} match{'es' if matches != 1 else ''}")
+        else:
+            self.lbl_matches.configure(text="")
 
         if self._auto_scroll:
             text_widget.see("end")
@@ -222,6 +272,8 @@ class TerminalWidget(ctk.CTkFrame):
 
     def _on_scroll_toggle(self):
         self._auto_scroll = bool(self.scroll_check.get())
+        if self._auto_scroll:
+            self.textbox._textbox.see("end")
 
     def _toggle_pause(self):
         self._is_paused = not self._is_paused
@@ -234,6 +286,7 @@ class TerminalWidget(ctk.CTkFrame):
     def clear(self):
         """Clear active display buffer."""
         self._log_history.clear()
+        self.lbl_matches.configure(text="")
         self.textbox._textbox.delete("1.0", "end")
 
     def _copy_all(self):
