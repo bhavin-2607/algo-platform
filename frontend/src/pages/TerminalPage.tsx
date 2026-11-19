@@ -227,14 +227,17 @@ export default function TerminalPage() {
         const k = (c.col_key || c.name || "").toLowerCase().trim();
         return c.is_visible && k !== "p_close" && k !== "p.close" && k !== "prev close";
       })
-      .sort((a: any, b: any) => a.col_order - b.col_order);
+      .sort((a: any, b: any) => (a.col_order ?? 0) - (b.col_order ?? 0));
   }, [allCols]);
 
   const colsFor = useCallback((book: string) => {
+    const hasBookFormulas = visibleCols.some((c: any) => c.formula && (c.book || "").toLowerCase() === book);
     const forBook = visibleCols.filter((c: any) => {
       const colBook = (c.book || "equity").toLowerCase();
       if (!c.formula) return true; // default columns (open, high, ltp, etc.) are shared
-      return colBook === book || colBook === "shared" || (book === "mcx" && colBook === "equity");
+      if (colBook === book || colBook === "shared") return true;
+      if (book === "mcx" && !hasBookFormulas && colBook === "equity") return true;
+      return false;
     });
 
     // Strictly deduplicate by col_key or name to prevent duplicate columns in table
@@ -246,6 +249,33 @@ export default function TerminalPage() {
       return true;
     });
   }, [visibleCols]);
+
+  const reorderColumnsMutation = useMutation({
+    mutationFn: (orders: { id: string; col_order: number }[]) =>
+      api.post("/terminal/columns/reorder", { orders }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["terminal-columns"] });
+    },
+    onError: () => toast.error("Failed to reorder columns"),
+  });
+
+  const handleMoveCol = useCallback((col: any, direction: -1 | 1, columnList?: any[]) => {
+    const list = columnList || visibleCols;
+    const idx = list.findIndex((c: any) => (c.id && c.id === col.id) || (c.col_key && c.col_key === col.col_key) || c.name === col.name);
+    if (idx < 0) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= list.length) return;
+
+    const reordered = [...list];
+    const [removed] = reordered.splice(idx, 1);
+    reordered.splice(targetIdx, 0, removed);
+
+    const orders = reordered.map((c: any, newIdx: number) => ({
+      id: String(c.id || c.col_key || c.name),
+      col_order: newIdx,
+    }));
+    reorderColumnsMutation.mutate(orders);
+  }, [visibleCols, reorderColumnsMutation]);
 
   const customCols = useMemo(() => {
     return (allCols ?? []).filter((c: any) => c.col_type === "custom" && c.is_visible);
@@ -754,6 +784,7 @@ export default function TerminalPage() {
             book="equity"
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
             onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_EQ", exchange: exch || "NSE", token: tok })}
+            onMoveCol={handleMoveCol}
             instrMap={instrMap}
             watchlist={equitySymbols}
             liveData={liveData}
@@ -782,6 +813,7 @@ export default function TerminalPage() {
             book="option"
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
             onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_FNO", exchange: exch || "NFO", token: tok })}
+            onMoveCol={handleMoveCol}
             instrMap={instrMap}
             watchlist={optionSymbols}
             liveData={liveData}
@@ -810,6 +842,7 @@ export default function TerminalPage() {
             book="mcx"
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
             onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "MCX_COMM", exchange: exch || "MCX", token: tok })}
+            onMoveCol={handleMoveCol}
             instrMap={instrMap}
             watchlist={mcxSymbols}
             liveData={liveData}
@@ -1133,7 +1166,7 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
 // ── Admin Column Manager ──────────────────────────────────────────────────────
 export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
-  const emptyForm = (book: "equity" | "option") => ({
+  const emptyForm = (book: "equity" | "option" | "mcx") => ({
     name: "", formula: "", col_order: 0, width: 80, color_rules: "", book,
   });
   const [form, setForm] = useState(emptyForm("equity"));
@@ -1147,7 +1180,9 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
     queryFn: () => api.get("/terminal/columns").then(r => r.data),
   });
   const defaultCols = useMemo(() => {
-    const raw = (columns ?? []).filter((col: any) => !col.formula || col.col_type === "default");
+    const raw = (columns ?? [])
+      .filter((col: any) => !col.formula || col.col_type === "default")
+      .sort((a: any, b: any) => (a.col_order ?? 0) - (b.col_order ?? 0));
     const seen = new Set<string>();
     return raw.filter((col: any) => {
       const k = (col.col_key || col.name || "").toLowerCase().trim();
@@ -1158,7 +1193,9 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
   }, [columns]);
 
   const listed = useMemo(() => {
-    const raw = (columns ?? []).filter((col: any) => col.formula && (col.book || "equity") === form.book);
+    const raw = (columns ?? [])
+      .filter((col: any) => col.formula && (col.book || "equity") === form.book)
+      .sort((a: any, b: any) => (a.col_order ?? 0) - (b.col_order ?? 0));
     const seen = new Set<string>();
     return raw.filter((col: any) => {
       const k = (col.name || "").toLowerCase().trim();
@@ -1176,6 +1213,32 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to toggle visibility"),
   });
+
+  const reorderMutation = useMutation({
+    mutationFn: (orders: { id: string; col_order: number }[]) =>
+      api.post("/terminal/columns/reorder", { orders }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["terminal-columns"] });
+    },
+    onError: () => toast.error("Failed to reorder columns"),
+  });
+
+  function moveColInModal(col: any, direction: -1 | 1, list: any[]) {
+    const idx = list.findIndex((c: any) => (c.id && c.id === col.id) || (c.col_key && c.col_key === col.col_key) || c.name === col.name);
+    if (idx < 0) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= list.length) return;
+
+    const reordered = [...list];
+    const [removed] = reordered.splice(idx, 1);
+    reordered.splice(targetIdx, 0, removed);
+
+    const orders = reordered.map((c: any, newIdx: number) => ({
+      id: String(c.id || c.col_key || c.name),
+      col_order: newIdx,
+    }));
+    reorderMutation.mutate(orders);
+  }
 
   const validateMutation = useMutation({
     mutationFn: (formula: string) =>
@@ -1222,7 +1285,7 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
       name: col.name, formula: col.formula ?? "",
       col_order: col.col_order, width: col.width,
       color_rules: col.color_rules ?? "",
-      book: col.book === "option" ? "option" : "equity",
+      book: col.book === "option" ? "option" : col.book === "mcx" ? "mcx" : "equity",
     });
     setValidMsg(""); setValidOk(null);
   }
@@ -1252,7 +1315,7 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               ƒ FORMULA COLUMNS
             </div>
             <div style={{fontSize:11, color:"var(--muted)"}}>
-              Equity and options each keep their own formulas. Price columns stay on both tables.
+              Equity, options, and MCX tables each keep their own formulas. Price columns stay on all tables.
             </div>
           </div>
           <button onClick={onClose}
@@ -1273,7 +1336,7 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                   FORMULA BATCH PRESETS
                 </div>
                 <div style={{fontSize:10, color:"var(--muted)", marginTop:2}}>
-                  Apply pre-configured formula batches in sequence
+                  Apply pre-configured formula batches in sequence across tables
                 </div>
               </div>
             </div>
@@ -1281,9 +1344,9 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm("Apply Fibonacci Formula batch? This configures default columns and Fibonacci target columns.")) {
-                    api.post("/terminal/columns/apply-batch", { batch: "Fibonacci Formula", book: "both" })
-                      .then(() => { toast.success("Applied Fibonacci Formula batch"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                  if (confirm("Apply Fibonacci Formula batch to ALL tables (Equity, Options, MCX)?")) {
+                    api.post("/terminal/columns/apply-batch", { batch: "Fibonacci Formula", book: "all" })
+                      .then(() => { toast.success("Applied Fibonacci Formula batch to all tables"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
                       .catch(() => toast.error("Failed to apply batch"));
                   }
                 }}
@@ -1294,7 +1357,25 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                   color:"var(--green)", borderRadius:3,
                 }}
               >
-                APPLY FIBONACCI BATCH
+                APPLY BATCH (ALL TABLES)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Apply Fibonacci Formula batch to ${form.book.toUpperCase()} only?`)) {
+                    api.post("/terminal/columns/apply-batch", { batch: "Fibonacci Formula", book: form.book })
+                      .then(() => { toast.success(`Applied Fibonacci Formula batch to ${form.book.toUpperCase()}`); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                      .catch(() => toast.error("Failed to apply batch"));
+                  }
+                }}
+                style={{
+                  padding:"8px 16px", fontSize:11, cursor:"pointer",
+                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
+                  background:"rgba(255, 183, 3, 0.15)", border:"1px solid var(--yellow)",
+                  color:"var(--yellow)", borderRadius:3,
+                }}
+              >
+                APPLY TO {form.book.toUpperCase()} ONLY
               </button>
             </div>
           </div>
@@ -1311,7 +1392,7 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                   DEFAULT COLUMNS (PRICE & MARKET DATA)
                 </div>
                 <div style={{fontSize:10, color:"var(--muted)", marginTop:2}}>
-                  Click any column badge to toggle visibility in the terminal table
+                  Toggle visibility or use ‹ › buttons to move column left/right
                 </div>
               </div>
               <button
@@ -1332,34 +1413,69 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               </button>
             </div>
             <div style={{display:"flex", flexWrap:"wrap", gap:8}}>
-              {defaultCols.map((col: any) => {
+              {defaultCols.map((col: any, idx: number) => {
                 const isVis = col.is_visible !== false;
                 return (
-                  <button
+                  <div
                     key={col.id || col.col_key || col.name}
-                    type="button"
-                    onClick={() => toggleVisibilityMutation.mutate({ id: col.id || col.col_key, is_visible: !isVis })}
                     style={{
-                      display:"inline-flex", alignItems:"center", gap:6,
-                      padding:"6px 12px", fontSize:11, cursor:"pointer",
+                      display:"inline-flex", alignItems:"center", gap:4,
+                      padding:"4px 8px", fontSize:11,
                       fontFamily:"var(--font)", fontWeight:600,
                       background: isVis ? "rgba(47, 158, 143, 0.16)" : "rgba(255,255,255,0.03)",
                       border: `1px solid ${isVis ? "var(--green)" : "var(--border)"}`,
                       color: isVis ? "var(--green)" : "var(--muted)",
-                      borderRadius: 3, transition: "all 0.15s",
+                      borderRadius: 3,
                     }}
-                    title={isVis ? `Click to hide ${col.name}` : `Click to show ${col.name}`}
                   >
-                    <span>{isVis ? "●" : "○"}</span>
-                    <span>{columnTitle(col.name)}</span>
-                  </button>
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      onClick={() => moveColInModal(col, -1, defaultCols)}
+                      title={`Move ${col.name} Left`}
+                      style={{
+                        background: "transparent", border: "none",
+                        color: idx === 0 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                        cursor: idx === 0 ? "default" : "pointer",
+                        fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                      }}
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleVisibilityMutation.mutate({ id: col.id || col.col_key, is_visible: !isVis })}
+                      style={{
+                        background: "transparent", border: "none", color: "inherit",
+                        cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, padding: 0,
+                      }}
+                      title={isVis ? `Click to hide ${col.name}` : `Click to show ${col.name}`}
+                    >
+                      <span>{isVis ? "●" : "○"}</span>
+                      <span>{columnTitle(col.name)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={idx === defaultCols.length - 1}
+                      onClick={() => moveColInModal(col, 1, defaultCols)}
+                      title={`Move ${col.name} Right`}
+                      style={{
+                        background: "transparent", border: "none",
+                        color: idx === defaultCols.length - 1 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                        cursor: idx === defaultCols.length - 1 ? "default" : "pointer",
+                        fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                      }}
+                    >
+                      ›
+                    </button>
+                  </div>
                 );
               })}
             </div>
           </div>
 
           <div style={{display:"flex", gap:8, marginBottom:16}}>
-            {(["equity", "option"] as const).map((book) => (
+            {(["equity", "option", "mcx"] as const).map((book) => (
               <button key={book} type="button"
                 onClick={() => { setForm(emptyForm(book)); setEditId(null); setValidMsg(""); setValidOk(null); }}
                 style={{
@@ -1368,7 +1484,7 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                   border: `1px solid ${form.book === book ? "rgba(0,255,136,0.5)" : "var(--border)"}`,
                   color: form.book === book ? "var(--green)" : "var(--muted)",
                 }}>
-                {book === "equity" ? "EQUITY" : "OPTIONS"}
+                {book === "equity" ? "EQUITY" : book === "option" ? "OPTIONS" : "MCX (COMMODITY)"}
               </button>
             ))}
           </div>
@@ -1504,10 +1620,10 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)"}}>
-                  {form.book === "equity" ? "EQUITY" : "OPTIONS"} FORMULAS — click × to remove, eye to show/hide
+                  {form.book === "equity" ? "EQUITY" : form.book === "option" ? "OPTIONS" : "MCX"} FORMULAS — click × to remove, eye to show/hide, ‹ › to reorder
                 </div>
                 <button
-                  onClick={() => { if(confirm("Remove equity and options formulas and restore the price columns?")) api.post("/terminal/columns/reset").then(()=>{toast.success("Reset");qc.invalidateQueries({queryKey:["terminal-columns"]});}).catch(()=>toast.error("Failed")); }}
+                  onClick={() => { if(confirm("Remove custom formulas and restore default columns?")) api.post("/terminal/columns/reset").then(()=>{toast.success("Reset");qc.invalidateQueries({queryKey:["terminal-columns"]});}).catch(()=>toast.error("Failed")); }}
                   style={{padding:"4px 12px",fontSize:10,cursor:"pointer",
                     background:"transparent",border:"1px solid var(--border)",
                     color:"var(--muted)",fontFamily:"var(--font)"}}>
@@ -1515,10 +1631,10 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                 </button>
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                {listed.map((col: any) => (
+                {listed.map((col: any, idx: number) => (
                   <div key={col.id} style={{
                     display:"flex",alignItems:"center",gap:4,
-                    padding:"5px 10px",
+                    padding:"5px 8px",
                     background: col.is_visible
                       ? col.col_type==="custom"?"rgba(255,208,96,0.08)":"rgba(0,255,136,0.05)"
                       : "rgba(74,85,104,0.1)",
@@ -1527,11 +1643,39 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                       : "var(--border)"}`,
                     opacity: col.is_visible ? 1 : 0.5,
                   }}>
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      onClick={() => moveColInModal(col, -1, listed)}
+                      title={`Move ${col.name} Left`}
+                      style={{
+                        background: "transparent", border: "none",
+                        color: idx === 0 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                        cursor: idx === 0 ? "default" : "pointer",
+                        fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                      }}
+                    >
+                      ‹
+                    </button>
                     <span style={{
                       fontSize:11,fontWeight:700,
                       color: col.col_type==="custom"?"var(--yellow)":"var(--text)",
                     }}>{columnTitle(col.name)}</span>
                     {col.col_type==="custom"&&<span style={{fontSize:9,color:"var(--muted)"}}>ƒ</span>}
+                    <button
+                      type="button"
+                      disabled={idx === listed.length - 1}
+                      onClick={() => moveColInModal(col, 1, listed)}
+                      title={`Move ${col.name} Right`}
+                      style={{
+                        background: "transparent", border: "none",
+                        color: idx === listed.length - 1 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                        cursor: idx === listed.length - 1 ? "default" : "pointer",
+                        fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                      }}
+                    >
+                      ›
+                    </button>
                     {col.col_type==="custom"&&col.formula&&(
                       <button className="exit-btn"
                         style={{padding:"1px 6px",fontSize:9,marginLeft:2}}
@@ -1832,13 +1976,13 @@ function ImportDhanPositionsModal({
                           {pos.net_qty > 0 ? `+${pos.net_qty}` : pos.net_qty}
                         </td>
                         <td style={{ padding: "8px 6px", textAlign: "right", color: "var(--text)" }}>
-                          ₹{Number(pos.buy_price || 0).toLocaleString()}
+                          {Number(pos.buy_price || 0).toLocaleString()}
                         </td>
                         <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: "var(--text)" }}>
-                          ₹{Number(pos.ltp || 0).toLocaleString()}
+                          {Number(pos.ltp || 0).toLocaleString()}
                         </td>
                         <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: (pos.pnl || 0) >= 0 ? "var(--green)" : "var(--red)" }}>
-                          {(pos.pnl || 0) >= 0 ? "+" : ""}₹{Number(pos.pnl || 0).toLocaleString()}
+                          {(pos.pnl || 0) >= 0 ? "+" : ""}{Number(pos.pnl || 0).toLocaleString()}
                         </td>
                         <td style={{ padding: "8px 6px", textAlign: "center" }}>
                           <select
@@ -2100,7 +2244,7 @@ function AlgoWindowTable({
                         }}>
                           {isLtpUp && <span style={{ fontSize: 9, color: "var(--green)" }}>▲</span>}
                           {isLtpDown && <span style={{ fontSize: 9, color: "var(--red)" }}>▼</span>}
-                          <span>₹{Number(r.ltp).toLocaleString()}</span>
+                          <span>{Number(r.ltp).toLocaleString()}</span>
                         </span>
                       ) : "—"}
                     </td>
@@ -2164,7 +2308,6 @@ function AlgoWindowTable({
 
                           {r.entry_type === "CUSTOM" && (
                             <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 4 }}>
-                              <span style={{ fontSize: 10, color: "#38bdf8", fontWeight: 700 }}>₹</span>
                               <input
                                 type="number"
                                 step="0.05"
@@ -2209,14 +2352,14 @@ function AlgoWindowTable({
                       {r.trade_mode === "SELL_ONLY" ? (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                           <span style={{ color: "var(--green)" }}>
-                            {r.buy_price != null ? `₹${Number(r.buy_price).toLocaleString()}` : "—"}
+                            {r.buy_price != null ? Number(r.buy_price).toLocaleString() : "—"}
                           </span>
                           <span style={{ fontSize: 9, color: "var(--muted)" }}>BOUGHT</span>
                         </div>
                       ) : (
                         <div>
                           <span style={{ color: r.entry_type === "CUSTOM" ? "#38bdf8" : (r.entry_type && r.entry_type !== "FORMULA" ? "#4ade80" : "var(--text)") }}>
-                            ₹{Number(r.buy_entry_price ?? r.entry ?? 0).toLocaleString()}
+                            {Number(r.buy_entry_price ?? r.entry ?? 0).toLocaleString()}
                           </span>
                           {r.entry_type === "CUSTOM" && (
                             <span style={{ fontSize: 9, marginLeft: 3, color: "#38bdf8", fontWeight: 700 }}>[CUST]</span>
@@ -2229,7 +2372,7 @@ function AlgoWindowTable({
                     </td>
 
                     <td style={{ padding: "8px 8px", textAlign: "right", color: "var(--red)", fontSize: 12 }}>
-                      {r.sl != null ? `₹${Number(r.sl).toLocaleString()}` : "—"}
+                      {r.sl != null ? Number(r.sl).toLocaleString() : "—"}
                     </td>
 
                     {/* Target Columns T1 through T9 */}
@@ -2251,7 +2394,7 @@ function AlgoWindowTable({
                           }}
                           title={isArmed ? `Armed Target: ${tc.key}` : tc.key}
                         >
-                          {val != null ? `₹${Number(val).toLocaleString()}` : "—"}
+                          {val != null ? Number(val).toLocaleString() : "—"}
                         </td>
                       );
                     })}
@@ -2306,7 +2449,6 @@ function AlgoWindowTable({
 
                       {r.target_type === "CUSTOM" && (
                         <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 4 }}>
-                          <span style={{ fontSize: 10, color: "#38bdf8", fontWeight: 700 }}>₹</span>
                           <input
                             type="number"
                             step="0.05"
@@ -2412,14 +2554,14 @@ function AlgoWindowTable({
 
                     {/* BUYPRICE */}
                     <td style={{ padding: "8px 8px", textAlign: "right", color: r.buy_price ? "var(--green)" : "var(--muted)", fontSize: 12 }}>
-                      {r.buy_price != null ? `₹${Number(r.buy_price).toLocaleString()}` : "—"}
+                      {r.buy_price != null ? Number(r.buy_price).toLocaleString() : "—"}
                     </td>
 
                     {/* SELL TGT */}
                     <td style={{ padding: "8px 8px", textAlign: "right", color: r.sell_tgt ? (r.target_type === "CUSTOM" ? "#38bdf8" : "var(--green)") : "var(--muted)", fontSize: 12, fontWeight: 700 }}>
                       {r.sell_tgt != null ? (
                         <span>
-                          ₹{Number(r.sell_tgt).toLocaleString()}
+                          {Number(r.sell_tgt).toLocaleString()}
                           {r.target_type === "CUSTOM" && <span style={{ fontSize: 9, marginLeft: 3, color: "#38bdf8" }}>[CUST]</span>}
                         </span>
                       ) : r.trade_mode === "BUY_ONLY" ? (
@@ -2540,7 +2682,7 @@ function AlgoWindowTable({
                               color: r.pnl >= 0 ? "var(--green)" : "var(--red)",
                             }}
                           >
-                            {r.pnl >= 0 ? "+" : ""}₹{Number(r.pnl).toLocaleString()}
+                            {r.pnl >= 0 ? "+" : ""}{Number(r.pnl).toLocaleString()}
                           </span>
                         )}
                       </div>
@@ -2581,7 +2723,7 @@ function AlgoWindowTable({
 
 // ── Terminal Table ────────────────────────────────────────────────────────────
 function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap, visibleCols, columnValues, isAdmin,
-  onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, instrMap }: {
+  onRemoveSymbol, onExitRow, onFormulaRow, onOrder, onAddToAlgo, onMoveCol, instrMap }: {
   title: string;
   book?: string;
   watchlist: string[]; liveData: Record<string,any>; termRowMap: Record<string,any>;
@@ -2590,6 +2732,7 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
   onFormulaRow:(id:string,sym:string)=>void;
   onOrder:(sym:string,inst:{security_id:string,segment:string},prefillSide?:string,prefillPrice?:number|null)=>void;
   onAddToAlgo:(sym:string, segment?: string, exchange?: string, token?: string)=>void;
+  onMoveCol?: (col: any, direction: -1 | 1, columnList?: any[]) => void;
   instrMap: Record<string,{security_id:string; segment:string; exchange?: string}>;
 }) {
   const signalColIdx = visibleCols.findIndex((col: any) => col.name?.toUpperCase() === "SIGNAL");
@@ -2645,7 +2788,41 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                     color:col.col_type==="custom"||col.col_type==="formula"?"var(--yellow)":"var(--muted)",
                     borderRight:"1px solid var(--border)", minWidth:col.width||80, textAlign:"left",
                   }}>
-                    <span>{columnTitle(col.name)}</span>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
+                      <span>{columnTitle(col.name)}</span>
+                      {onMoveCol && (
+                        <div style={{ display: "inline-flex", gap: 1, alignItems: "center" }}>
+                          <button
+                            type="button"
+                            disabled={cIdx === 0}
+                            onClick={(e) => { e.stopPropagation(); onMoveCol(col, -1, visibleCols); }}
+                            title={`Move ${col.name} Left`}
+                            style={{
+                              background: "transparent", border: "none",
+                              color: cIdx === 0 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                              cursor: cIdx === 0 ? "default" : "pointer",
+                              fontSize: 11, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                            }}
+                          >
+                            ‹
+                          </button>
+                          <button
+                            type="button"
+                            disabled={cIdx === visibleCols.length - 1}
+                            onClick={(e) => { e.stopPropagation(); onMoveCol(col, 1, visibleCols); }}
+                            title={`Move ${col.name} Right`}
+                            style={{
+                              background: "transparent", border: "none",
+                              color: cIdx === visibleCols.length - 1 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                              cursor: cIdx === visibleCols.length - 1 ? "default" : "pointer",
+                              fontSize: 11, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                            }}
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </th>
                 </Fragment>
               );
@@ -2706,7 +2883,7 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                 } else if (col.col_key==="change_pct") {
                   formatted = `${pos?"+":""}${Number(value).toFixed(2)}%`;
                 } else if (typeof value==="number" && col.col_key!=="quantity") {
-                  formatted = `₹${Number(value).toLocaleString()}`;
+                  formatted = Number(value).toLocaleString();
                 } else {
                   formatted = String(value);
                 }
