@@ -111,17 +111,32 @@ class SettingsDialog(ctk.CTkToplevel):
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.scroll.pack(fill="both", expand=True, padx=16, pady=(12, 0))
 
-        # Header Title
+        # Header Title with Logo
         title_box = ctk.CTkFrame(self.scroll, fg_color="transparent")
         title_box.pack(fill="x", pady=(0, 10))
 
+        title_row = ctk.CTkFrame(title_box, fg_color="transparent")
+        title_row.pack(anchor="w")
+
+        # Brand logo asset from Algo Platform
+        logo_path = get_asset_path("algo_symbol.png")
+        if logo_path.exists():
+            try:
+                from PIL import Image
+                logo_raw = Image.open(logo_path).convert("RGBA")
+                self.logo_ctk = ctk.CTkImage(light_image=logo_raw, dark_image=logo_raw, size=(22, 22))
+                lbl_logo = ctk.CTkLabel(title_row, image=self.logo_ctk, text="")
+                lbl_logo.pack(side="left", padx=(0, 8))
+            except Exception:
+                pass
+
         title = ctk.CTkLabel(
-            title_box,
+            title_row,
             text="Configuration & Environment Settings",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color="#FFFFFF",
         )
-        title.pack(anchor="w")
+        title.pack(side="left")
 
         subtitle = ctk.CTkLabel(
             title_box,
@@ -468,6 +483,11 @@ class SettingsDialog(ctk.CTkToplevel):
         if not self.static_ip_entry.get().strip():
             self.static_ip_entry.insert(0, env.get("DHAN_PRIMARY_IP", ""))
 
+        # Fallback timeout
+        timeout_entry = self._entries.get("ORDER_FILL_TIMEOUT_SEC")
+        if timeout_entry and not timeout_entry.get().strip():
+            timeout_entry.insert(0, "30")
+
         # Boolean toggles
         self.force_ipv4_var.set(env.get("DHAN_FORCE_IPV4", "true").lower() in ("true", "1", "yes"))
         is_live = env.get("LIVE_TRADING_ENABLED", "false").lower() in ("true", "1", "yes")
@@ -476,6 +496,11 @@ class SettingsDialog(ctk.CTkToplevel):
 
     def _save_settings(self):
         """Persist all modified settings to .env and trigger reload."""
+        timeout_entry = self._entries.get("ORDER_FILL_TIMEOUT_SEC")
+        if timeout_entry and (not timeout_entry.get().strip() or not timeout_entry.get().strip().isdigit()):
+            timeout_entry.delete(0, "end")
+            timeout_entry.insert(0, "30")
+
         for key, entry in self._entries.items():
             val = entry.get().strip()
             update_env_variable(key, val)

@@ -106,9 +106,21 @@ class DesktopApp(ctk.CTk if ctk else object):
         hdr.pack(fill="x", side="top")
         hdr.pack_propagate(False)
 
-        # Left brand title
+        # Left brand title and logo
         brand_box = ctk.CTkFrame(hdr, fg_color="transparent")
         brand_box.pack(side="left", padx=14)
+
+        # Brand logo asset from Algo Platform
+        logo_path = get_asset_path("algo_symbol.png")
+        if logo_path.exists():
+            try:
+                from PIL import Image
+                logo_raw = Image.open(logo_path).convert("RGBA")
+                self.logo_ctk = ctk.CTkImage(light_image=logo_raw, dark_image=logo_raw, size=(22, 22))
+                lbl_logo = ctk.CTkLabel(brand_box, image=self.logo_ctk, text="")
+                lbl_logo.pack(side="left", padx=(0, 8))
+            except Exception:
+                pass
 
         title = ctk.CTkLabel(
             brand_box,

@@ -21,14 +21,16 @@ logger = logging.getLogger("SystemTray")
 
 
 def create_tray_icon_image(color: str = "#10B981") -> Image.Image:
-    """Generate system tray icon using brand icon with dynamic status dot."""
-    ico_png = get_asset_path("app_icon.png")
+    """Generate system tray icon using Algo Platform symbol with dynamic status dot."""
+    ico_png = get_asset_path("algo_symbol.png")
+    if not ico_png.exists():
+        ico_png = get_asset_path("app_icon.png")
     if ico_png.exists():
         try:
             base = Image.open(ico_png).convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
             draw = ImageDraw.Draw(base)
-            # Add dynamic status badge dot in bottom right corner
-            draw.ellipse([44, 44, 62, 62], fill=color, outline="#080A0F", width=2)
+            # Add dynamic status badge dot in bottom right corner with brand navy outline
+            draw.ellipse([42, 42, 62, 62], fill=color, outline="#0B1933", width=2)
             return base
         except Exception:
             pass

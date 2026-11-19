@@ -25,6 +25,8 @@ class TestLauncherConfig(unittest.TestCase):
         self.assertTrue(ico_file.exists())
         png_file = get_asset_path("app_icon.png")
         self.assertTrue(png_file.exists())
+        symbol_file = get_asset_path("algo_symbol.png")
+        self.assertTrue(symbol_file.exists())
 
     def test_update_env_variable(self):
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".env") as tf:
