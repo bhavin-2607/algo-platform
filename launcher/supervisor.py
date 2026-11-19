@@ -162,6 +162,20 @@ class ProcessSupervisor:
         if (venv_root / "pyvenv.cfg").is_file():
             env["VIRTUAL_ENV"] = str(venv_root)
 
+        # Ensure DATABASE_URL and REDIS_URL do not use unresolvable docker container names on local desktop
+        env_vars = load_env_dict()
+        for var_name, default_port, docker_host in [("DATABASE_URL", 5432, "postgres"), ("REDIS_URL", 6379, "redis")]:
+            val = env.get(var_name) or env_vars.get(var_name)
+            if val:
+                needs_check = f"@{docker_host}:" in val or f"@{docker_host}/" in val or f"//{docker_host}:" in val or f"//{docker_host}/" in val
+                if needs_check:
+                    try:
+                        socket.getaddrinfo(docker_host, default_port)
+                    except Exception:
+                        for pat in [f"@{docker_host}:", f"@{docker_host}/", f"//{docker_host}:", f"//{docker_host}/"]:
+                            val = val.replace(pat, pat.replace(docker_host, "localhost"))
+                        env[var_name] = val
+
         creationflags = 0
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NO_WINDOW
