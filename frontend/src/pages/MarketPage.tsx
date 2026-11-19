@@ -255,16 +255,16 @@ export default function MarketPage() {
                     <tr key={sym} onClick={()=>setSelected(sym)}
                       style={{cursor:"pointer",background:selected===sym?"var(--green-dim)":undefined}}>
                       <td className="symbol" style={{color:selected===sym?"var(--green)":undefined}}>{sym}</td>
-                      <td style={{fontWeight:700}}>₹{Number(q.ltp).toLocaleString()}</td>
+                      <td style={{fontWeight:700}}>{Number(q.ltp).toLocaleString()}</td>
                       <td style={{color:pos?"var(--green)":"var(--red)"}}>
-                        {pos?"+":""}₹{Number(q.change).toFixed(2)}
+                        {pos?"+":""}{Number(q.change).toFixed(2)}
                       </td>
                       <td style={{color:pos?"var(--green)":"var(--red)",fontWeight:600}}>
                         {pos?"▲":"▼"} {Math.abs(q.change_pct).toFixed(2)}%
                       </td>
-                      <td style={{fontSize:11}}>₹{Number(q.open).toLocaleString()}</td>
-                      <td style={{fontSize:11,color:"var(--green)"}}>₹{Number(q.high).toLocaleString()}</td>
-                      <td style={{fontSize:11,color:"var(--red)"}}>₹{Number(q.low).toLocaleString()}</td>
+                      <td style={{fontSize:11}}>{Number(q.open).toLocaleString()}</td>
+                      <td style={{fontSize:11,color:"var(--green)"}}>{Number(q.high).toLocaleString()}</td>
+                      <td style={{fontSize:11,color:"var(--red)"}}>{Number(q.low).toLocaleString()}</td>
                       <td style={{fontSize:11,color:"var(--muted)"}}>
                         {q.volume?(q.volume/100000).toFixed(1)+"L":"—"}
                       </td>

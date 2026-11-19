@@ -680,6 +680,53 @@ class TestFibonacciAlgoAndFormulas(unittest.TestCase):
             self.assertEqual(res["positions"][0]["side"], "BUY")
             self.assertFalse(res["is_paper"])
 
+    def test_mcx_column_settings_and_reorder_request(self):
+        """Verify ColumnCreate, ApplyBatchRequest, and ColumnReorderRequest support MCX and column reordering."""
+        import asyncio
+        from app.api.routes.terminal import (
+            ColumnCreate,
+            ApplyBatchRequest,
+            ColumnReorderRequest,
+            ColumnOrderItem,
+            reorder_columns,
+        )
+
+        # 1. MCX formula for book uses unscaled commodity formula
+        base_f = '=IF(signal="BUY",ROUND(entry+(entry*0.118%),2),ROUND(entry-(entry*0.118%),2))'
+        mcx_f = formula_for_book("T11.8", base_f, "mcx")
+        self.assertEqual(mcx_f, base_f)
+
+        # 2. ColumnCreate allows "mcx"
+        col = ColumnCreate(name="MCX_TARGET", formula="=high*1.01", book="mcx")
+        self.assertEqual(col.book, "mcx")
+
+        # 3. ApplyBatchRequest allows "mcx" and "all"
+        batch_mcx = ApplyBatchRequest(batch="Fibonacci Formula", book="mcx")
+        self.assertEqual(batch_mcx.book, "mcx")
+        batch_all = ApplyBatchRequest(batch="Fibonacci Formula", book="all")
+        self.assertEqual(batch_all.book, "all")
+
+        # 4. Reorder endpoint logic
+        fake_db = AsyncMock()
+        mock_col1 = MagicMock(id=uuid.uuid4(), col_order=0)
+        mock_col2 = MagicMock(id=uuid.uuid4(), col_order=1)
+
+        async def fake_execute(stmt):
+            res = MagicMock()
+            res.scalar_one_or_none.return_value = mock_col1
+            return res
+
+        fake_db.execute = AsyncMock(side_effect=fake_execute)
+        fake_user = MagicMock(id=uuid.uuid4(), role="admin")
+
+        req = ColumnReorderRequest(orders=[
+            ColumnOrderItem(id=str(mock_col1.id), col_order=5),
+        ])
+        res = asyncio.run(reorder_columns(req, current_user=fake_user, db=fake_db))
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["updated"], 1)
+        self.assertEqual(mock_col1.col_order, 5)
+
 
 if __name__ == "__main__":
     unittest.main()

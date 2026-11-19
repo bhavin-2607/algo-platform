@@ -522,8 +522,8 @@ async def list_column_presets(
     """House column templates by batch. Admin only."""
     from app.strategy.excel_formula_engine import formula_for_book
 
-    if book not in ("equity", "option"):
-        raise HTTPException(status_code=400, detail="book must be equity or option")
+    if book not in ("equity", "option", "mcx"):
+        raise HTTPException(status_code=400, detail="book must be equity, option, or mcx")
 
     return [
         {**preset, "formula": formula_for_book(preset["name"], preset["formula"], book)}
@@ -542,7 +542,7 @@ class ColumnCreate(BaseModel):
     width:       int   = 80
     is_visible:  bool  = True
     color_rules: Optional[str] = None
-    book:        str   = "equity"       # equity or option; market columns are shared
+    book:        str   = "equity"       # equity, option, or mcx; market columns are shared
 
 
 class ColumnValueTick(BaseModel):
@@ -644,11 +644,6 @@ async def _shared_columns(db: AsyncSession, current_user: User):
         existing_keys = {c.col_key for c in cols if c.col_key}
         owner_id = cols[0].user_id
         added = False
-        default_order_map = {d["col_key"]: d["col_order"] for d in DEFAULT_COLUMNS if d.get("col_key")}
-        for c in cols:
-            if c.col_key in default_order_map and c.col_order != default_order_map[c.col_key]:
-                c.col_order = default_order_map[c.col_key]
-                added = True
         for d in DEFAULT_COLUMNS:
             if d.get("col_key") and d["col_key"] not in existing_keys:
                 db.add(TerminalColumn(
@@ -696,7 +691,7 @@ async def _shared_columns(db: AsyncSession, current_user: User):
         )
         cols = list(result.scalars().all())
 
-    cols = await _ensure_option_formulas(db, cols)
+    cols = await _ensure_book_formulas(db, cols)
 
     # Strictly deduplicate columns by (key/name, book) to prevent duplicate columns in table
     seen = set()
@@ -709,30 +704,30 @@ async def _shared_columns(db: AsyncSession, current_user: User):
     return deduped
 
 
-async def _ensure_option_formulas(db: AsyncSession, cols: list):
-    """Copy equity formulas into the options book once without creating duplicates."""
+async def _ensure_book_formulas(db: AsyncSession, cols: list):
+    """Ensure options and mcx books have their own independent copies of formulas."""
     from app.models.terminal_column import TerminalColumn
     from app.strategy.excel_formula_engine import formula_for_book
 
     equity = [col for col in cols if col.formula and (col.book or "equity") == "equity"]
-    existing_option_names = {col.name.upper() for col in cols if (col.book or "").lower() == "option"}
-
     to_add = []
-    for src in equity:
-        if src.name.upper() not in existing_option_names:
-            to_add.append(TerminalColumn(
-                user_id=src.user_id,
-                name=src.name,
-                col_key=src.col_key,
-                col_type=src.col_type,
-                formula=formula_for_book(src.name, src.formula, "option"),
-                col_order=src.col_order,
-                width=src.width,
-                is_visible=src.is_visible,
-                color_rules=src.color_rules,
-                book="option",
-            ))
-            existing_option_names.add(src.name.upper())
+    for target_book in ("option", "mcx"):
+        existing_names = {col.name.upper() for col in cols if (col.book or "").lower() == target_book}
+        for src in equity:
+            if src.name.upper() not in existing_names:
+                to_add.append(TerminalColumn(
+                    user_id=src.user_id,
+                    name=src.name,
+                    col_key=src.col_key,
+                    col_type=src.col_type,
+                    formula=formula_for_book(src.name, src.formula, target_book),
+                    col_order=src.col_order,
+                    width=src.width,
+                    is_visible=src.is_visible,
+                    color_rules=src.color_rules,
+                    book=target_book,
+                ))
+                existing_names.add(src.name.upper())
 
     if to_add:
         for item in to_add:
@@ -763,10 +758,10 @@ async def column_values(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Evaluate the saved formulas for one book. Equity and options are stored separately."""
+    """Evaluate the saved formulas for one book. Equity, options, and MCX are stored separately."""
     from app.strategy.excel_formula_engine import evaluate_columns_in_order
 
-    book = "option" if payload.book == "option" else "equity"
+    book = payload.book if payload.book in ("equity", "option", "mcx") else "equity"
     cols = await _shared_columns(db, current_user)
     formulas = []
     for col in cols:
@@ -841,8 +836,8 @@ async def create_column(
     """Create a new custom formula column. Admin only."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
-    if payload.book not in ("equity", "option"):
-        raise HTTPException(status_code=400, detail="book must be equity or option")
+    if payload.book not in ("equity", "option", "mcx"):
+        raise HTTPException(status_code=400, detail="book must be equity, option, or mcx")
 
     if payload.formula:
         from app.strategy.excel_formula_engine import validate_formula_excel
@@ -921,7 +916,7 @@ async def update_column(
     col.width       = payload.width
     col.is_visible  = payload.is_visible
     col.color_rules = payload.color_rules
-    if (col.book or "equity") in ("equity", "option") and payload.book in ("equity", "option"):
+    if (col.book or "equity") in ("equity", "option", "mcx") and payload.book in ("equity", "option", "mcx"):
         col.book = payload.book
     await db.commit()
     return {"status": "updated", "name": col.name}
@@ -984,20 +979,68 @@ async def validate_column_formula(
     return {"valid": ok, "message": msg}
 
 
-# ── Batch Switching ──────────────────────────────────────────────────────────
+# ── Column Reordering ────────────────────────────────────────────────────────
+
+class ColumnOrderItem(BaseModel):
+    id: str
+    col_order: int
+
+
+class ColumnReorderRequest(BaseModel):
+    orders: list[ColumnOrderItem]
+
+
+@router.post("/columns/reorder")
+async def reorder_columns(
+    payload: ColumnReorderRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk update display order of terminal columns."""
+    from app.models.terminal_column import TerminalColumn
+    from sqlalchemy import select
+    import uuid
+
+    for item in payload.orders:
+        col = None
+        try:
+            uid = uuid.UUID(str(item.id))
+            result = await db.execute(select(TerminalColumn).where(TerminalColumn.id == uid))
+            col = result.scalar_one_or_none()
+        except (ValueError, TypeError):
+            pass
+
+        if not col:
+            result = await db.execute(
+                select(TerminalColumn).where(
+                    (TerminalColumn.col_key == str(item.id).lower()) |
+                    (TerminalColumn.name == str(item.id).upper())
+                )
+            )
+            col = result.scalars().first()
+
+        if not col:
+            col = await _column_for_editor(db, item.id, current_user)
+
+        if col:
+            col.col_order = item.col_order
+
+    await db.commit()
+    return {"status": "ok", "updated": len(payload.orders)}
+
 
 # ── Batch Switching & Presets ───────────────────────────────────────────────
 
 class ApplyBatchRequest(BaseModel):
     batch: str = "Fibonacci Formula"
-    book: str = "both"  # "equity", "option", "algo", or "both"
+    book: str = "all"  # "equity", "option", "mcx", "algo", "both", or "all"
 
 
 _user_batch_presets: dict[str, dict[str, str]] = {}
 
 
 async def _get_batch_presets(user_id: UUID) -> dict[str, str]:
-    defaults = {"equity": "fibonacci", "option": "fibonacci", "algo": "fibonacci"}
+    defaults = {"equity": "fibonacci", "option": "fibonacci", "mcx": "fibonacci", "algo": "fibonacci"}
     try:
         import redis.asyncio as aioredis
         from app.core.config import settings
@@ -1017,15 +1060,21 @@ async def _save_batch_preset(user_id: UUID, book: str, batch: str):
         import redis.asyncio as aioredis
         from app.core.config import settings
         r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-        if book == "both":
+        if book == "all":
+            await r.hset(f"batch_presets:{user_id}", mapping={"equity": b_key, "option": b_key, "mcx": b_key})
+        elif book == "both":
             await r.hset(f"batch_presets:{user_id}", mapping={"equity": b_key, "option": b_key})
         else:
             await r.hset(f"batch_presets:{user_id}", book, b_key)
         await r.aclose()
     except Exception:
         pass
-    curr = _user_batch_presets.setdefault(str(user_id), {"equity": "fibonacci", "option": "fibonacci", "algo": "fibonacci"})
-    if book == "both":
+    curr = _user_batch_presets.setdefault(str(user_id), {"equity": "fibonacci", "option": "fibonacci", "mcx": "fibonacci", "algo": "fibonacci"})
+    if book == "all":
+        curr["equity"] = b_key
+        curr["option"] = b_key
+        curr["mcx"] = b_key
+    elif book == "both":
         curr["equity"] = b_key
         curr["option"] = b_key
     else:
@@ -1067,15 +1116,22 @@ async def apply_formula_batch(
     )
     from app.strategy.excel_formula_engine import formula_for_book
 
-    books = ["equity", "option"] if payload.book == "both" else [payload.book]
+    if payload.book == "all":
+        books = ["equity", "option", "mcx"]
+    elif payload.book == "both":
+        books = ["equity", "option"]
+    else:
+        books = [payload.book]
+
     await _save_batch_preset(current_user.id, payload.book, payload.batch)
 
     # Clear existing columns strictly for target books to ensure watchlists stay independent
     for b in books:
+        target_books = [b, "shared"] if payload.book in ("all", "both") else [b]
         await db.execute(
             sa_delete(TerminalColumn).where(
                 TerminalColumn.user_id == current_user.id,
-                TerminalColumn.book.in_([b, "shared"]),
+                TerminalColumn.book.in_(target_books),
             )
         )
 
