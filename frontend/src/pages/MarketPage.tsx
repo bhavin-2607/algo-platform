@@ -100,7 +100,7 @@ export default function MarketPage() {
           </p>
         </div>
         <button className="connect-btn" onClick={()=>setShowAdd(v=>!v)}>
-          {showAdd ? "✕ CLOSE" : "+ ADD SYMBOL"}
+          {showAdd ? "CLOSE" : "+ ADD SYMBOL"}
         </button>
       </div>
 
@@ -152,7 +152,7 @@ export default function MarketPage() {
                     style={{padding:"4px 8px",marginRight:6,background:"transparent",
                       border:"none",color:"var(--muted)",cursor:"pointer",fontSize:12,
                       opacity:0.4}}
-                    title="Remove">✕</button>
+                    title="Remove">×</button>
                 </div>
               );
             })}
@@ -219,8 +219,8 @@ export default function MarketPage() {
                 <span style={{marginLeft:"auto",
                   color:selectedQuote.source==="dhan_live"?"var(--green)":"var(--yellow)"}}>
                   {selectedQuote.source==="dhan_live"
-                    ? isLive?"✓ WebSocket live":"✓ REST live"
-                    : "⚠ Simulated"}
+                    ? isLive?"WebSocket live":"REST live"
+                    : "Simulated"}
                 </span>
               </div>
             )}
@@ -277,7 +277,7 @@ export default function MarketPage() {
                       <td>
                         <button onClick={e=>{e.stopPropagation();removeMutation.mutate(sym);}}
                           style={{background:"transparent",border:"none",color:"var(--muted)",
-                            cursor:"pointer",fontSize:11,opacity:0.4}}>✕</button>
+                            cursor:"pointer",fontSize:11,opacity:0.4}}>×</button>
                       </td>
                     </tr>
                   );
@@ -301,7 +301,7 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
     mutationFn: (inst: any) => api.post("/market/watchlist", {
       symbol:           inst.symbol,
       security_id:      inst.security_id,
-      exchange_segment: inst.segment,
+      exchange_segment: inst.exchange_segment || inst.segment || "NSE_EQ",
     }),
     onSuccess: (_, inst) => {
       toast.success(`${inst.symbol} added to watchlist`);
@@ -328,14 +328,14 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
       <div className="card-header"><span className="card-title">ADD SYMBOL TO WATCHLIST</span></div>
       <div style={{padding:"16px 20px 20px"}}>
         <p style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>
-          Search across all NSE equity instruments from Dhan's instrument master.
+          Search across all market instruments: Equities, Indices, Futures, Options, Commodities, and Currencies.
         </p>
         <div style={{position:"relative",maxWidth:500}}>
           <input
             className="field-input"
             value={query}
             onChange={e=>setQuery(e.target.value)}
-            placeholder="Search symbol or company name e.g. HDFC, Tata, ZOMATO..."
+            placeholder="Search symbol, contract or index e.g. TCS, SENSEX, NIFTY 24500 CE, GOLD..."
             style={{paddingRight:40}}
             autoFocus
           />

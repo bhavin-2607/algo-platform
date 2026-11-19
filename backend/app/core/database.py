@@ -38,8 +38,110 @@ async def init_db():
             "ALTER TABLE terminal_columns ADD COLUMN IF NOT EXISTS book VARCHAR DEFAULT 'equity'"
         )
         await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS custom_target FLOAT"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS trade_mode VARCHAR DEFAULT 'FULL'"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS entry_type VARCHAR DEFAULT 'FORMULA'"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE bsa_algo_rows ADD COLUMN IF NOT EXISTS custom_entry FLOAT"
+        )
+        # Ensure options contracts in bsa_algo_rows have segment = 'NSE_FNO'
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET segment = 'NSE_FNO'
+            WHERE segment IS DISTINCT FROM 'NSE_FNO'
+              AND (
+                symbol ILIKE '%CALL%' OR symbol ILIKE '%PUT%' OR
+                symbol ILIKE '% CE%' OR symbol ILIKE '% PE%' OR
+                symbol ILIKE '%-CE%' OR symbol ILIKE '%-PE%' OR
+                symbol ILIKE '%OPT%' OR symbol ILIKE '%FUT%'
+              )
+        """)
+        # Migrate legacy BSA target types to Fibonacci T1..T3
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'T1'
+            WHERE target_type = 'TGT1' OR target_type IS NULL OR target_type = ''
+        """)
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'T2'
+            WHERE target_type = 'TGT2'
+        """)
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'T3'
+            WHERE target_type = 'TGT3'
+        """)
+        # Remove legacy BSA formula columns
+        await conn.exec_driver_sql("""
+            DELETE FROM terminal_columns
+            WHERE name IN (
+                'INTRASIGNAL', 'OHLSIG', 'S-SIGNAL', 'DIFF',
+                'BT1', 'BT2', 'BT3', 'ST1', 'ST2', 'ST3',
+                'TGT1', 'TGT2', 'TGT3', 'P.CLOSE', 'P.HIGH', 'P.LOW'
+            )
+        """)
+        await conn.exec_driver_sql(
             "UPDATE terminal_columns SET book = 'shared' WHERE formula IS NULL AND book IS DISTINCT FROM 'shared'"
         )
+        # Migrate any legacy shoonya accounts to dhan
+        await conn.exec_driver_sql(
+            "UPDATE broker_accounts SET broker = 'dhan' WHERE broker::text = 'shoonya'"
+        )
+        # Clean up any duplicate terminal columns in DB
+        await conn.exec_driver_sql("""
+            DELETE FROM terminal_columns
+            WHERE id IN (
+                SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY user_id, lower(name), coalesce(book, 'shared')
+                        ORDER BY created_at DESC, id
+                    ) as rnum
+                    FROM terminal_columns
+                ) t
+                WHERE t.rnum > 1
+            )
+        """)
+        # Copy Trading Migrations
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS account_role VARCHAR DEFAULT 'CHILD'"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS account_name VARCHAR"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS is_copy_enabled BOOLEAN DEFAULT TRUE"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS fixed_qty_equity INTEGER DEFAULT 10"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS fixed_lots_fno INTEGER DEFAULT 1"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS max_loss_limit FLOAT"
+        )
+        await conn.exec_driver_sql(
+            "ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS force_market_order BOOLEAN DEFAULT TRUE"
+        )
+        # Default first active broker account to MASTER if none exists
+        await conn.exec_driver_sql("""
+            UPDATE broker_accounts
+            SET account_role = 'MASTER', account_name = COALESCE(account_name, 'Primary Master Account')
+            WHERE id = (
+                SELECT id FROM broker_accounts
+                WHERE is_active = TRUE
+                ORDER BY created_at ASC
+                LIMIT 1
+            ) AND NOT EXISTS (
+                SELECT 1 FROM broker_accounts WHERE account_role = 'MASTER'
+            )
+        """)
 
 
 async def get_db():

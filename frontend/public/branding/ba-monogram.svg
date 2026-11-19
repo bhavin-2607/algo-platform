@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="360" viewBox="0 0 620 360" role="img">
+<title>Bhavin Amesara brand asset</title>
+
+
+<g transform="translate(48 42)">
+  <path d="M20 22 H128 C174 22 195 47 195 79 C195 101 184 116 166 126 C191 136 205 155 205 181 C205 218 178 242 129 242 H20 Z
+           M70 67 V105 H126 C145 105 154 98 154 86 C154 74 145 67 126 67 Z
+           M70 151 V197 H129 C149 197 160 189 160 174 C160 159 149 151 129 151 Z"
+        fill="#F7FAFC" fill-rule="evenodd"/>
+  <path d="M212 242 L315 22 H365 L468 242 H414 L389 188 H286 L261 242 Z
+           M307 145 H368 L338 79 Z" fill="#08B6DE" fill-rule="evenodd"/>
+  <path d="M295 163 H381" stroke="#0B1933" stroke-width="0" />
+  <path d="M295 163 H381" stroke="#F7FAFC" stroke-width="0"/>
+  <path d="M286 164 H390" stroke="#08B6DE" stroke-width="9" stroke-linecap="round"/>
+  <path d="M355 5 C425 -27 503 -6 526 47 C540 79 527 111 500 133"
+        fill="none" stroke="#08B6DE" stroke-width="10" stroke-linecap="round"/>
+  <path d="M365 28 C414 9 465 24 480 61" fill="none" stroke="#08B6DE" stroke-width="8" stroke-linecap="round"/>
+  <path d="M374 52 C405 43 433 52 443 76" fill="none" stroke="#08B6DE" stroke-width="7" stroke-linecap="round"/>
+  <path d="M8 262 C110 307 251 300 350 247 C449 194 522 119 550 64"
+        fill="none" stroke="#1687E8" stroke-width="7" stroke-linecap="round"/>
+</g>
+</svg>

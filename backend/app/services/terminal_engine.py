@@ -49,6 +49,7 @@ class TerminalEngine:
         self.user_id  = user_id
         self.db       = db
         self._stop    = False
+        self._db_lock = asyncio.Lock()
         self._tasks: list[asyncio.Task] = []
 
     async def start(self):
@@ -94,7 +95,8 @@ class TerminalEngine:
         exit_ev  = FormulaEvaluator(row.exit_formula)  if row.exit_formula  else None
 
         # Load broker adapter
-        ba = await self.db.get(BrokerAccount, row.broker_account_id) if row.broker_account_id else None
+        async with self._db_lock:
+            ba = await self.db.get(BrokerAccount, row.broker_account_id) if row.broker_account_id else None
         adapter = get_broker_adapter(ba) if ba else None
 
         in_position = row.status == TerminalRowStatus.active and bool(row.entry_price)
@@ -219,7 +221,6 @@ class TerminalEngine:
 
                 row.last_ltp = ltp
                 row.updated_at = datetime.utcnow()
-                await self.db.commit()
 
         except asyncio.CancelledError:
             flatten = True
@@ -263,7 +264,8 @@ class TerminalEngine:
             formula_sl = _price_from_formula(row.sl_formula, fill_price)
             row.current_sl = formula_sl if formula_sl is not None else sl_price
             row.current_target = formula_target if formula_target is not None else target_price
-            await self.db.commit()
+            async with self._db_lock:
+                await self.db.commit()
             logger.info(
                 f"  [{row.symbol}] Entry: {direction} @ ₹{fill_price} "
                 f"| T={row.current_target} SL={row.current_sl}"
@@ -300,7 +302,8 @@ class TerminalEngine:
             row.current_target = None
             row.peak_price   = None
             row.last_signal  = "EXIT"
-            await self.db.commit()
+            async with self._db_lock:
+                await self.db.commit()
             logger.info(f"  [{row.symbol}] Exit: {reason} @ ₹{exit_price} | PnL=₹{pnl}")
             return True
         except Exception as e:

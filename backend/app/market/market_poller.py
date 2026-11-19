@@ -167,6 +167,9 @@ class MarketPoller:
                                 "high":       float(ohlc.get("high",  ltp)),
                                 "low":        float(ohlc.get("low",   ltp)),
                                 "close":      close,
+                                "p_close":    close,
+                                "p_high":     float(raw.get("previous_day_high") or raw.get("high_52_week") or round(close * 1.012, 2)),
+                                "p_low":      float(raw.get("previous_day_low") or raw.get("low_52_week") or round(close * 0.988, 2)),
                                 "change":     round(ltp - close, 2),
                                 "change_pct": round((ltp - close) / max(close, 1) * 100, 2),
                                 "volume":     int(raw.get("volume", 0)),
@@ -190,6 +193,9 @@ class MarketPoller:
                                 await get_redis().set(FEED_HEARTBEAT_KEY, str(_time.time()), ex=3600)
                             except Exception as exc:
                                 logger.debug(f"Feed heartbeat write failed: {exc}")
+
+                            # Dispatch to BSA Algo engine in background
+                            asyncio.create_task(self._notify_algo_engine(ticks))
 
                             async with self._lock:
                                 dead = []
@@ -219,6 +225,18 @@ class MarketPoller:
                     logger.error(f"MarketPoller error: {e}")
 
                 await asyncio.sleep(backoff)
+
+    async def _notify_algo_engine(self, ticks: list[dict]):
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.services.bsa_algo_engine import algo_engine
+            async with AsyncSessionLocal() as db:
+                for t in ticks:
+                    sym = t.get("symbol")
+                    if sym:
+                        await algo_engine.evaluate_tick_for_symbol(sym, t, db)
+        except Exception as e:
+            logger.debug(f"Algo engine tick notification error: {e}")
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────

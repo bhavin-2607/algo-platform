@@ -69,10 +69,6 @@ export default function DashboardPage() {
             Welcome back, <span style={{ color: "var(--green)" }}>{user?.username}</span>
           </p>
         </div>
-        <div className="market-status">
-          <div className="market-dot" />
-          <span>MARKET OPEN</span>
-        </div>
       </div>
 
       {/* Stat cards — real data with fallback */}
@@ -97,14 +93,15 @@ export default function DashboardPage() {
         />
         <StatCard
           label="BROKER"
-          value={brokers?.length ? brokers[0].broker.toUpperCase() : "NONE"}
-          delta={dhanConnected ? "Dhan connected" : (brokers?.length ? "Paper — Dhan not connected" : "Not connected")}
-          neutral
+          value="DHAN"
+          delta={dhanConnected ? "Live Connected" : "Paper Trading Active"}
+          positive={dhanConnected}
+          neutral={!dhanConnected}
         />
       </div>
 
       {/* P&L Chart */}
-      <div className="card" style={{ marginBottom: 24 }}>
+      <div className="card" style={{ marginBottom: 10 }}>
         <div className="card-header">
           <span className="card-title">WEEKLY P&L</span>
           <span className="card-badge">{dhanConnected ? "DHAN LIVE" : "PAPER"}</span>
@@ -132,9 +129,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 24 }}>
+      <div className="card" style={{ marginBottom: 10 }}>
         <div className="card-header">
-          <span className="card-title">LIVE BROKER</span>
+          <span className="card-title">DHAN LIVE ORDERBOOK</span>
           <span className="card-badge">{openPositions.length} open</span>
         </div>
         {!brokerOrders?.length && !brokerPositions?.length ? (
@@ -151,10 +148,18 @@ export default function DashboardPage() {
                 {(brokerOrders ?? []).map((o: any) => (
                   <tr key={o.order_id}>
                     <td className="symbol">{o.symbol}</td>
-                    <td>{o.transaction_type}</td>
+                    <td>
+                      <span className={`badge ${String(o.transaction_type).toUpperCase()==="BUY"?"badge-green":"badge-red"}`}>
+                        {o.transaction_type}
+                      </span>
+                    </td>
                     <td>{o.filled_qty || o.quantity}</td>
-                    <td>{o.status}</td>
-                    <td>{o.order_id}</td>
+                    <td>
+                      <span className={`badge ${String(o.status).toUpperCase()==="TRADED"||String(o.status).toUpperCase()==="FILLED"?"badge-green":String(o.status).toUpperCase()==="REJECTED"||String(o.status).toUpperCase()==="CANCELLED"?"badge-red":"badge-yellow"}`}>
+                        {o.status}
+                      </span>
+                    </td>
+                    <td style={{fontFamily:"monospace", color:"var(--muted)", fontSize:11}}>{o.order_id}</td>
                   </tr>
                 ))}
               </tbody>

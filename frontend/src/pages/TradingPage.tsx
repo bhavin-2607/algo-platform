@@ -47,22 +47,40 @@ export default function TradingPage() {
       }
       return res;
     }),
-    onSuccess: () => { toast.success("Broker account added"); qc.invalidateQueries({queryKey:["brokers"]}); setShowForm(false); },
+    onSuccess: () => {
+      toast.success("Broker account added");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+      setShowForm(false);
+    },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
   });
 
   const activateMutation = useMutation({
     mutationFn: (id: string) => brokerApi.activate(id),
-    onSuccess: () => { toast.success("Broker activated"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Broker activated");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+    },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Activation failed"),
   });
 
   const removeMutation = useMutation({
     mutationFn: (id: string) => brokerApi.disconnect(id),
-    onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Removed");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
   });
 
-  const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker !== "shoonya");
+  const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker === "dhan" || b.broker === "paper");
 
   return (
     <Layout>
@@ -161,15 +179,25 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
 
   const deactivateMutation = useMutation({
     mutationFn: () => api.patch(`/brokers/${b.id}/deactivate`),
-    onSuccess: () => { toast.success("Broker deactivated"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Broker deactivated");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
     onError: () => toast.error("Deactivation failed"),
   });
 
   const renewMutation = useMutation({
     mutationFn: () => api.post("/settings/dhan-renew"),
     onSuccess: (res: any) => {
-      toast.success(`✅ Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
+      toast.success(`Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
       qc.invalidateQueries({queryKey:["settings-status"]});
+      qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed — token may be expired"),
   });
@@ -177,8 +205,13 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
   const updateTokenMutation = useMutation({
     mutationFn: () => api.post("/settings/dhan-token", {access_token: token}),
     onSuccess: (res: any) => {
-      toast.success(res.data?.valid ? "✅ Token updated & verified" : "Token saved");
-      qc.invalidateQueries({queryKey:["settings-status","brokers"]});
+      toast.success(res.data?.valid ? "Token updated & verified" : "Token saved");
+      qc.invalidateQueries({queryKey:["settings-status"]});
+      qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
       setToken(""); setExpanded(false);
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Update failed"),
@@ -188,7 +221,7 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
     <div style={{borderTop:"1px solid var(--border)"}}>
       {/* Main row */}
       <div style={{
-        padding:"16px 20px", display:"flex",
+        padding:"10px 14px", display:"flex",
         alignItems:"center", justifyContent:"space-between",
       }}>
         <div style={{display:"flex", alignItems:"center", gap:14}}>
@@ -209,22 +242,22 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
             {b.paper_trading ? "PAPER" : "LIVE"}
           </span>
           <span className={`badge ${b.is_active?"badge-green":"badge-gray"}`}>
-            {b.is_active ? "● ACTIVE" : "○ INACTIVE"}
+            {b.is_active ? "ACTIVE" : "INACTIVE"}
           </span>
 
           {/* Activate / Deactivate */}
           {!b.is_active ? (
             <button className="connect-btn" style={{padding:"5px 12px", fontSize:10}}
               onClick={onActivate} disabled={activating}>
-              {activating ? "..." : "⚡ ACTIVATE"}
+              {activating ? "..." : "ACTIVATE"}
             </button>
           ) : (
             <button className="exit-btn"
               style={{padding:"5px 12px", fontSize:10,
-                color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
+                color:"var(--yellow)", borderColor:"rgba(255,183,3,0.3)"}}
               onClick={() => deactivateMutation.mutate()}
               disabled={deactivateMutation.isPending}>
-              {deactivateMutation.isPending ? "..." : "⏸ DEACTIVATE"}
+              {deactivateMutation.isPending ? "..." : "DEACTIVATE"}
             </button>
           )}
 
@@ -239,7 +272,7 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
                 border: `1px solid ${expanded ? "rgba(0,255,136,0.4)" : "var(--border)"}`,
                 color: expanded ? "var(--green)" : "var(--muted)",
               }}>
-              {expanded ? "✕ CLOSE" : "✎ EDIT TOKEN"}
+              {expanded ? "CLOSE" : "EDIT TOKEN"}
             </button>
           )}
 

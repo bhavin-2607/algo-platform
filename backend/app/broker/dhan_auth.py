@@ -37,8 +37,24 @@ DHAN_API_URL  = "https://api.dhan.co/v2"
 class DhanAuthManager:
 
     def __init__(self):
-        self.client_id    = settings.DHAN_CLIENT_ID
-        self.access_token = settings.DHAN_ACCESS_TOKEN
+        self._client_id    = None
+        self._access_token = None
+
+    @property
+    def client_id(self) -> str:
+        return (self._client_id or settings.DHAN_CLIENT_ID or "").strip()
+
+    @client_id.setter
+    def client_id(self, val: str):
+        self._client_id = val
+
+    @property
+    def access_token(self) -> str:
+        return (self._access_token or settings.DHAN_ACCESS_TOKEN or "").strip()
+
+    @access_token.setter
+    def access_token(self, val: str):
+        self._access_token = val
 
     # ── Method 1: RenewToken ─────────────────────────────────────────────────
 
@@ -68,13 +84,15 @@ class DhanAuthManager:
                 return None
 
             new_token = (
+                data.get("token") or
                 data.get("accessToken") or
                 data.get("access_token") or
+                (data.get("data") or {}).get("token") or
                 (data.get("data") or {}).get("accessToken")
             )
 
             if new_token:
-                logger.info("✅ Dhan token renewed via RenewToken")
+                logger.info("Dhan token renewed via RenewToken")
                 return {
                     "access_token": new_token,
                     "method":       "renew",
@@ -120,7 +138,7 @@ class DhanAuthManager:
             data = resp.json()
 
             if "accessToken" in data:
-                logger.info(f"✅ Token generated via TOTP — expires: {data.get('expiryTime')}")
+                logger.info(f"Token generated via TOTP — expires: {data.get('expiryTime')}")
                 return {
                     "access_token": data["accessToken"],
                     "client_id":    data.get("dhanClientId", self.client_id),
@@ -165,7 +183,7 @@ class DhanAuthManager:
                 self._apply_token(result["access_token"])
                 # Clear any failure flag
                 self._set_token_status("ok", result.get("expires_at"))
-                logger.info(f"✅ Token renewed via {result['method']}")
+                logger.info(f"Token renewed via {result['method']}")
                 return result
 
             if attempt < max_retries:
@@ -174,7 +192,7 @@ class DhanAuthManager:
                 time.sleep(wait)
 
         # All attempts failed
-        logger.error("❌ All token renewal attempts failed!")
+        logger.error("All token renewal attempts failed!")
         self._set_token_status("failed")
         self._send_failure_alert()
         return None
@@ -265,20 +283,50 @@ class DhanAuthManager:
     # ── Token health check ────────────────────────────────────────────────────
 
     def is_token_valid(self) -> bool:
-        """Quick check if current token is still valid."""
-        if not self.access_token or not self.client_id:
+        """Quick check if current token is still valid. Auto-reloads from .env if disk changed."""
+        cid = self.client_id
+        token = self.access_token
+
+        if not cid or not token:
+            settings.reload_from_disk()
+            cid = self.client_id
+            token = self.access_token
+
+        if not cid or not token:
             return False
+
         try:
             resp = requests.get(
                 f"{DHAN_API_URL}/fundlimit",
                 headers={
-                    "access-token": self.access_token,
-                    "client-id":    self.client_id,
+                    "access-token": token,
+                    "client-id":    cid,
                 },
-                timeout=5,
+                timeout=10,
             )
-            return resp.status_code == 200
-        except Exception:
+            if resp.status_code == 200:
+                return True
+
+            # If failed (e.g. 401 Unauthorized), check if .env on disk has a newly updated token
+            prev_token = token
+            settings.reload_from_disk()
+            if self.access_token and self.access_token != prev_token:
+                logger.info("Detected updated Dhan token on disk — verifying new token...")
+                retry_resp = requests.get(
+                    f"{DHAN_API_URL}/fundlimit",
+                    headers={
+                        "access-token": self.access_token,
+                        "client-id":    self.client_id,
+                    },
+                    timeout=10,
+                )
+                if retry_resp.status_code == 200:
+                    logger.info("New Dhan token on disk is valid and active.")
+                    return True
+
+            return False
+        except Exception as e:
+            logger.warning(f"Dhan token validation request error: {e}")
             return False
 
     def is_token_expiring_soon(self, hours: int = 2) -> bool:

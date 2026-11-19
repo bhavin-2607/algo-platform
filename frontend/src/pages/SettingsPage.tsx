@@ -4,6 +4,7 @@ import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -14,16 +15,97 @@ export default function SettingsPage() {
     <Layout>
       <div className="page-header">
         <div>
-          <h1 className="page-title">SETTINGS</h1>
-          <p className="page-sub">Account configuration & broker connections</p>
+          <h1 className="page-title">USER PROFILE & SETTINGS</h1>
+          <p className="page-sub">Account details, connected broker configuration & Dhan token authentication</p>
         </div>
       </div>
       <div className="settings-board">
-        <PasswordCard />
-        <BrokerSettingsSection />
-        {isAdmin && <TokenRenewalCard qc={qc} />}
+        {/* Left Column: User Profile & Security */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <UserProfileCard />
+          <PasswordCard />
+        </div>
+
+        {/* Right Column: Connected Broker & Token Refresh */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <BrokerSettingsSection />
+          <TokenRenewalCard qc={qc} />
+        </div>
       </div>
     </Layout>
+  );
+}
+
+function UserProfileCard() {
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === "admin";
+
+  return (
+    <div className="card settings-card">
+      <div className="card-header">
+        <span className="card-title">USER PROFILE</span>
+        <span className={`badge ${isAdmin ? "badge-green" : "badge-gray"}`}>
+          {isAdmin ? "ADMINISTRATOR" : "TRADER"}
+        </span>
+      </div>
+      <div style={{ padding: "12px 14px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              background: "var(--green-dim)",
+              border: "2px solid var(--green)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--green)",
+              fontSize: 18,
+              fontWeight: 800,
+              flexShrink: 0,
+            }}
+          >
+            {user?.username?.[0]?.toUpperCase() ?? "U"}
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text)" }}>
+              {user?.username ?? "Trader"}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              {user?.email || `${user?.username || "trader"}@algo-platform.local`}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+          <div>
+            <div className="field-label">ACCOUNT STATUS</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--green)", marginTop: 3 }}>
+              ACTIVE TRADING
+            </div>
+          </div>
+          <div>
+            <div className="field-label">AUTHENTICATION</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginTop: 3 }}>
+              JWT ENCRYPTED
+            </div>
+          </div>
+          <div>
+            <div className="field-label">USER ID</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3, fontFamily: "monospace" }}>
+              {user?.id ? user.id.slice(0, 16) + "..." : "Local Trader"}
+            </div>
+          </div>
+          <div>
+            <div className="field-label">SYSTEM ROLE</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: isAdmin ? "var(--yellow)" : "var(--text)", marginTop: 3 }}>
+              {isAdmin ? "SUPER ADMIN" : "STANDARD TRADER"}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -40,9 +122,13 @@ function TokenRenewalCard({qc}: {qc: any}) {
   const updateMutation = useMutation({
     mutationFn: () => api.post("/settings/dhan-token", {access_token: newToken}),
     onSuccess: (res: any) => {
-      toast.success(res.data?.valid ? "✅ Token updated & verified" : "Token saved (verify failed)");
+      toast.success(res.data?.valid ? "Token updated & verified" : "Token saved (verify failed)");
       qc.invalidateQueries({queryKey:["settings-status"]});
       qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
       setNewToken("");
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Update failed"),
@@ -51,8 +137,13 @@ function TokenRenewalCard({qc}: {qc: any}) {
   const renewMutation = useMutation({
     mutationFn: () => api.post("/settings/dhan-renew"),
     onSuccess: (res: any) => {
-      toast.success(`✅ Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
+      toast.success(`Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
       qc.invalidateQueries({queryKey:["settings-status"]});
+      qc.invalidateQueries({queryKey:["dhan-credentials"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed"),
   });
@@ -60,7 +151,7 @@ function TokenRenewalCard({qc}: {qc: any}) {
   return (
     <div className="card settings-card">
       <div className="card-header">
-        <span className="card-title">DHAN TOKEN</span>
+        <span className="card-title">DHAN TOKEN REFRESH</span>
         <span className={`badge ${dhan.token_valid ? "badge-green" : "badge-red"}`}>
           {dhan.token_valid ? "CONNECTED" : "NEEDS TOKEN"}
         </span>
@@ -102,6 +193,9 @@ function PasswordCard() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const mutation = useMutation({
     mutationFn: () => api.post("/users/me/change-password", {
       current_password: current,
@@ -131,26 +225,122 @@ function PasswordCard() {
   return (
     <div className="card settings-card">
       <div className="card-header">
-        <span className="card-title">PASSWORD</span>
+        <span className="card-title">PASSWORD & SECURITY</span>
       </div>
-      <div style={{padding:"16px 20px", display:"grid", gap:12}}>
-        <div className="field">
-          <label className="field-label">CURRENT PASSWORD</label>
-          <input className="field-input" type="password" value={current} onChange={e => setCurrent(e.target.value)} />
+      <div style={{ padding: "12px 14px", display: "grid", gap: 8 }}>
+        <div>
+          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CURRENT PASSWORD</label>
+          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+            <input
+              className="field-input"
+              type={showCurrent ? "text" : "password"}
+              value={current}
+              onChange={e => setCurrent(e.target.value)}
+              placeholder="Current password"
+              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurrent(v => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+              title={showCurrent ? "Hide password" : "Show password"}
+            >
+              {showCurrent ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
         </div>
-        <div className="field">
-          <label className="field-label">NEW PASSWORD</label>
-          <input className="field-input" type="password" value={next} onChange={e => setNext(e.target.value)} />
+
+        <div>
+          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>NEW PASSWORD</label>
+          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+            <input
+              className="field-input"
+              type={showNext ? "text" : "password"}
+              value={next}
+              onChange={e => setNext(e.target.value)}
+              placeholder="At least 8 characters"
+              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowNext(v => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+              title={showNext ? "Hide password" : "Show password"}
+            >
+              {showNext ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
         </div>
-        <div className="field">
-          <label className="field-label">CONFIRM NEW PASSWORD</label>
-          <input className="field-input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+
+        <div>
+          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CONFIRM NEW PASSWORD</label>
+          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+            <input
+              className="field-input"
+              type={showConfirm ? "text" : "password"}
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              placeholder="Confirm new password"
+              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm(v => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+              title={showConfirm ? "Hide password" : "Show password"}
+            >
+              {showConfirm ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
         </div>
-        <button className="connect-btn" style={{justifySelf:"start"}} onClick={submit} disabled={mutation.isPending}>
+
+        <button
+          className="connect-btn"
+          style={{ justifySelf: "start", padding: "6px 16px", fontSize: 11, height: 32, marginTop: 4 }}
+          onClick={submit}
+          disabled={mutation.isPending}
+        >
           {mutation.isPending ? "SAVING" : "UPDATE PASSWORD"}
         </button>
-        <p className="token-note">
-          This needs the current password. If it is forgotten, an admin can set a new one from Console → Users → Reset.
+
+        <p className="token-note" style={{ padding: 0, fontSize: 11, color: "var(--muted)" }}>
+          Requires current password. Contact an administrator to reset if forgotten.
         </p>
       </div>
     </div>
@@ -180,34 +370,63 @@ function BrokerSettingsSection() {
       }
       return res;
     }),
-    onSuccess: () => { toast.success("Broker added"); qc.invalidateQueries({queryKey:["brokers"]}); setShowForm(false); },
+    onSuccess: () => {
+      toast.success("Broker added and verified");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+      setShowForm(false);
+    },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
   });
 
   const removeMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/brokers/${id}`),
-    onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Removed");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
+  });
+
+  const activateMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/brokers/${id}/activate`),
+    onSuccess: (res: any) => {
+      toast.success(res.data?.message || "Broker activated successfully");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+      qc.invalidateQueries({queryKey:["dhan-funds"]});
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to activate broker"),
   });
 
   const deactivateMutation = useMutation({
     mutationFn: (id: string) => api.patch(`/brokers/${id}/deactivate`),
-    onSuccess: () => { toast.success("Deactivated"); qc.invalidateQueries({queryKey:["brokers"]}); },
+    onSuccess: () => {
+      toast.success("Deactivated");
+      qc.invalidateQueries({queryKey:["brokers"]});
+      qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
+    },
   });
 
-  const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker !== "shoonya");
+  const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker === "dhan" || b.broker === "paper");
 
   return (
     <div className="card settings-card">
         <div className="card-header">
           <span className="card-title">CONNECTED BROKERS</span>
           <button className="connect-btn" onClick={() => setShowForm(v=>!v)}>
-            {showForm ? "✕ CANCEL" : "+ ADD BROKER"}
+            {showForm ? "CANCEL" : "+ ADD BROKER"}
           </button>
         </div>
 
         {showForm && (
-          <div style={{padding:"20px 20px 0"}}>
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12}}>
+          <div style={{padding:"12px 14px 0"}}>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
               <div className="field">
                 <label className="field-label">CLIENT ID</label>
                 <input className="field-input" value={form.client_id}
@@ -236,7 +455,7 @@ function BrokerSettingsSection() {
               </div>
             </div>
             {!form.paper_trading && (
-              <div className="field" style={{marginBottom:12}}>
+              <div className="field" style={{marginBottom:10}}>
                 <label className="field-label">ACCESS TOKEN</label>
                 <input className="field-input" type="password"
                   value={form.access_token}
@@ -247,20 +466,21 @@ function BrokerSettingsSection() {
             <button className={`auth-btn${connectMutation.isPending?" loading":""}`}
               onClick={()=>connectMutation.mutate()}
               disabled={connectMutation.isPending}
-              style={{maxWidth:200, marginBottom:20}}>
-              {connectMutation.isPending?"ADDING...":"ADD BROKER →"}
+              style={{maxWidth:200, marginBottom:10}}>
+              {connectMutation.isPending?"ADDING...":"ADD BROKER ->"}
             </button>
           </div>
         )}
 
         {visibleBrokers.length === 0 && !showForm && (
-          <div style={{padding:"30px 20px", textAlign:"center", color:"var(--muted)", fontSize:12}}>
+          <div style={{padding:"20px 14px", textAlign:"center", color:"var(--muted)", fontSize:12}}>
             No broker connected. Add Dhan to start trading.
           </div>
         )}
 
         {visibleBrokers.map((b: any) => (
           <BrokerRow key={b.id} broker={b} qc={qc}
+            onActivate={()=>activateMutation.mutate(b.id)}
             onRemove={()=>removeMutation.mutate(b.id)}
             onDeactivate={()=>deactivateMutation.mutate(b.id)}
           />
@@ -269,11 +489,10 @@ function BrokerSettingsSection() {
   );
 }
 
-function BrokerRow({ broker: b, onRemove, onDeactivate }: any) {
-
+function BrokerRow({ broker: b, onActivate, onRemove, onDeactivate }: any) {
   return (
     <div style={{borderTop:"1px solid var(--border)"}}>
-      <div style={{padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+      <div style={{padding:"10px 14px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
         <div style={{display:"flex", alignItems:"center", gap:14}}>
           <div style={{width:36, height:36, borderRadius:4,
             background:"rgba(0,255,136,0.1)", border:"1px solid rgba(0,255,136,0.3)",
@@ -291,12 +510,19 @@ function BrokerRow({ broker: b, onRemove, onDeactivate }: any) {
             {b.paper_trading?"PAPER":"LIVE"}
           </span>
           <span className={`badge ${b.is_active?"badge-green":"badge-gray"}`}>
-            {b.is_active?"● ACTIVE":"○ INACTIVE"}
+            {b.is_active?"ACTIVE":"INACTIVE"}
           </span>
+          {!b.is_active && (
+            <button className="auth-btn"
+              style={{padding:"5px 12px", fontSize:11, width:"auto"}}
+              onClick={onActivate}>
+              ACTIVATE
+            </button>
+          )}
           {b.is_active && (
             <button className="exit-btn"
               style={{padding:"5px 12px", fontSize:10, color:"var(--yellow)", borderColor:"rgba(255,208,96,0.3)"}}
-              onClick={onDeactivate}>⏸ DEACTIVATE</button>
+              onClick={onDeactivate}>DEACTIVATE</button>
           )}
           <button className="exit-btn" onClick={onRemove}>REMOVE</button>
         </div>

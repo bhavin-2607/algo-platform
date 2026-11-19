@@ -73,6 +73,8 @@ def redis_exchange(segment: str | None) -> str:
 COMMON_INSTRUMENTS = {
     "NIFTY50":    {"security_id": "13",    "exchange": "IDX_I",   "token": "13"},
     "BANKNIFTY":  {"security_id": "25",    "exchange": "IDX_I",   "token": "25"},
+    "SENSEX":     {"security_id": "51",    "exchange": "IDX_I",   "token": "51"},
+    "BANKEX":     {"security_id": "83",    "exchange": "IDX_I",   "token": "83"},
     "RELIANCE":   {"security_id": "2885",  "exchange": "NSE_EQ",  "token": "2885"},
     "TCS":        {"security_id": "11536", "exchange": "NSE_EQ",  "token": "11536"},
     "INFY":       {"security_id": "1594",  "exchange": "NSE_EQ",  "token": "1594"},

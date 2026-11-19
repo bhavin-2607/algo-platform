@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="330" viewBox="0 0 900 330" role="img">
+<title>Bhavin Amesara brand asset</title>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+
+<g transform="translate(0 0) scale(.66)">
+<g transform="translate(40 40)">
+<rect x="0" y="0" width="320" height="320" rx="72" fill="#0B1933"/>
+<circle cx="76" cy="160" r="34" fill="none" stroke="#08B6DE" stroke-width="13"/>
+<circle cx="244" cy="160" r="34" fill="none" stroke="#08B6DE" stroke-width="13"/>
+<path d="M111 160 H209" stroke="#F7FAFC" stroke-width="13" stroke-linecap="round"/>
+<path d="M193 142 L211 160 L193 178" fill="none" stroke="#F7FAFC" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M127 135 C145 75 175 75 193 135" fill="none" stroke="#F5A623" stroke-width="12" stroke-linecap="round"/>
+<path d="M127 185 C145 245 175 245 193 185" fill="none" stroke="#F5A623" stroke-width="12" stroke-linecap="round"/>
+</g></g>
+<text x="315" y="175" font-family="Inter,Arial,sans-serif" font-size="48" font-weight="750" letter-spacing="1.4" fill="#0B1933">TRADING BRIDGE</text>
+<text x="318" y="220" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="550" letter-spacing="4" fill="#08B6DE">BROKER CONNECTIVITY</text>
+
+</svg>

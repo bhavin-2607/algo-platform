@@ -27,11 +27,22 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == payload.email))
+    identifier = (payload.username or payload.email or "").strip()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Username or email is required")
+
+    result = await db.execute(
+        select(User).where(
+            (User.username.ilike(identifier)) | (User.email.ilike(identifier))
+        )
+    )
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
 
     if user.mfa_enabled:
         if not payload.mfa_token:

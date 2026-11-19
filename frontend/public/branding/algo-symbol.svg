@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400" role="img">
+<title>Bhavin Amesara brand asset</title>
+
+
+<g transform="translate(40 40)">
+<rect x="0" y="0" width="320" height="320" rx="72" fill="#0B1933"/>
+<path d="M72 242 V190 H112 V242 Z M142 242 V145 H182 V242 Z M212 242 V95 H252 V242 Z"
+      fill="#08B6DE"/>
+<path d="M68 151 L132 124 L177 145 L251 75" fill="none" stroke="#F7FAFC" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="68" cy="151" r="10" fill="#F5A623"/>
+<circle cx="132" cy="124" r="10" fill="#F5A623"/>
+<circle cx="177" cy="145" r="10" fill="#F5A623"/>
+<circle cx="251" cy="75" r="10" fill="#F5A623"/>
+</g>
+</svg>

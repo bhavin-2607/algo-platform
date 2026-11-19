@@ -170,15 +170,12 @@ async def renew_dhan_token(current_user: User = Depends(get_current_user)):
     from app.broker.dhan_auth import get_auth_manager
     mgr = get_auth_manager()
 
-    if not mgr.is_token_valid():
-        raise HTTPException(
-            status_code=400,
-            detail="Current token is expired — RenewToken only works on active tokens. Please paste a new token instead."
-        )
-
     result = mgr.renew_token()
     if not result:
-        raise HTTPException(status_code=502, detail="Token renewal failed")
+        raise HTTPException(
+            status_code=400,
+            detail="Current token is expired or renewal rejected by broker. Please generate and paste a new access token."
+        )
 
     mgr._apply_token(result["access_token"])
     return {"status": "renewed", "expires_at": result.get("expires_at")}

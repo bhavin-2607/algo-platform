@@ -7,13 +7,22 @@ from dataclasses import dataclass
 class OrderRequest:
     symbol: str
     exchange: str
-    direction: str        # "BUY" or "SELL"
-    quantity: int
-    order_type: str       # "MARKET" or "LIMIT"
+    direction: str = "BUY"        # "BUY" or "SELL"
+    quantity: int = 1
+    order_type: str = "MARKET"    # "MARKET" or "LIMIT"
     price: Optional[float] = None
     trigger_price: Optional[float] = None
-    product: str = "MIS"  # MIS, CNC, NRML
+    product: str = "MIS"          # MIS, CNC, NRML
     client_order_id: Optional[str] = None  # stable id for idempotent placement
+    side: Optional[str] = None
+    product_type: Optional[str] = None
+    segment: Optional[str] = None
+
+    def __post_init__(self):
+        if self.side:
+            self.direction = self.side.upper()
+        if self.product_type:
+            self.product = self.product_type.upper()
 
 
 @dataclass
