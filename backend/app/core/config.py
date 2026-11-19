@@ -45,6 +45,38 @@ class Settings(BaseSettings):
             return 30
         return int(v)
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            return "postgresql+asyncpg://algo_user:password@localhost/algo_platform"
+        v = str(v).strip()
+        needs_check = "@postgres:" in v or "@postgres/" in v or "//postgres:" in v or "//postgres/" in v
+        if needs_check:
+            import socket
+            try:
+                socket.getaddrinfo("postgres", 5432)
+            except Exception:
+                for pat in ["@postgres:", "@postgres/", "//postgres:", "//postgres/"]:
+                    v = v.replace(pat, pat.replace("postgres", "localhost"))
+        return v
+
+    @field_validator("REDIS_URL", mode="before")
+    @classmethod
+    def validate_redis_url(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            return "redis://localhost:6379/0"
+        v = str(v).strip()
+        needs_check = "@redis:" in v or "@redis/" in v or "//redis:" in v or "//redis/" in v
+        if needs_check:
+            import socket
+            try:
+                socket.getaddrinfo("redis", 6379)
+            except Exception:
+                for pat in ["@redis:", "@redis/", "//redis:", "//redis/"]:
+                    v = v.replace(pat, pat.replace("redis", "localhost"))
+        return v
+
     # ── Dhan (primary broker) ─────────────────────────────────────────────────
     DHAN_PIN:         str = ""
     DHAN_TOTP_SECRET: str = ""
@@ -86,6 +118,10 @@ class Settings(BaseSettings):
                                 except ValueError:
                                     pass
                             else:
+                                if k == "DATABASE_URL":
+                                    v = self.validate_database_url(v)
+                                elif k == "REDIS_URL":
+                                    v = self.validate_redis_url(v)
                                 setattr(self, k, v)
             except Exception:
                 pass
