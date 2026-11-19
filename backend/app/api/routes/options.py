@@ -414,19 +414,16 @@ async def get_options_live(
     securities = {"NSE_FNO": [int(r["security_id"]) for r in rows]}
     logger.info(f"Options live request: {securities}")
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://api.dhan.co/v2/marketfeed/quote",
-            headers=_dhan_headers(),
-            json=securities,
-            timeout=10,
-        )
-    data = resp.json()
-    logger.info(f"Options live raw response: {str(data)[:500]}")
+    from app.api.routes.market import _dhan_quote
+    from app.core.config import settings
+
+    raw_data = await asyncio.to_thread(
+        _dhan_quote, securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN
+    )
 
     result_map = {}
-    if data.get("status") == "success" and "data" in data:
-        raw = data["data"].get("NSE_FNO", {})
+    if raw_data:
+        raw = raw_data.get("NSE_FNO", {})
         for sid_str, quote in raw.items():
             if isinstance(quote, dict):
                 result_map[str(sid_str)] = _quote_fields(quote)
