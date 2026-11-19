@@ -42,6 +42,8 @@ INSTRUMENTS = {
     "BAJFINANCE": {"name": "Bajaj Finance",              "base": 7200,  "sector": "Finance"},
     "NIFTY50":    {"name": "Nifty 50 Index",             "base": 24800, "sector": "Index"},
     "BANKNIFTY":  {"name": "Bank Nifty Index",           "base": 52000, "sector": "Index"},
+    "SENSEX":     {"name": "BSE SENSEX Index",           "base": 79000, "sector": "Index"},
+    "BANKEX":     {"name": "BSE BANKEX Index",           "base": 57000, "sector": "Index"},
     "AXISBANK":   {"name": "Axis Bank",                  "base": 1050,  "sector": "Banking"},
     "KOTAKBANK":  {"name": "Kotak Mahindra Bank",        "base": 1820,  "sector": "Banking"},
     "LT":         {"name": "Larsen & Toubro",            "base": 3500,  "sector": "Infra"},
@@ -171,6 +173,8 @@ async def get_fib_levels(
 DHAN_SECURITY_IDS = {
     "NIFTY50":    {"security_id": "13",    "exchange_segment": "IDX_I"},
     "BANKNIFTY":  {"security_id": "25",    "exchange_segment": "IDX_I"},
+    "SENSEX":     {"security_id": "51",    "exchange_segment": "IDX_I"},
+    "BANKEX":     {"security_id": "83",    "exchange_segment": "IDX_I"},
     "RELIANCE":   {"security_id": "2885",  "exchange_segment": "NSE_EQ"},
     "TCS":        {"security_id": "11536", "exchange_segment": "NSE_EQ"},
     "INFY":       {"security_id": "1594",  "exchange_segment": "NSE_EQ"},
@@ -369,11 +373,11 @@ async def get_ticker(current_user: User = Depends(get_current_user)):
     if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
         try:
             data = _dhan_ohlc(
-                {"IDX_I": ["13", "25"]},
+                {"IDX_I": ["13", "25", "51"]},
                 settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN,
             )
             ticker = []
-            for sym, sid in [("NIFTY50", "13"), ("BANKNIFTY", "25")]:
+            for sym, sid in [("NIFTY50", "13"), ("BANKNIFTY", "25"), ("SENSEX", "51")]:
                 raw = data.get("IDX_I", {}).get(sid, {})
                 if raw:
                     ltp   = float(raw.get("last_price", 0))
@@ -508,7 +512,7 @@ async def search_instruments_csv(
         eq_df = df[
             ((df["EXCH_ID"] == "NSE") & (df["SERIES"] == "EQ")) |
             ((df["EXCH_ID"] == "BSE") & (df["SERIES"] == "E"))  |
-            ((df["EXCH_ID"] == "NSE") & (df["SEGMENT"] == "I")) |
+            ((df["EXCH_ID"].isin(["NSE", "BSE"])) & (df["SEGMENT"] == "I")) |
             ((df["EXCH_ID"] == "MCX") & (df["INSTRUMENT"].isin(["FUTCOM", "FUTIDX"])))
         ]
 
@@ -519,36 +523,43 @@ async def search_instruments_csv(
         )
         matches = eq_df[mask].head(60)
 
-        # Deduplicate by ISIN — NSE first, then BSE, then MCX
+        # Deduplicate by ISIN / Security ID — NSE first, then BSE, then MCX
         seen_isin = {}
         results   = []
 
         for _, row in matches[matches["EXCH_ID"] == "NSE"].iterrows():
             isin = str(row["ISIN"])
             is_index = str(row.get("SEGMENT") or "") == "I"
+            sec_id = str(int(float(row["SECURITY_ID"])))
+            dedup_key = f"NSE_IDX_{sec_id}" if is_index else (isin if isin and isin != "nan" else f"NSE_{sec_id}")
             entry = {
-                "symbol":           str(row["UNDERLYING_SYMBOL"] or row["DISPLAY_NAME"]).strip() if is_index else str(row["DISPLAY_NAME"]),
+                "symbol":           str(row["UNDERLYING_SYMBOL"] or row["DISPLAY_NAME"]).strip().upper() if is_index else str(row["DISPLAY_NAME"]),
                 "name":             str(row["DISPLAY_NAME"] if is_index else row["SYMBOL_NAME"]),
-                "security_id":      str(int(float(row["SECURITY_ID"]))),
+                "security_id":      sec_id,
                 "exchange_segment": "IDX_I" if is_index else "NSE_EQ",
                 "exchange":         "NSE",
                 "series":           "IDX" if is_index else "EQ",
-                "isin":             isin,
+                "isin":             isin if not is_index else "",
             }
-            seen_isin[isin] = len(results)
+            seen_isin[dedup_key] = len(results)
             results.append(entry)
 
         for _, row in matches[matches["EXCH_ID"] == "BSE"].iterrows():
             isin = str(row["ISIN"])
-            if isin not in seen_isin:
+            is_index = str(row.get("SEGMENT") or "") == "I"
+            sec_id = str(int(float(row["SECURITY_ID"])))
+            sym = str(row["SYMBOL_NAME"] or row["UNDERLYING_SYMBOL"] or row["DISPLAY_NAME"]).strip().upper() if is_index else str(row["DISPLAY_NAME"])
+            dedup_key = f"BSE_IDX_{sec_id}" if is_index else (isin if isin and isin != "nan" else f"BSE_{sec_id}")
+            if dedup_key not in seen_isin:
+                seen_isin[dedup_key] = len(results)
                 results.append({
-                    "symbol":           str(row["DISPLAY_NAME"]),
-                    "name":             str(row["SYMBOL_NAME"]),
-                    "security_id":      str(int(float(row["SECURITY_ID"]))),
-                    "exchange_segment": "BSE_EQ",
+                    "symbol":           sym,
+                    "name":             str(row["DISPLAY_NAME"] if is_index else row["SYMBOL_NAME"]),
+                    "security_id":      sec_id,
+                    "exchange_segment": "IDX_I" if is_index else "BSE_EQ",
                     "exchange":         "BSE",
-                    "series":           "E",
-                    "isin":             isin,
+                    "series":           "IDX" if is_index else "E",
+                    "isin":             "" if is_index else isin,
                 })
 
         for _, row in matches[matches["EXCH_ID"] == "MCX"].iterrows():
@@ -666,6 +677,8 @@ BUNDLED_INSTRUMENTS = [
     {"symbol":"BANKNIFTY",   "name":"Nifty Bank Index",            "security_id":"25",    "exchange":"NSE","segment":"IDX_I","series":"IDX"},
     {"symbol":"FINNIFTY",    "name":"Nifty Financial Services",    "security_id":"27",    "exchange":"NSE","segment":"IDX_I","series":"IDX"},
     {"symbol":"MIDCPNIFTY",  "name":"Nifty Midcap Select",         "security_id":"11",    "exchange":"NSE","segment":"IDX_I","series":"IDX"},
+    {"symbol":"SENSEX",      "name":"BSE SENSEX Index",            "security_id":"51",    "exchange":"BSE","segment":"IDX_I","series":"IDX"},
+    {"symbol":"BANKEX",      "name":"BSE BANKEX Index",            "security_id":"83",    "exchange":"BSE","segment":"IDX_I","series":"IDX"},
 ]
 
 

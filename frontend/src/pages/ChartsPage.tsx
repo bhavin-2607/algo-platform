@@ -12,7 +12,7 @@ const TIMEFRAMES = [
 ];
 const INDICATORS = ["MA9","MA21","MA50","Volume","BB"];
 
-const DEFAULT_WATCHLIST = ["RELIANCE","TCS","INFY","HDFCBANK","NIFTY50","BANKNIFTY"];
+const DEFAULT_WATCHLIST = ["RELIANCE","TCS","INFY","HDFCBANK","NIFTY50","BANKNIFTY","SENSEX"];
 
 export default function ChartsPage() {
   const [symbol,     setSymbol]     = useState("RELIANCE");

@@ -90,6 +90,8 @@ function getColColor(value: any, colorRules: string | null): string {
 const SECURITY_IDS: Record<string, {security_id:string, segment:string}> = {
   "NIFTY50":    {security_id:"13",    segment:"IDX_I"},
   "BANKNIFTY":  {security_id:"25",    segment:"IDX_I"},
+  "SENSEX":     {security_id:"51",    segment:"IDX_I"},
+  "BANKEX":     {security_id:"83",    segment:"IDX_I"},
   "RELIANCE":   {security_id:"2885",  segment:"NSE_EQ"},
   "TCS":        {security_id:"11536", segment:"NSE_EQ"},
   "INFY":       {security_id:"1594",  segment:"NSE_EQ"},

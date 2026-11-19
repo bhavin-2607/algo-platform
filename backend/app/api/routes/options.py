@@ -23,6 +23,8 @@ UNDERLYINGS = {
     "BANKNIFTY":  {"scrip": 25,  "seg": "IDX_I", "lot_size": 30},
     "FINNIFTY":   {"scrip": 27,  "seg": "IDX_I", "lot_size": 40},
     "MIDCPNIFTY": {"scrip": 11,  "seg": "IDX_I", "lot_size": 75},
+    "SENSEX":     {"scrip": 51,  "seg": "IDX_I", "lot_size": 20},
+    "BANKEX":     {"scrip": 83,  "seg": "IDX_I", "lot_size": 30},
 }
 
 def _dhan_headers():
