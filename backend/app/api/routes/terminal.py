@@ -1637,9 +1637,19 @@ async def manual_algo_order(
     order_qty = payload.quantity or row.quantity
     order_price = payload.price or 0.0
 
-    fill = await algo_engine._execute_order(row, side=side, price=order_price, db=db)
-    if not fill:
-        raise HTTPException(status_code=502, detail="Broker order execution failed")
+    from app.core.trading_mode import LiveTradingError
+
+    try:
+        fill = await algo_engine._execute_order(row, side=side, price=order_price, db=db)
+        if not fill:
+            raise HTTPException(status_code=502, detail="Broker order execution failed or was rejected")
+    except LiveTradingError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Manual algo order failed for {row.symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
 
     if side == "BUY":
         row.buy_price = fill

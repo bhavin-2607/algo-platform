@@ -3062,7 +3062,6 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
   const [orderType,setOrderType]= useState<"MARKET"|"LIMIT">("MARKET");
   const [product,  setProduct]  = useState<"INTRADAY"|"CNC">("INTRADAY");
   const [price,    setPrice]    = useState(prefillPrice ? String(prefillPrice) : "");
-  const [confirm,  setConfirm]  = useState(false);
 
   const orderMutation = useMutation({
     mutationFn: () => api.post("/terminal/order", {
@@ -3086,7 +3085,6 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
       const msg = Array.isArray(d) ? d.map((x:any) => x.msg || JSON.stringify(x)).join(", ") : typeof d === "string" ? d : d?.error_message || JSON.stringify(d) || "Order failed";
       toast.error(msg);
       notifyError("ORDER REJECTED", `${symbol} ${side}: ${msg}`);
-      setConfirm(false);
     },
   });
 
@@ -3212,51 +3210,20 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
             </div>
           </div>
 
-          {/* Confirm step */}
-          {!confirm ? (
-            <button
-              onClick={() => setConfirm(true)}
-              disabled={!qty || parseInt(qty) < 1}
-              style={{
-                width:"100%", padding:"12px", fontSize:13, fontWeight:700,
-                cursor:"pointer", fontFamily:"var(--font)", border:"none",
-                background: side==="BUY" ? "var(--green)" : "var(--red)",
-                color: "#000",
-                opacity: !qty || parseInt(qty) < 1 ? 0.5 : 1,
-              }}>
-              {side} {qty || 0} × {symbol}
-            </button>
-          ) : (
-            <div>
-              <div style={{
-                padding:"10px 12px", marginBottom:10, fontSize:12,
-                background:"rgba(255,208,96,0.1)",
-                border:"1px solid rgba(255,208,96,0.3)",
-                color:"var(--yellow)", textAlign:"center",
-              }}>
-                Confirm {side} {qty} shares of {symbol}
-                {orderType==="LIMIT" ? ` @ ₹${price}` : " at MARKET price"}?
-              </div>
-              <div style={{display:"flex", gap:8}}>
-                <button
-                  className={`auth-btn${orderMutation.isPending?" loading":""}`}
-                  onClick={() => orderMutation.mutate()}
-                  disabled={orderMutation.isPending}
-                  style={{
-                    flex:1,
-                    background: side==="BUY" ? "var(--green)" : "var(--red)",
-                    color:"#000", border:"none",
-                  }}>
-                  {orderMutation.isPending ? "PLACING..." : `CONFIRM ${side}`}
-                </button>
-                <button onClick={() => setConfirm(false)} style={{
-                  padding:"12px 16px", cursor:"pointer", fontFamily:"var(--font)",
-                  background:"transparent", border:"1px solid var(--border)",
-                  color:"var(--muted)", fontSize:12,
-                }}>CANCEL</button>
-              </div>
-            </div>
-          )}
+          {/* Submit Order */}
+          <button
+            className={`auth-btn${orderMutation.isPending ? " loading" : ""}`}
+            onClick={() => orderMutation.mutate()}
+            disabled={!qty || parseInt(qty) < 1 || orderMutation.isPending}
+            style={{
+              width:"100%", padding:"12px", fontSize:13, fontWeight:700,
+              cursor:"pointer", fontFamily:"var(--font)", border:"none",
+              background: side==="BUY" ? "var(--green)" : "var(--red)",
+              color: "#000",
+              opacity: !qty || parseInt(qty) < 1 || orderMutation.isPending ? 0.5 : 1,
+            }}>
+            {orderMutation.isPending ? "PLACING ORDER..." : `${side} ${qty || 0} × ${symbol}`}
+          </button>
         </div>
       </div>
     </div>
