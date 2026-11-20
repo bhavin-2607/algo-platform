@@ -285,7 +285,13 @@ class BsaAlgoEngine:
             )
         )
         ba = result.scalars().first()
-        adapter = get_broker_adapter(ba) if ba else None
+        adapter = None
+        if ba:
+            try:
+                adapter = get_broker_adapter(ba)
+            except Exception as e:
+                logger.info(f"Live broker adapter not available ({e}); falling back to simulated paper execution.")
+                adapter = None
 
         # Resolve Dhan security ID and exchange
         security_id = str(row.symbol)
