@@ -201,7 +201,14 @@ class BsaAlgoEngine:
 
             if entry_triggered:
                 # Execute Market BUY
-                fill_price = await self._execute_order(row, side="BUY", price=ltp, db=db)
+                try:
+                    fill_price = await self._execute_order(row, side="BUY", price=ltp, db=db)
+                except Exception as e:
+                    row.status = "REJECTED"
+                    row.last_signal = f"ERR: {str(e)[:40]}"
+                    row.is_algo_active = False
+                    await db.commit()
+                    return
                 if fill_price:
                     row.buy_price = fill_price
                     row.entry_level = active_buy_price if active_buy_price > 0 else fill_price
@@ -238,7 +245,13 @@ class BsaAlgoEngine:
 
                 if hit_target or hit_sl:
                     reason = "TARGET HIT" if hit_target else "STOP LOSS HIT"
-                    exit_fill = await self._execute_order(row, side="SELL", price=ltp, db=db)
+                    try:
+                        exit_fill = await self._execute_order(row, side="SELL", price=ltp, db=db)
+                    except Exception as e:
+                        row.last_signal = f"ERR: {str(e)[:40]}"
+                        row.is_algo_active = False
+                        await db.commit()
+                        return
                     if exit_fill:
                         row.trades_completed += 1
                         if row.buy_price:
@@ -336,8 +349,11 @@ class BsaAlgoEngine:
                 )
                 master_info = fanout_res.get("master") or {}
                 if master_info.get("status") == "REJECTED":
-                    logger.error(f"[ALGO EXEC ERROR] Dhan rejected {side} order for {row.symbol}: {master_info.get('error_message')}")
-                    return None
+                    err_msg = master_info.get("error_message") or "Broker rejected order"
+                    logger.error(f"[ALGO EXEC ERROR] Dhan rejected {side} order for {row.symbol}: {err_msg}")
+                    from app.core.alerts import raise_alert
+                    await raise_alert("ALGO EXEC ERROR", f"Dhan rejected {side} order for {row.symbol}: {err_msg}")
+                    raise RuntimeError(f"Dhan rejected {side} order for {row.symbol}: {err_msg}")
                 row.last_order_id = master_info.get("broker_order_id") or f"DHAN-{int(asyncio.get_event_loop().time()*1000)}"
                 return fill_price
             else:
@@ -346,7 +362,7 @@ class BsaAlgoEngine:
                 return fill_price
         except Exception as e:
             logger.error(f"[ALGO EXEC ERROR] Failed placing {side} order for {row.symbol}: {e}")
-            return None
+            raise
 
 
 algo_engine = BsaAlgoEngine.get_instance()

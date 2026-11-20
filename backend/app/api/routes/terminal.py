@@ -1817,6 +1817,31 @@ async def import_dhan_position_to_algo(
 
 
 
+@router.get("/alerts")
+async def get_recent_alerts(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    """Return recent operator and execution alerts from Redis."""
+    import json
+    from app.core.redis_client import get_redis
+    from app.core.alerts import ALERTS_KEY
+
+    try:
+        redis = get_redis()
+        raw_alerts = await redis.lrange(ALERTS_KEY, 0, min(100, max(1, limit)) - 1)
+        results = []
+        for raw in (raw_alerts or []):
+            try:
+                results.append(json.loads(raw))
+            except Exception:
+                continue
+        return results
+    except Exception as e:
+        logger.warning(f"Could not read alerts from redis: {e}")
+        return []
+
+
 class ManualOrderRequest(BaseModel):
     symbol:           str
     security_id:      str

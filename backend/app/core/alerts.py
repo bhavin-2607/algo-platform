@@ -14,7 +14,9 @@ ALERTS_KEY = "alerts:recent"
 
 async def raise_alert(kind: str, message: str) -> None:
     logger.error("ALERT %s: %s", kind, message)
+    import uuid
     payload = json.dumps({
+        "id": f"{int(datetime.now(timezone.utc).timestamp()*1000)}-{uuid.uuid4().hex[:6]}",
         "kind": kind,
         "message": message,
         "at": datetime.now(timezone.utc).isoformat(),

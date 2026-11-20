@@ -473,7 +473,8 @@ export default function TerminalPage() {
       qc.invalidateQueries({ queryKey: ["algo-rows"] });
     },
     onError: (err: any) => {
-      const msg = err?.response?.data?.detail || "Manual order execution failed";
+      const d = err?.response?.data?.detail;
+      const msg = Array.isArray(d) ? d.map((x: any) => x.msg || JSON.stringify(x)).join(", ") : typeof d === "string" ? d : d?.error_message || JSON.stringify(d) || "Manual order execution failed";
       toast.error(msg);
       notifyError("MANUAL ORDER FAILED", msg);
     },
