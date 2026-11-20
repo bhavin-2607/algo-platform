@@ -23,7 +23,7 @@ import {
   ArrowDownRight,
   Info,
 } from "lucide-react";
-import { useNotificationStore, notifyMarket } from "@/store/notifications";
+import { useNotificationStore, notifyMarket, notifyError } from "@/store/notifications";
 
 function TopNavClock() {
   const [time, setTime] = useState(() => {
@@ -553,6 +553,36 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     refetchInterval: 8_000,
   });
   const tokenOffline = dhanStatus && !dhanStatus.valid;
+
+  // System alerts poller for background execution and broker rejections
+  const lastAlertIdRef = useRef<string | null>(null);
+  const { data: systemAlerts } = useQuery({
+    queryKey: ["system-alerts"],
+    queryFn: () => api.get("/terminal/alerts?limit=10").then((r) => r.data).catch(() => []),
+    refetchInterval: 5_000,
+  });
+
+  useEffect(() => {
+    if (!systemAlerts || !Array.isArray(systemAlerts) || systemAlerts.length === 0) return;
+    const latest = systemAlerts[0];
+    if (!latest || !latest.id) return;
+    if (lastAlertIdRef.current === null) {
+      lastAlertIdRef.current = latest.id;
+      return;
+    }
+    if (latest.id !== lastAlertIdRef.current) {
+      const newAlerts: any[] = [];
+      for (const a of systemAlerts) {
+        if (a.id === lastAlertIdRef.current) break;
+        newAlerts.push(a);
+      }
+      lastAlertIdRef.current = latest.id;
+      newAlerts.reverse().forEach((a: any) => {
+        toast.error(a.message);
+        notifyError(a.kind || "SYSTEM ALERT", a.message);
+      });
+    }
+  }, [systemAlerts]);
 
   // Market hours watchdog for 9:15 AM (Open) and 3:30 PM (Closed) IST chimes
   useEffect(() => {
