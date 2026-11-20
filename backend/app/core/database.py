@@ -61,29 +61,38 @@ async def init_db():
                 symbol ILIKE '%OPT%' OR symbol ILIKE '%FUT%'
               )
         """)
-        # Migrate legacy BSA target types to Fibonacci T1..T3
+        # Migrate target types to TGT1..TGT5
         await conn.exec_driver_sql("""
             UPDATE bsa_algo_rows
-            SET target_type = 'T1'
-            WHERE target_type = 'TGT1' OR target_type IS NULL OR target_type = ''
+            SET target_type = 'TGT1'
+            WHERE target_type IN ('T1', 'T11.8', 'T11_8') OR target_type IS NULL OR target_type = ''
         """)
         await conn.exec_driver_sql("""
             UPDATE bsa_algo_rows
-            SET target_type = 'T2'
-            WHERE target_type = 'TGT2'
+            SET target_type = 'TGT2'
+            WHERE target_type IN ('T2', 'T23.8', 'T23_8')
         """)
         await conn.exec_driver_sql("""
             UPDATE bsa_algo_rows
-            SET target_type = 'T3'
-            WHERE target_type = 'TGT3'
+            SET target_type = 'TGT3'
+            WHERE target_type IN ('T3', 'T38.2', 'T38_2')
         """)
-        # Remove legacy BSA formula columns
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'TGT4'
+            WHERE target_type IN ('T4', 'T50')
+        """)
+        await conn.exec_driver_sql("""
+            UPDATE bsa_algo_rows
+            SET target_type = 'TGT5'
+            WHERE target_type IN ('T5', 'T61.8', 'T61_8')
+        """)
+        # Remove legacy Fibonacci formula columns
         await conn.exec_driver_sql("""
             DELETE FROM terminal_columns
             WHERE name IN (
-                'INTRASIGNAL', 'OHLSIG', 'S-SIGNAL', 'DIFF',
-                'BT1', 'BT2', 'BT3', 'ST1', 'ST2', 'ST3',
-                'TGT1', 'TGT2', 'TGT3', 'P.CLOSE', 'P.HIGH', 'P.LOW'
+                'T11.8', 'T23.8', 'T38.2', 'T50', 'T61.8', 'T78.6',
+                'T100', 'T1.618', 'T2.618', 'HCG', 'OCG', 'LCG', 'SSIG'
             )
         """)
         await conn.exec_driver_sql(

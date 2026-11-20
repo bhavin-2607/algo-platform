@@ -15,6 +15,7 @@ import { useAuthStore } from "@/store/auth";
 import { notifyOrder, notifyError } from "@/store/notifications";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TerminalRow {
@@ -223,10 +224,7 @@ export default function TerminalPage() {
 
   const visibleCols = useMemo(() => {
     return (allCols ?? [])
-      .filter((c: any) => {
-        const k = (c.col_key || c.name || "").toLowerCase().trim();
-        return c.is_visible && k !== "p_close" && k !== "p.close" && k !== "prev close";
-      })
+      .filter((c: any) => c.is_visible)
       .sort((a: any, b: any) => (a.col_order ?? 0) - (b.col_order ?? 0));
   }, [allCols]);
 
@@ -244,7 +242,7 @@ export default function TerminalPage() {
     const seen = new Set<string>();
     return forBook.filter((c: any) => {
       const key = (c.col_key || c.name || "").toLowerCase().trim();
-      if (!key || key === "symbol" || key === "p_close" || key === "p.close" || key === "prev close" || seen.has(key)) return false;
+      if (!key || key === "symbol" || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
@@ -1344,9 +1342,9 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm("Apply Fibonacci Formula batch to ALL tables (Equity, Options, MCX)?")) {
-                    api.post("/terminal/columns/apply-batch", { batch: "Fibonacci Formula", book: "all" })
-                      .then(() => { toast.success("Applied Fibonacci Formula batch to all tables"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                  if (confirm("Apply Standard Formula batch to ALL tables (Equity, Options, MCX)?")) {
+                    api.post("/terminal/columns/apply-batch", { batch: "Standard Formulas", book: "all" })
+                      .then(() => { toast.success("Applied Standard Formula batch to all tables"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
                       .catch(() => toast.error("Failed to apply batch"));
                   }
                 }}
@@ -1362,9 +1360,9 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm(`Apply Fibonacci Formula batch to ${form.book.toUpperCase()} only?`)) {
-                    api.post("/terminal/columns/apply-batch", { batch: "Fibonacci Formula", book: form.book })
-                      .then(() => { toast.success(`Applied Fibonacci Formula batch to ${form.book.toUpperCase()}`); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                  if (confirm(`Apply Standard Formula batch to ${form.book.toUpperCase()} only?`)) {
+                    api.post("/terminal/columns/apply-batch", { batch: "Standard Formulas", book: form.book })
+                      .then(() => { toast.success(`Applied Standard Formula batch to ${form.book.toUpperCase()}`); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
                       .catch(() => toast.error("Failed to apply batch"));
                   }
                 }}
@@ -1451,7 +1449,9 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                       }}
                       title={isVis ? `Click to hide ${col.name}` : `Click to show ${col.name}`}
                     >
-                      <span>{isVis ? "●" : "○"}</span>
+                      <span style={{ display: "inline-flex", alignItems: "center" }}>
+                        {isVis ? <Eye size={12} style={{ color: "var(--green)" }} /> : <EyeOff size={12} style={{ color: "var(--muted)" }} />}
+                      </span>
                       <span>{columnTitle(col.name)}</span>
                     </button>
                     <button
@@ -1688,11 +1688,11 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
                       title={col.is_visible ? "Hide" : "Show"}
                       style={{background:"transparent",border:"none",
                         color:col.is_visible?"var(--green)":"var(--muted)",
-                        cursor:"pointer",fontSize:11,padding:0}}>
-                      {col.is_visible ? "●" : "○"}
+                        cursor:"pointer",fontSize:11,padding:0,display:"inline-flex",alignItems:"center"}}>
+                      {col.is_visible ? <Eye size={12} style={{ color: "var(--green)" }} /> : <EyeOff size={12} style={{ color: "var(--muted)" }} />}
                     </button>
                     <button
-                      onClick={() => { if(confirm(`Remove "${col.name}" column?`)) deleteMutation.mutate(col.id); }}
+                      onClick={() => deleteMutation.mutate(col.id)}
                       title="Remove column"
                       style={{background:"transparent",border:"none",
                         color:"rgba(255,68,102,0.5)",cursor:"pointer",
@@ -1715,48 +1715,36 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
 }
 
 const TARGET_COLS = [
-  { key: "T1",  aliasKey: "t1",  altKey: "t11_8", label: "T1",  pctEquity: "0.118%",  pctOption: "11.8%",  color: "var(--green)" },
-  { key: "T2",  aliasKey: "t2",  altKey: "t23_8", label: "T2",  pctEquity: "0.238%",  pctOption: "23.8%",  color: "var(--green)" },
-  { key: "T3",  aliasKey: "t3",  altKey: "t38_2", label: "T3",  pctEquity: "0.382%",  pctOption: "38.2%",  color: "var(--green)" },
-  { key: "T4",  aliasKey: "t4",  altKey: "t50",   label: "T4",  pctEquity: "0.500%",  pctOption: "50.0%",  color: "var(--green)" },
-  { key: "T5",  aliasKey: "t5",  altKey: "t61_8", label: "T5",  pctEquity: "0.618%",  pctOption: "61.8%",  color: "var(--green)" },
-  { key: "T6",  aliasKey: "t6",  altKey: "t78_6", label: "T6",  pctEquity: "0.786%",  pctOption: "78.6%",  color: "var(--green)" },
-  { key: "T7",  aliasKey: "t7",  altKey: "t100",  label: "T7",  pctEquity: "1.000%",  pctOption: "100.0%", color: "var(--green)" },
-  { key: "T8",  aliasKey: "t8",  altKey: "t1_618", label: "T8", pctEquity: "1.618%", pctOption: "161.8%", color: "var(--green)" },
-  { key: "T9",  aliasKey: "t9",  altKey: "t2_618", label: "T9", pctEquity: "2.618%", pctOption: "261.8%", color: "var(--green)" },
+  { key: "TGT1", aliasKey: "tgt1", altKey: "t1", label: "TGT1", color: "var(--green)" },
+  { key: "TGT2", aliasKey: "tgt2", altKey: "t2", label: "TGT2", color: "var(--green)" },
+  { key: "TGT3", aliasKey: "tgt3", altKey: "t3", label: "TGT3", color: "var(--green)" },
+  { key: "TGT4", aliasKey: "tgt4", altKey: "t4", label: "TGT4", color: "var(--green)" },
+  { key: "TGT5", aliasKey: "tgt5", altKey: "t5", label: "TGT5", color: "var(--green)" },
 ];
 
 function isTargetArmed(targetType: string, tcKey: string): boolean {
-  const tt = (targetType || "T1").toUpperCase().trim();
+  const tt = (targetType || "TGT1").toUpperCase().trim();
   const k = tcKey.toUpperCase().trim();
   if (tt === k) return true;
   const map: Record<string, string> = {
-    "T11.8": "T1", "T11_8": "T1", "TGT1": "T1",
-    "T23.8": "T2", "T23_8": "T2", "TGT2": "T2",
-    "T38.2": "T3", "T38_2": "T3", "TGT3": "T3",
-    "T50": "T4",
-    "T61.8": "T5", "T61_8": "T5",
-    "T78.6": "T6", "T78_6": "T6",
-    "T100": "T7",
-    "T1.618": "T8", "T1_618": "T8",
-    "T2.618": "T9", "T2_618": "T9",
+    "T1": "TGT1", "TGT1": "TGT1", "T11.8": "TGT1", "T11_8": "TGT1",
+    "T2": "TGT2", "TGT2": "TGT2", "T23.8": "TGT2", "T23_8": "TGT2",
+    "T3": "TGT3", "TGT3": "TGT3", "T38.2": "TGT3", "T38_2": "TGT3",
+    "T4": "TGT4", "TGT4": "TGT4", "T50": "TGT4",
+    "T5": "TGT5", "TGT5": "TGT5", "T61.8": "TGT5", "T61_8": "TGT5",
   };
-  return map[tt] === k;
+  return map[tt] === map[k];
 }
 
 function normalizeTargetType(targetType: string): string {
-  const tt = (targetType || "T1").toUpperCase().trim();
+  const tt = (targetType || "TGT1").toUpperCase().trim();
   if (tt === "CUSTOM" || tt === "KILL") return tt;
   const map: Record<string, string> = {
-    "T11.8": "T1", "T11_8": "T1", "TGT1": "T1",
-    "T23.8": "T2", "T23_8": "T2", "TGT2": "T2",
-    "T38.2": "T3", "T38_2": "T3", "TGT3": "T3",
-    "T50": "T4",
-    "T61.8": "T5", "T61_8": "T5",
-    "T78.6": "T6", "T78_6": "T6",
-    "T100": "T7",
-    "T1.618": "T8", "T1_618": "T8",
-    "T2.618": "T9", "T2_618": "T9",
+    "T1": "TGT1", "TGT1": "TGT1", "T11.8": "TGT1", "T11_8": "TGT1",
+    "T2": "TGT2", "TGT2": "TGT2", "T23.8": "TGT2", "T23_8": "TGT2",
+    "T3": "TGT3", "TGT3": "TGT3", "T38.2": "TGT3", "T38_2": "TGT3",
+    "T4": "TGT4", "TGT4": "TGT4", "T50": "TGT4",
+    "T5": "TGT5", "TGT5": "TGT5", "T61.8": "TGT5", "T61_8": "TGT5",
   };
   return map[tt] || tt;
 }
@@ -1765,15 +1753,11 @@ function normalizeEntryType(entryType: string): string {
   const et = (entryType || "FORMULA").toUpperCase().trim();
   if (et === "CUSTOM" || et === "FORMULA") return et;
   const map: Record<string, string> = {
-    "T11.8": "T1", "T11_8": "T1", "TGT1": "T1",
-    "T23.8": "T2", "T23_8": "T2", "TGT2": "T2",
-    "T38.2": "T3", "T38_2": "T3", "TGT3": "T3",
-    "T50": "T4",
-    "T61.8": "T5", "T61_8": "T5",
-    "T78.6": "T6", "T78_6": "T6",
-    "T100": "T7",
-    "T1.618": "T8", "T1_618": "T8",
-    "T2.618": "T9", "T2_618": "T9",
+    "T1": "TGT1", "TGT1": "TGT1", "T11.8": "TGT1", "T11_8": "TGT1",
+    "T2": "TGT2", "TGT2": "TGT2", "T23.8": "TGT2", "T23_8": "TGT2",
+    "T3": "TGT3", "TGT3": "TGT3", "T38.2": "TGT3", "T38_2": "TGT3",
+    "T4": "TGT4", "TGT4": "TGT4", "T50": "TGT4",
+    "T5": "TGT5", "TGT5": "TGT5", "T61.8": "TGT5", "T61_8": "TGT5",
   };
   return map[et] || et;
 }
@@ -2066,7 +2050,7 @@ function ImportDhanPositionsModal({
   );
 }
 
-// ── Algo Trading Window Table (Fibonacci Automation + Custom Target) ─────────
+// ── Algo Trading Window Table (Standard Formula Automation + Custom Target) ─────────
 function AlgoWindowTable({
   algoRows,
   isPaper = true,
@@ -2292,15 +2276,11 @@ function AlgoWindowTable({
                             <option value="FORMULA">
                               ENTRY (FORMULA)
                             </option>
-                            {TARGET_COLS.map((tc) => {
-                              const sign = r.signal === "SELL" ? "-" : "+";
-                              const pct = isOpt ? tc.pctOption : tc.pctEquity;
-                              return (
-                                <option key={tc.key} value={tc.key}>
-                                  {`${tc.label} (${sign}${pct})`}
-                                </option>
-                              );
-                            })}
+                            {TARGET_COLS.map((tc) => (
+                              <option key={tc.key} value={tc.key}>
+                                {tc.label}
+                              </option>
+                            ))}
                             <option value="CUSTOM">
                               CUSTOM BUY PRICE
                             </option>
@@ -2434,15 +2414,11 @@ function AlgoWindowTable({
                         }}
                         title="Select active target level or trigger instant Kill Switch"
                       >
-                        {TARGET_COLS.map((tc) => {
-                          const sign = r.signal === "SELL" ? "-" : "+";
-                          const pct = isOpt ? tc.pctOption : tc.pctEquity;
-                          return (
-                            <option key={tc.key} value={tc.key}>
-                              {`${tc.label} (${sign}${pct})`}
-                            </option>
-                          );
-                        })}
+                        {TARGET_COLS.map((tc) => (
+                          <option key={tc.key} value={tc.key}>
+                            {tc.label}
+                          </option>
+                        ))}
                         <option value="CUSTOM">CUSTOM TARGET</option>
                         <option value="KILL" style={{ color: "var(--red)", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
                       </select>

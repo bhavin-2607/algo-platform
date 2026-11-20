@@ -46,20 +46,19 @@ class SafeExprTests(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertIn("UP", msg)
 
-    def test_option_t_percent_is_one_hundred_times_equity(self):
-        from app.strategy.excel_formula_engine import formula_for_book, scale_option_percents
-        scaled = scale_option_percents("=(price*0.118%)")
-        self.assertIn("11.8%", formula_for_book("T11.8", "=(price*0.118%)", "option"))
-        self.assertIn("0.118%", formula_for_book("T11.8", "=(price*0.118%)", "equity"))
-        self.assertIn("0.5%", formula_for_book("SL", "=(price*0.5%)", "option"))
-        self.assertIn("11.8%", scaled)
-        self.assertNotIn("0.118%", scaled)
+    def test_standard_formula_preservation_across_books(self):
+        from app.strategy.excel_formula_engine import formula_for_book
+        formula = '=IFERROR(IF(intrasignal="BUY",bt1,IF(intrasignal="SELL",st1,"")),"")'
+        self.assertEqual(formula_for_book("TGT1", formula, "option"), formula)
+        self.assertEqual(formula_for_book("TGT1", formula, "equity"), formula)
+        self.assertEqual(formula_for_book("TGT1", formula, "mcx"), formula)
 
     def test_excel_entry_formula_accepts_signal(self):
         formula = (
-            '=IF(AND(open=0,high=0,low=0)," ",'
-            'IF(signal="BUY",ROUND(((SQRT(open)+0.015)^2),0),'
-            'IF(signal="SELL",ROUND(((SQRT(open)-0.015)^2),0)," ")))'
+            '=IF(AND(open=0,high=0,low=0),"",'
+            'IF(ltp>open,ROUND(((SQRT(open)+0.025)^2),0),'
+            'IF(ltp<open,ROUND(((SQRT(open)-0.025)^2),0),'
+            'IF(open<>high<>low,""))))'
         )
         ok, msg = validate_formula_excel(formula)
         self.assertTrue(ok, msg)

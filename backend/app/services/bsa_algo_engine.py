@@ -1,13 +1,13 @@
 """
-Algo Trading Engine (Fibonacci Formula Batch)
-=============================================
-Automated execution engine powered by the Fibonacci formula batch.
+Algo Trading Engine (Standard Formula Batch)
+============================================
+Automated execution engine powered by the standard 47-column formula batch.
 
 Rules:
   - ALGO ON: Automated execution is active.
   - ALGO OFF: Manual trading mode (automated trading paused, manual BUY/SELL active).
   - ALGO BUY: When signal == "BUY" -> Enter BUY at Market Price.
-  - Targets: Default target is T11.8 (or selected target). Exit on reaching target or SL
+  - Targets: Default target is TGT1 (or selected target). Exit on reaching target or SL
     (completing 1 trade = 1 buy + 1 sell).
   - Number of trades: 1 to 5 only.
   - Trade repeat rule: If number of trades > 1, repeat trade ONLY if price returns to entry price;
@@ -30,7 +30,7 @@ from app.models.broker import BrokerAccount
 from app.broker.factory import get_broker_adapter
 from app.broker.base import OrderRequest
 from app.strategy.excel_formula_engine import evaluate_columns_in_order, formula_for_book
-from app.models.terminal_column import FIBONACCI_FORMULA_COLUMNS
+from app.models.terminal_column import STANDARD_FORMULA_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def is_option_symbol(symbol: str, segment: Optional[str] = None) -> bool:
 
 class BsaAlgoEngine:
     """
-    Evaluates market ticks against active Fibonacci algo rows and executes orders.
+    Evaluates market ticks against active algo rows and executes orders.
     """
     _instance: Optional["BsaAlgoEngine"] = None
 
@@ -87,50 +87,40 @@ class BsaAlgoEngine:
 
         is_option = any(r.segment in ("NSE_FNO", "NFO") for r in active_rows) or is_option_symbol(symbol_upper)
 
-        # Calculate live Fibonacci formulas for this symbol and tick
-        fib_cols = [
+        # Calculate live standard formulas for this symbol and tick
+        formula_cols = [
             {**c, "formula": formula_for_book(c["name"], c["formula"], "option" if is_option else "equity")}
-            for c in FIBONACCI_FORMULA_COLUMNS
+            for c in STANDARD_FORMULA_COLUMNS
         ]
 
-        fib_vals = evaluate_columns_in_order(fib_cols, tick)
+        vals = evaluate_columns_in_order(formula_cols, tick)
         open_val = float(tick.get("open") or ltp or 100.0)
 
-        # Fibonacci calculations (Entry SQRT offset 0.015, SL 0.5%, Targets T1 - T9)
-        fib_sig = str(fib_vals.get("signal") or fib_vals.get("ssig") or "BUY").upper()
-        fib_is_buy = (fib_sig == "BUY")
-        fib_sign = 1 if fib_is_buy else -1
-        fib_mult = 100.0 if is_option else 1.0
-        fib_ent = float(fib_vals.get("entry") or round((math.sqrt(open_val) + (0.015 if fib_is_buy else -0.015))**2, 2))
-        fib_sl = float(fib_vals.get("sl") or round(fib_ent * (0.995 if fib_is_buy else 1.005), 2))
+        # Standard trading calculations (Entry SQRT offset 0.025 rounded to 0, SL 0.5%, Targets TGT1 - TGT5)
+        calc_sig = str(vals.get("intrasignal") or vals.get("supersignal") or vals.get("ohlsignal") or vals.get("signal") or "BUY").upper()
+        calc_is_buy = (calc_sig == "BUY")
+        calc_ent = float(vals.get("entry") or round((math.sqrt(open_val) + (0.025 if calc_is_buy else -0.025))**2, 0))
+        calc_sl = float(vals.get("sl") or round(calc_ent * (0.995 if calc_is_buy else 1.005), 2))
 
-        t1 = float(fib_vals.get("t11.8") or fib_vals.get("t11_8") or round(fib_ent * (1 + fib_sign * 0.00118 * fib_mult), 2))
-        t2 = float(fib_vals.get("t23.8") or fib_vals.get("t23_8") or round(fib_ent * (1 + fib_sign * 0.00238 * fib_mult), 2))
-        t3 = float(fib_vals.get("t38.2") or fib_vals.get("t38_2") or round(fib_ent * (1 + fib_sign * 0.00382 * fib_mult), 2))
-        t4 = float(fib_vals.get("t50") or round(fib_ent * (1 + fib_sign * 0.005 * fib_mult), 2))
-        t5 = float(fib_vals.get("t61.8") or fib_vals.get("t61_8") or round(fib_ent * (1 + fib_sign * 0.00618 * fib_mult), 2))
-        t6 = float(fib_vals.get("t78.6") or fib_vals.get("t78_6") or round(fib_ent * (1 + fib_sign * 0.00786 * fib_mult), 2))
-        t7 = float(fib_vals.get("t100") or round(fib_ent * (1 + fib_sign * 0.01 * fib_mult), 2))
-        t8 = float(fib_vals.get("t1.618") or fib_vals.get("t1_618") or round(fib_ent * (1 + fib_sign * 0.01618 * fib_mult), 2))
-        t9 = float(fib_vals.get("t2.618") or fib_vals.get("t2_618") or round(fib_ent * (1 + fib_sign * 0.02618 * fib_mult), 2))
+        t1 = float(vals.get("tgt1") or vals.get("bt1" if calc_is_buy else "st1") or 0.0)
+        t2 = float(vals.get("tgt2") or vals.get("bt2" if calc_is_buy else "st2") or 0.0)
+        t3 = float(vals.get("tgt3") or vals.get("bt3" if calc_is_buy else "st3") or 0.0)
+        t4 = float(vals.get("tgt4") or vals.get("bt4" if calc_is_buy else "st4") or 0.0)
+        t5 = float(vals.get("tgt5") or vals.get("bt5" if calc_is_buy else "st5") or 0.0)
 
         for row in active_rows:
             try:
                 await self._process_row(
                     row=row,
                     ltp=ltp,
-                    signal=fib_sig,
-                    entry_calc=fib_ent,
-                    sl_calc=fib_sl,
+                    signal=calc_sig,
+                    entry_calc=calc_ent,
+                    sl_calc=calc_sl,
                     t1=t1,
                     t2=t2,
                     t3=t3,
                     t4=t4,
                     t5=t5,
-                    t6=t6,
-                    t7=t7,
-                    t8=t8,
-                    t9=t9,
                     db=db,
                 )
             except Exception as e:
@@ -148,47 +138,25 @@ class BsaAlgoEngine:
         t3: float = 0.0,
         t4: float = 0.0,
         t5: float = 0.0,
-        t6: float = 0.0,
-        t7: float = 0.0,
-        t8: float = 0.0,
-        t9: float = 0.0,
         db: AsyncSession = None,
     ):
         target_map = {
             "T1":     t1,
-            "T11.8":  t1,
-            "T11_8":  t1,
             "TGT1":   t1,
             "T2":     t2,
-            "T23.8":  t2,
-            "T23_8":  t2,
             "TGT2":   t2,
             "T3":     t3,
-            "T38.2":  t3,
-            "T38_2":  t3,
             "TGT3":   t3,
             "T4":     t4,
-            "T50":    t4,
+            "TGT4":   t4,
             "T5":     t5,
-            "T61.8":  t5,
-            "T61_8":  t5,
-            "T6":     t6,
-            "T78.6":  t6,
-            "T78_6":  t6,
-            "T7":     t7,
-            "T100":   t7,
-            "T8":     t8,
-            "T1.618": t8,
-            "T1_618": t8,
-            "T9":     t9,
-            "T2.618": t9,
-            "T2_618": t9,
+            "TGT5":   t5,
             "CUSTOM": float(row.custom_target or row.sell_tgt or 0.0),
         }
         if row.target_type == "CUSTOM" and row.custom_target and row.custom_target > 0:
             chosen_target = float(row.custom_target)
         else:
-            chosen_target = target_map.get((row.target_type or "T1").upper(), t1)
+            chosen_target = target_map.get((row.target_type or "TGT1").upper(), t1)
 
         if chosen_target > 0:
             row.sell_tgt = chosen_target
