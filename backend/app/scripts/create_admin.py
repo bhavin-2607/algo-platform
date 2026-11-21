@@ -7,6 +7,24 @@ import asyncio
 import os
 import sys
 
+# Ensure backend directory is in sys.path
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
+# Auto-detect virtualenv site-packages if running with system python
+for venv_path in [
+    os.path.join(BACKEND_DIR, ".venv"),
+    os.path.join(BACKEND_DIR, "..", ".venv"),
+]:
+    if os.path.isdir(venv_path):
+        import glob
+        sp = glob.glob(os.path.join(venv_path, "lib", "python*", "site-packages"))
+        for s in sp:
+            if s not in sys.path:
+                sys.path.insert(0, s)
+
 from sqlalchemy import func, select
 
 import app.models  # noqa: F401  (register tables before create_all)
