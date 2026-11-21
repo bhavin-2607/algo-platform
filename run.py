@@ -186,6 +186,8 @@ class ProcessSupervisor:
             self.python_exe, "-m", "uvicorn", "app.main:app",
             "--host", "0.0.0.0",
             "--port", str(self.port),
+            "--proxy-headers",
+            "--forwarded-allow-ips", "*",
         ]
         if self.dev_mode:
             api_cmd.extend(["--reload", "--reload-include", "*.env"])
