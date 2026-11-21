@@ -86,12 +86,13 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
           {/* Quick Add to Algo Button */}
           {isAdmin && (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onQuickAddToAlgo(item);
               }}
               title="Add directly to Algo Window"
-              className="w-9 h-9 rounded-xl flex items-center justify-center active:scale-95 transition-all shadow-sm"
+              className="w-9 h-9 rounded-xl flex items-center justify-center active:scale-95 transition-all shadow-sm bg-transparent"
               style={{
                 background: "var(--green-dim)",
                 color: "var(--green)",

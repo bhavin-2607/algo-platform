@@ -114,8 +114,9 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 rounded-full transition-all active:scale-95"
+            className="p-2 rounded-full transition-all active:scale-95 bg-transparent"
             style={{ background: "var(--surface2)", color: "var(--muted)" }}
           >
             <X size={18} />
@@ -259,6 +260,7 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
         <div className="pt-2 space-y-2">
           {isAdmin && (
             <button
+              type="button"
               onClick={handleAdd}
               disabled={isAdding || addedSuccess}
               className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all shadow-md active:scale-98"
@@ -273,8 +275,9 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
           )}
 
           <button
-            onClick={() => onRemoveFromWatchlist(item.id)}
-            className="w-full h-10 text-xs font-semibold rounded-xl flex items-center justify-center transition-all active:scale-95"
+            type="button"
+            onClick={() => onRemoveFromWatchlist(item.id || item.symbol)}
+            className="w-full h-10 text-xs font-semibold rounded-xl flex items-center justify-center transition-all active:scale-95 bg-transparent"
             style={{
               background: "var(--surface2)",
               color: "var(--red)",

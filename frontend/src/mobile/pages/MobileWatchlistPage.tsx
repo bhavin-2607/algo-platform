@@ -11,6 +11,7 @@ interface InstrumentResult {
   exchange: string;
   segment: string;
   token?: string;
+  security_id?: string;
 }
 
 interface MobileWatchlistPageProps {
@@ -46,10 +47,19 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const res = await api.get("/terminal/instruments", {
+        const res = await api.get("/market/instruments/search", {
           params: { q: searchQuery.trim().toUpperCase() },
         });
-        setSearchResults(res.data?.instruments || res.data || []);
+        const raw = Array.isArray(res.data) ? res.data : res.data?.instruments || [];
+        const items: InstrumentResult[] = raw.map((i: any) => ({
+          symbol: i.symbol,
+          name: i.name || i.symbol,
+          exchange: i.exchange || "NSE",
+          segment: i.exchange_segment || i.segment || "NSE_EQ",
+          token: String(i.security_id || i.token || "0"),
+          security_id: String(i.security_id || i.token || "0"),
+        }));
+        setSearchResults(items);
       } catch (err) {
         console.error("Instrument search failed", err);
       } finally {

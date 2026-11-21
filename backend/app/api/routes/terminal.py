@@ -1217,11 +1217,45 @@ async def list_algo_rows(
     rows = result.scalars().all()
 
     poller = get_poller()
+    for r in rows:
+        seg = r.segment or ("NSE_FNO" if is_option_symbol(r.symbol) else "NSE_EQ")
+        poller.add_symbol(r.symbol, r.token or "0", seg)
+
     cached_quotes = {t["symbol"]: t for t in (poller._last_data or [])}
+
+    # Fetch missing quotes directly from Dhan or simulation
+    missing = [r for r in rows if r.symbol not in cached_quotes]
+    if missing:
+        from app.core.config import settings
+        from app.api.routes.market import _dhan_ohlc, _parse_ohlc
+        if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
+            try:
+                securities = {}
+                for r in missing:
+                    sec_id = r.token or poller._watchlist.get(r.symbol, {}).get("security_id")
+                    seg = r.segment or "NSE_EQ"
+                    if sec_id and str(sec_id) != "0":
+                        securities.setdefault(seg, []).append(int(sec_id))
+                if securities:
+                    raw_dhan = _dhan_ohlc(securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
+                    for r in missing:
+                        sec_id = str(r.token or poller._watchlist.get(r.symbol, {}).get("security_id") or "")
+                        seg = r.segment or "NSE_EQ"
+                        raw = raw_dhan.get(seg, {}).get(sec_id, {})
+                        if raw:
+                            parsed = _parse_ohlc(raw, r.symbol)
+                            cached_quotes[r.symbol] = parsed
+                            if not any(x.get("symbol") == r.symbol for x in (poller._last_data or [])):
+                                poller._last_data.append(parsed)
+            except Exception as e:
+                logger.warning(f"Algo rows direct Dhan quote fetch failed: {e}")
 
     out = []
     for r in rows:
-        live = cached_quotes.get(r.symbol, {})
+        live = cached_quotes.get(r.symbol)
+        if not live:
+            from app.api.routes.market import _sim_quote
+            live = _sim_quote(r.symbol)
         ltp = float(live.get("ltp") or r.buy_price or 0)
         is_option = is_option_symbol(r.symbol, r.segment if r.segment != "NSE_EQ" else None)
 
@@ -1332,6 +1366,176 @@ async def list_algo_rows(
     return out
 
 
+@router.get("/watchlist-rows")
+async def list_watchlist_rows(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return all symbols in the user's Watchlist, enriched with live market data,
+    Dhan quotes, and evaluated standard formula calculations (signals, targets, pivot levels).
+    """
+    import math
+    from app.models.watchlist import UserWatchlist
+    from app.market.market_poller import get_poller
+    from app.strategy.excel_formula_engine import evaluate_columns_in_order, formula_for_book
+    from app.models.terminal_column import STANDARD_FORMULA_COLUMNS
+    from app.api.routes.market import _dhan_ohlc, _parse_ohlc, _sim_quote, DHAN_SECURITY_IDS
+    from app.core.config import settings
+
+    result = await db.execute(
+        select(UserWatchlist)
+        .where(UserWatchlist.user_id == current_user.id)
+        .order_by(UserWatchlist.added_at)
+    )
+    wl_items = list(result.scalars().all())
+
+    # If user has no watchlist yet, provide default symbols
+    if not wl_items:
+        defaults = [
+            ("NIFTY50", "13", "IDX_I"),
+            ("BANKNIFTY", "25", "IDX_I"),
+            ("RELIANCE", "2885", "NSE_EQ"),
+            ("TCS", "11536", "NSE_EQ"),
+            ("INFY", "1594", "NSE_EQ"),
+            ("HDFCBANK", "1333", "NSE_EQ"),
+        ]
+        for sym, sid, seg in defaults:
+            db.add(UserWatchlist(
+                user_id=current_user.id,
+                symbol=sym,
+                security_id=sid,
+                exchange_segment=seg,
+            ))
+        try:
+            await db.commit()
+            result = await db.execute(
+                select(UserWatchlist)
+                .where(UserWatchlist.user_id == current_user.id)
+                .order_by(UserWatchlist.added_at)
+            )
+            wl_items = list(result.scalars().all())
+        except Exception:
+            await db.rollback()
+
+    poller = get_poller()
+    for row in wl_items:
+        poller.add_symbol(row.symbol, row.security_id, row.exchange_segment)
+
+    cached_quotes = {t["symbol"]: t for t in (poller._last_data or [])}
+
+    # Fetch missing quotes directly from Dhan if any
+    missing = [r for r in wl_items if r.symbol not in cached_quotes]
+    if missing and settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
+        try:
+            securities = {}
+            for r in missing:
+                sec_id = r.security_id
+                seg = r.exchange_segment or "NSE_EQ"
+                if sec_id and str(sec_id) != "0":
+                    securities.setdefault(seg, []).append(int(sec_id))
+            if securities:
+                raw_dhan = _dhan_ohlc(securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
+                for r in missing:
+                    sec_id = str(r.security_id or "")
+                    seg = r.exchange_segment or "NSE_EQ"
+                    raw = raw_dhan.get(seg, {}).get(sec_id, {})
+                    if raw:
+                        parsed = _parse_ohlc(raw, r.symbol)
+                        cached_quotes[r.symbol] = parsed
+                        if not any(x.get("symbol") == r.symbol for x in (poller._last_data or [])):
+                            poller._last_data.append(parsed)
+        except Exception as e:
+            logger.warning(f"Watchlist direct Dhan quote fetch failed: {e}")
+
+    out = []
+    for r in wl_items:
+        live = cached_quotes.get(r.symbol)
+        if not live:
+            live = _sim_quote(r.symbol)
+
+        ltp = float(live.get("ltp") or 0)
+        is_opt = is_option_symbol(r.symbol, r.exchange_segment if r.exchange_segment != "NSE_EQ" else None)
+
+        tick_data = {
+            "symbol":  r.symbol,
+            "ltp":     ltp,
+            "open":    live.get("open", ltp),
+            "high":    live.get("high", ltp),
+            "low":     live.get("low", ltp),
+            "close":   live.get("close", ltp),
+            "volume":  live.get("volume", 0),
+            "vwap":    live.get("vwap") or live.get("atp") or ltp,
+            "p_close": live.get("p_close") or live.get("prev_close") or live.get("close") or ltp,
+            "p_high":  live.get("p_high") or live.get("high") or ltp,
+            "p_low":   live.get("p_low") or live.get("low") or ltp,
+        }
+        open_val = float(tick_data["open"] or ltp or 100.0)
+
+        formula_cols = [
+            {**c, "formula": formula_for_book(c["name"], c["formula"], "option" if is_opt else "equity")}
+            for c in STANDARD_FORMULA_COLUMNS
+        ]
+
+        vals = evaluate_columns_in_order(formula_cols, tick_data)
+        sig = str(vals.get("intrasignal") or vals.get("supersignal") or vals.get("ohlsignal") or vals.get("signal") or "BUY").upper()
+        is_buy = (sig == "BUY")
+        ent = vals.get("entry") or round((math.sqrt(open_val) + (0.025 if is_buy else -0.025))**2, 0)
+        sl_val = vals.get("sl") or round(ent * (0.995 if is_buy else 1.005), 2)
+        t1 = vals.get("tgt1") or vals.get("bt1" if is_buy else "st1")
+        t2 = vals.get("tgt2") or vals.get("bt2" if is_buy else "st2")
+        t3 = vals.get("tgt3") or vals.get("bt3" if is_buy else "st3")
+        t4 = vals.get("tgt4") or vals.get("bt4" if is_buy else "st4")
+        t5 = vals.get("tgt5") or vals.get("bt5" if is_buy else "st5")
+
+        p_close = float(tick_data["p_close"] or ltp)
+        change = round(ltp - p_close, 2)
+        change_pct = round((change / max(p_close, 1)) * 100, 2)
+
+        out.append({
+            "id":               str(r.id),
+            "symbol":           r.symbol,
+            "exchange":         "NSE" if "NSE" in (r.exchange_segment or "") else "BSE",
+            "segment":          r.exchange_segment or "NSE_EQ",
+            "token":            r.security_id,
+            "ltp":              ltp,
+            "open":             tick_data["open"],
+            "high":             tick_data["high"],
+            "low":              tick_data["low"],
+            "close":            tick_data["close"],
+            "p_close":          p_close,
+            "p_high":           tick_data["p_high"],
+            "p_low":            tick_data["p_low"],
+            "volume":           tick_data["volume"],
+            "vwap":             tick_data["vwap"],
+            "change":           change,
+            "change_pct":       change_pct,
+            "signal":           sig,
+            "trend":            str(vals.get("trend") or sig),
+            "ohlsignal":        str(vals.get("ohlsignal") or sig),
+            "supersignal":      str(vals.get("supersignal") or sig),
+            "intrasignal":      sig,
+            "vwapsignal":       str(vals.get("vwapsignal") or sig),
+            "kd":               vals.get("kd"),
+            "gann":             vals.get("gann"),
+            "entry":            ent,
+            "sl":               sl_val,
+            "tgt1":             t1,
+            "tgt2":             t2,
+            "tgt3":             t3,
+            "tgt4":             t4,
+            "tgt5":             t5,
+            "pp":               vals.get("pp"),
+            "r1":               vals.get("r1"),
+            "r2":               vals.get("r2"),
+            "r3":               vals.get("r3"),
+            "s1":               vals.get("s1"),
+            "s2":               vals.get("s2"),
+            "s3":               vals.get("s3"),
+        })
+    return out
+
+
 @router.post("/algo-rows")
 async def add_algo_row(
     payload: BsaAlgoRowCreate,
@@ -1343,11 +1547,18 @@ async def add_algo_row(
     """
     from app.models.algo_row import BsaAlgoRow
     from app.market.market_poller import get_poller
+    from app.api.routes.market import DHAN_SECURITY_IDS
 
     sym = payload.symbol.upper().strip()
     is_opt = is_option_symbol(sym, payload.segment if payload.segment != "NSE_EQ" else None)
     target_seg = "NSE_FNO" if is_opt else (payload.segment or "NSE_EQ")
     target_exch = "NFO" if is_opt else (payload.exchange or "NSE")
+
+    sec_token = payload.token
+    if not sec_token or sec_token == "0":
+        dhan_inst = DHAN_SECURITY_IDS.get(sym)
+        if dhan_inst:
+            sec_token = str(dhan_inst.get("security_id"))
 
     # Check existing row
     res = await db.execute(
@@ -1362,15 +1573,15 @@ async def add_algo_row(
 
     # Ensure symbol is watched in market poller
     poller = get_poller()
-    if payload.token:
-        poller.add_symbol(sym, payload.token, target_seg)
+    if sec_token:
+        poller.add_symbol(sym, sec_token, target_seg)
 
     new_row = BsaAlgoRow(
         user_id           = current_user.id,
         symbol            = sym,
         exchange          = target_exch,
         segment           = target_seg,
-        token             = payload.token,
+        token             = sec_token,
         quantity          = max(1, payload.quantity),
         number_of_trades  = max(1, min(5, payload.number_of_trades)),
         is_algo_active    = False,  # Default to ALGO OFF (manual mode)

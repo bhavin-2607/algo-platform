@@ -55,8 +55,8 @@ export default function MobileApp() {
   const fetchWatchlist = useCallback(async () => {
     if (!accessToken) return;
     try {
-      const res = await api.get("/terminal/rows");
-      setWatchlist(res.data?.rows || res.data || []);
+      const res = await api.get("/terminal/watchlist-rows");
+      setWatchlist(Array.isArray(res.data) ? res.data : res.data?.rows || []);
     } catch (err) {
       console.error("Failed to fetch watchlist", err);
     }
@@ -113,9 +113,17 @@ export default function MobileApp() {
         ws.onmessage = (e) => {
           try {
             const msg = JSON.parse(e.data);
-            if (msg.type === "ticks" && Array.isArray(msg.data)) {
+            let ticks: any[] = [];
+            if (msg.type === "ticks") {
+              if (Array.isArray(msg.data)) {
+                ticks = msg.data;
+              } else if (msg.data && typeof msg.data === "object") {
+                ticks = Object.values(msg.data);
+              }
+            }
+            if (ticks.length > 0) {
               const tickMap: Record<string, any> = {};
-              msg.data.forEach((t: any) => {
+              ticks.forEach((t: any) => {
                 if (t.symbol) tickMap[t.symbol] = t;
               });
 
@@ -138,13 +146,20 @@ export default function MobileApp() {
                 prev.map((w) => {
                   const tick = tickMap[w.symbol];
                   if (!tick) return w;
+                  const liveLtp = parseFloat(tick.ltp) || w.ltp || 0;
+                  const pClose = w.p_close || tick.close || liveLtp;
+                  const change = Math.round((liveLtp - pClose) * 100) / 100;
+                  const changePct = pClose > 0 ? Math.round((change / pClose) * 10000) / 100 : 0;
                   return {
                     ...w,
-                    ltp: parseFloat(tick.ltp) || w.ltp,
+                    ltp: liveLtp,
                     open: parseFloat(tick.open) || w.open,
                     high: parseFloat(tick.high) || w.high,
                     low: parseFloat(tick.low) || w.low,
                     vwap: parseFloat(tick.vwap || tick.atp) || w.vwap,
+                    volume: parseInt(tick.volume) || w.volume,
+                    change,
+                    change_pct: changePct,
                   };
                 })
               );
@@ -168,10 +183,11 @@ export default function MobileApp() {
 
     connect();
 
-    // REST Polling fallback interval
+    // REST Polling fallback interval: sync both algo rows and watchlist every 3 seconds
     const pollInterval = setInterval(() => {
       fetchAlgoRows();
-    }, 4000);
+      fetchWatchlist();
+    }, 3000);
 
     return () => {
       if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -284,32 +300,39 @@ export default function MobileApp() {
         symbol: item.symbol,
         exchange: item.exchange || "NSE",
         segment: item.segment || "NSE_EQ",
+        token: item.token,
         quantity: 25,
         number_of_trades: 1,
         target_type: "T1",
         trade_mode: "FULL",
       });
       toast.success(`Added ${item.symbol} to Algo Window!`);
-      fetchAlgoRows();
+      await fetchAlgoRows();
     } catch (err: any) {
       toast.error(err.response?.data?.detail || "Failed to add to Algo Window");
     }
   };
 
   const handleAddToWatchlist = async (inst: any) => {
-    await api.post("/terminal/rows", {
-      symbol: inst.symbol,
-      exchange: inst.exchange || "NSE",
-      segment: inst.segment || "NSE_EQ",
-    });
-    fetchWatchlist();
+    try {
+      await api.post("/market/watchlist", {
+        symbol: inst.symbol,
+        security_id: String(inst.security_id || inst.token || "0"),
+        exchange_segment: inst.exchange_segment || inst.segment || "NSE_EQ",
+      });
+      await fetchWatchlist();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to add symbol");
+      throw err;
+    }
   };
 
-  const handleRemoveFromWatchlist = async (id: string) => {
+  const handleRemoveFromWatchlist = async (idOrSymbol: string) => {
     try {
-      await api.delete(`/terminal/rows/${id}`);
-      toast.success("Removed from watchlist");
-      fetchWatchlist();
+      const target = watchlist.find((w) => w.id === idOrSymbol || w.symbol === idOrSymbol)?.symbol || idOrSymbol;
+      await api.delete(`/market/watchlist/${encodeURIComponent(target)}`);
+      toast.success(`Removed ${target} from watchlist`);
+      await fetchWatchlist();
     } catch (err: any) {
       toast.error("Failed to remove symbol");
     }

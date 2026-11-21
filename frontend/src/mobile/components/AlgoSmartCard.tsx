@@ -165,6 +165,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
         <div className="flex items-center">
           {isAdmin ? (
             <button
+              type="button"
               onClick={handleToggle}
               disabled={isToggling}
               className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all min-h-[46px] min-w-[80px] justify-center active:scale-95 shadow-sm"
@@ -240,6 +241,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
         {isAdmin && !row.is_algo_active ? (
           <div className="flex items-center space-x-1.5 flex-1">
             <button
+              type="button"
               onClick={() => handleOrder("BUY")}
               disabled={isOrdering}
               className="flex-1 h-10 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 transition-all active:scale-95 shadow-sm"
@@ -253,6 +255,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
               <span>BUY</span>
             </button>
             <button
+              type="button"
               onClick={() => handleOrder("SELL")}
               disabled={isOrdering}
               className="flex-1 h-10 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 transition-all active:scale-95 shadow-sm"
@@ -275,6 +278,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
         {/* Kill Switch */}
         {isAdmin && (
           <button
+            type="button"
             onClick={handleKill}
             className="h-10 px-3.5 rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-sm"
             style={{
@@ -290,6 +294,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
 
         {/* Config Trigger */}
         <button
+          type="button"
           onClick={() => onOpenConfig(row)}
           className="h-10 px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition-all active:scale-95"
           style={{

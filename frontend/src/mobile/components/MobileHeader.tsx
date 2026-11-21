@@ -99,9 +99,10 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
         {/* Theme switcher & Logout */}
         <div className="flex items-center space-x-1.5">
           <button
+            type="button"
             onClick={onToggleTheme}
             title={`Switch to ${theme === "dark" ? "Light" : "Dark"} Mode`}
-            className="p-2 rounded-xl transition-all active:scale-95"
+            className="p-2 rounded-xl transition-all active:scale-95 bg-transparent"
             style={{
               background: "var(--surface2)",
               color: "var(--text)",
@@ -112,9 +113,10 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={onLogout}
             title="Log out"
-            className="p-2 rounded-xl transition-all active:scale-95"
+            className="p-2 rounded-xl transition-all active:scale-95 bg-transparent"
             style={{
               background: "var(--surface2)",
               color: "var(--red)",

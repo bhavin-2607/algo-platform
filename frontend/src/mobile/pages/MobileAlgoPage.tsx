@@ -85,6 +85,7 @@ export const MobileAlgoPage: React.FC<MobileAlgoPageProps> = ({
           { id: "IDLE", label: "Idle / Off", count: idleCount },
         ].map((tab) => (
           <button
+            type="button"
             key={tab.id}
             onClick={() => setFilterTab(tab.id as FilterTab)}
             className="px-3 py-1.5 rounded-xl font-semibold whitespace-nowrap transition-all flex items-center space-x-1.5 active:scale-95 shadow-xs"

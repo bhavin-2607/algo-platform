@@ -20,9 +20,13 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
     <nav className="mobile-bottom-bar px-6 pt-2 flex items-center justify-around select-none">
       {/* Algo Window Tab */}
       <button
+        type="button"
         onClick={() => onChangeTab("algo")}
-        className="flex-1 flex flex-col items-center justify-center py-1 transition-all active:scale-95"
+        className="flex-1 flex flex-col items-center justify-center py-1 transition-all active:scale-95 bg-transparent border-0 outline-hidden"
         style={{
+          background: "transparent",
+          border: "none",
+          outline: "none",
           color: currentTab === "algo" ? "var(--green)" : "var(--muted)",
           fontWeight: currentTab === "algo" ? 700 : 500,
         }}
@@ -49,9 +53,13 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
       {/* Watchlist Tab */}
       <button
+        type="button"
         onClick={() => onChangeTab("watchlist")}
-        className="flex-1 flex flex-col items-center justify-center py-1 transition-all active:scale-95"
+        className="flex-1 flex flex-col items-center justify-center py-1 transition-all active:scale-95 bg-transparent border-0 outline-hidden"
         style={{
+          background: "transparent",
+          border: "none",
+          outline: "none",
           color: currentTab === "watchlist" ? "var(--green)" : "var(--muted)",
           fontWeight: currentTab === "watchlist" ? 700 : 500,
         }}
