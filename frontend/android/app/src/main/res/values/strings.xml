@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Algo Mobile</string>
+    <string name="title_activity_main">Algo Mobile</string>
+    <string name="package_name">org.dpdns.pyregex.algo</string>
+    <string name="custom_url_scheme">org.dpdns.pyregex.algo</string>
+</resources>

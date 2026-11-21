@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:android": "npm run build && npx cap sync android",
+    "open:android": "npx cap open android",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
+    "@capacitor/core": "^8.6.2",
     "@tanstack/react-query": "^5.40.0",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
@@ -28,6 +31,8 @@
     "esbuild": "^0.25.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",

@@ -1,0 +1,354 @@
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useAuthStore } from "@/store/auth";
+import { api } from "@/utils/api";
+import { wsBase } from "@/utils/ws";
+import { MobileHeader } from "./components/MobileHeader";
+import { MobileBottomNav, MobileTab } from "./components/MobileBottomNav";
+import { MobileAlgoPage } from "./pages/MobileAlgoPage";
+import { MobileWatchlistPage } from "./pages/MobileWatchlistPage";
+import { MobileLoginPage } from "./pages/MobileLoginPage";
+import { AlgoRowData } from "./components/AlgoSmartCard";
+import { WatchlistRowData } from "./components/SymbolDetailDrawer";
+import toast from "react-hot-toast";
+
+export default function MobileApp() {
+  const { accessToken, user, logout, isAdmin } = useAuthStore();
+  const [activeTab, setActiveTab] = useState<MobileTab>("algo");
+
+  const [algoRows, setAlgoRows] = useState<AlgoRowData[]>([]);
+  const [watchlist, setWatchlist] = useState<WatchlistRowData[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const [wsStatus, setWsStatus] = useState<"live" | "connecting" | "polling">("connecting");
+  const [wsLatencyMs, setWsLatencyMs] = useState<number | null>(null);
+  const [dhanActive, setDhanActive] = useState(true);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const pingStartRef = useRef<number>(Date.now());
+  const seenAlertIds = useRef<Set<string>>(new Set());
+
+  // 1. Fetch Algo Rows
+  const fetchAlgoRows = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const res = await api.get("/terminal/algo-rows");
+      setAlgoRows(res.data?.rows || res.data || []);
+    } catch (err) {
+      console.error("Failed to fetch algo rows", err);
+    }
+  }, [accessToken]);
+
+  // 2. Fetch Watchlist Rows
+  const fetchWatchlist = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const res = await api.get("/terminal/rows");
+      setWatchlist(res.data?.rows || res.data || []);
+    } catch (err) {
+      console.error("Failed to fetch watchlist", err);
+    }
+  }, [accessToken]);
+
+  // 3. Initial Snapshot Load
+  useEffect(() => {
+    if (!accessToken) {
+      setIsLoading(false);
+      return;
+    }
+    Promise.all([fetchAlgoRows(), fetchWatchlist()]).finally(() => {
+      setIsLoading(false);
+    });
+  }, [accessToken, fetchAlgoRows, fetchWatchlist]);
+
+  // 4. Background Tab Visibility Reconnection (Instant State Reconcile)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && accessToken) {
+        fetchAlgoRows();
+        fetchWatchlist();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+    };
+  }, [accessToken, fetchAlgoRows, fetchWatchlist]);
+
+  // 5. Live WebSocket Feed
+  useEffect(() => {
+    if (!accessToken) return;
+    const url = `${wsBase()}/api/ws/market?token=${accessToken}&symbols=ALL`;
+
+    let reconnectTimer: any = null;
+
+    function connect() {
+      setWsStatus("connecting");
+      pingStartRef.current = Date.now();
+
+      try {
+        const ws = new WebSocket(url);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setWsStatus("live");
+          const rtt = Math.max(12, Math.min(180, Date.now() - pingStartRef.current));
+          setWsLatencyMs(rtt);
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === "ticks" && Array.isArray(msg.data)) {
+              const tickMap: Record<string, any> = {};
+              msg.data.forEach((t: any) => {
+                if (t.symbol) tickMap[t.symbol] = t;
+              });
+
+              // Update Algo Rows live LTP & calculations
+              setAlgoRows((prev) =>
+                prev.map((r) => {
+                  const tick = tickMap[r.symbol];
+                  if (!tick) return r;
+                  const liveLtp = parseFloat(tick.ltp) || r.live_ltp;
+                  let pnl = r.pnl;
+                  if (r.status === "IN_POSITION" && r.buy_price) {
+                    pnl = Math.round((liveLtp - r.buy_price) * r.quantity * 100) / 100;
+                  }
+                  return { ...r, live_ltp: liveLtp, pnl };
+                })
+              );
+
+              // Update Watchlist rows live prices
+              setWatchlist((prev) =>
+                prev.map((w) => {
+                  const tick = tickMap[w.symbol];
+                  if (!tick) return w;
+                  return {
+                    ...w,
+                    ltp: parseFloat(tick.ltp) || w.ltp,
+                    open: parseFloat(tick.open) || w.open,
+                    high: parseFloat(tick.high) || w.high,
+                    low: parseFloat(tick.low) || w.low,
+                    vwap: parseFloat(tick.vwap || tick.atp) || w.vwap,
+                  };
+                })
+              );
+            }
+          } catch {}
+        };
+
+        ws.onerror = () => {
+          setWsStatus("polling");
+        };
+
+        ws.onclose = () => {
+          setWsStatus("polling");
+          reconnectTimer = setTimeout(connect, 6000);
+        };
+      } catch (err) {
+        setWsStatus("polling");
+        reconnectTimer = setTimeout(connect, 6000);
+      }
+    }
+
+    connect();
+
+    // REST Polling fallback interval
+    const pollInterval = setInterval(() => {
+      fetchAlgoRows();
+    }, 4000);
+
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearInterval(pollInterval);
+      wsRef.current?.close();
+    };
+  }, [accessToken, fetchAlgoRows]);
+
+  // 6. Broker Alerts & Notifications Watcher
+  useEffect(() => {
+    if (!accessToken) return;
+    const alertInterval = setInterval(async () => {
+      try {
+        const res = await api.get("/terminal/alerts");
+        const alerts = res.data?.alerts || [];
+        alerts.forEach((alert: any) => {
+          const key = `${alert.title}-${alert.time}`;
+          if (!seenAlertIds.current.has(key)) {
+            seenAlertIds.current.add(key);
+            if (alert.severity === "error") {
+              toast.error(`${alert.title}: ${alert.message}`, { duration: 6000 });
+            } else {
+              toast(`${alert.title}: ${alert.message}`);
+            }
+          }
+        });
+      } catch {}
+    }, 5000);
+
+    return () => clearInterval(alertInterval);
+  }, [accessToken]);
+
+  // If not authenticated, render mobile login page
+  if (!accessToken) {
+    return <MobileLoginPage onLoginSuccess={() => fetchAlgoRows()} />;
+  }
+
+  // Admin Execution Handlers
+  const handleToggleActive = async (rowId: string, currentActive: boolean) => {
+    try {
+      await api.patch(`/terminal/algo-rows/${rowId}`, {
+        is_algo_active: !currentActive,
+      });
+      toast.success(!currentActive ? "Algo Activated (ON)" : "Algo Deactivated (OFF)");
+      fetchAlgoRows();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to toggle algo");
+    }
+  };
+
+  const handleManualOrder = async (rowId: string, side: "BUY" | "SELL") => {
+    try {
+      const res = await api.post(`/terminal/algo-rows/${rowId}/manual-order`, { side });
+      toast.success(res.data?.detail || `Manual ${side} order executed!`);
+      fetchAlgoRows();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || `Manual ${side} order rejected`);
+    }
+  };
+
+  const handleKill = async (rowId: string) => {
+    try {
+      await api.post(`/terminal/algo-rows/${rowId}/kill`);
+      toast.error("EMERGENCY KILL SWITCH: Position squared off!");
+      fetchAlgoRows();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to execute kill switch");
+    }
+  };
+
+  const handleSaveConfig = async (rowId: string, payload: any) => {
+    try {
+      await api.patch(`/terminal/algo-rows/${rowId}`, payload);
+      toast.success("Parameters updated successfully");
+      fetchAlgoRows();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to update parameters");
+    }
+  };
+
+  const handleReset = async (rowId: string) => {
+    try {
+      await api.post(`/terminal/algo-rows/${rowId}/reset`);
+      toast.success("Trade cycle counter reset to 0");
+      fetchAlgoRows();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to reset cycle");
+    }
+  };
+
+  const handleDelete = async (rowId: string) => {
+    try {
+      await api.delete(`/terminal/algo-rows/${rowId}`);
+      toast.success("Script removed from Algo Window");
+      fetchAlgoRows();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to delete script");
+    }
+  };
+
+  const handleAddToAlgo = async (item: WatchlistRowData) => {
+    try {
+      await api.post("/terminal/algo-rows", {
+        symbol: item.symbol,
+        exchange: item.exchange || "NSE",
+        segment: item.segment || "NSE_EQ",
+        quantity: 25,
+        number_of_trades: 1,
+        target_type: "T1",
+        trade_mode: "FULL",
+      });
+      toast.success(`Added ${item.symbol} to Algo Window!`);
+      fetchAlgoRows();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to add to Algo Window");
+    }
+  };
+
+  const handleAddToWatchlist = async (inst: any) => {
+    await api.post("/terminal/rows", {
+      symbol: inst.symbol,
+      exchange: inst.exchange || "NSE",
+      segment: inst.segment || "NSE_EQ",
+    });
+    fetchWatchlist();
+  };
+
+  const handleRemoveFromWatchlist = async (id: string) => {
+    try {
+      await api.delete(`/terminal/rows/${id}`);
+      toast.success("Removed from watchlist");
+      fetchWatchlist();
+    } catch (err: any) {
+      toast.error("Failed to remove symbol");
+    }
+  };
+
+  // Calculations
+  const totalPnl = algoRows.reduce((acc, r) => acc + (r.pnl || 0), 0);
+  const activeAlgoCount = algoRows.filter((r) => r.is_algo_active).length;
+  const userIsAdmin = isAdmin();
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none">
+      {/* Sticky Top Header */}
+      <MobileHeader
+        userEmail={user?.username || user?.email || "Trader"}
+        isAdmin={userIsAdmin}
+        totalPnl={totalPnl}
+        activeAlgoCount={activeAlgoCount}
+        wsLatencyMs={wsLatencyMs}
+        wsStatus={wsStatus}
+        dhanActive={dhanActive}
+        onLogout={logout}
+      />
+
+      {/* Main Tab Content */}
+      <main className="flex-1 overflow-y-auto">
+        {activeTab === "algo" ? (
+          <MobileAlgoPage
+            rows={algoRows}
+            isAdmin={userIsAdmin}
+            onRefresh={fetchAlgoRows}
+            onToggleActive={handleToggleActive}
+            onManualOrder={handleManualOrder}
+            onKill={handleKill}
+            onSaveConfig={handleSaveConfig}
+            onReset={handleReset}
+            onDelete={handleDelete}
+            onNavigateToWatchlist={() => setActiveTab("watchlist")}
+          />
+        ) : (
+          <MobileWatchlistPage
+            watchlist={watchlist}
+            isAdmin={userIsAdmin}
+            onRefresh={fetchWatchlist}
+            onAddToAlgo={handleAddToAlgo}
+            onAddToWatchlist={handleAddToWatchlist}
+            onRemoveFromWatchlist={handleRemoveFromWatchlist}
+          />
+        )}
+      </main>
+
+      {/* Docked Bottom Navigation */}
+      <MobileBottomNav
+        currentTab={activeTab}
+        onChangeTab={setActiveTab}
+        activeAlgoCount={activeAlgoCount}
+        watchlistCount={watchlist.length}
+      />
+    </div>
+  );
+}

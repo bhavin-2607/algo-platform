@@ -9,6 +9,8 @@ import SettingsPage    from "@/pages/SettingsPage";
 import CopyTradingPage from "@/pages/CopyTradingPage";
 import TerminalPage    from "@/pages/TerminalPage";
 import AdminPage       from "@/pages/AdminPage";
+import MobileApp       from "@/mobile/MobileApp";
+import { isNativeMobile } from "@/utils/device";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -19,6 +21,13 @@ function Protected({ children }: { children: React.ReactNode }) {
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const isAdmin = useAuthStore((s) => s.isAdmin());
   return isAdmin ? <>{children}</> : <Navigate to="/terminal" replace />;
+}
+
+function DefaultHome() {
+  if (isNativeMobile()) {
+    return <Navigate to="/mobile" replace />;
+  }
+  return <Protected><TerminalPage /></Protected>;
 }
 
 export default function App() {
@@ -32,9 +41,10 @@ export default function App() {
             fontFamily:"var(--font)", fontSize:12 },
         }} />
         <Routes>
+          <Route path="/mobile"       element={<MobileApp />} />
           <Route path="/login"        element={<LoginPage />} />
           <Route path="/register"     element={<Navigate to="/login" replace />} />
-          <Route path="/terminal"     element={<Protected><TerminalPage /></Protected>} />
+          <Route path="/terminal"     element={<DefaultHome />} />
           <Route path="/positions"    element={<Protected><TradingPage /></Protected>} />
           <Route path="/trading"      element={<Navigate to="/positions" replace />} />
           <Route path="/copy-trading" element={<Protected><CopyTradingPage /></Protected>} />
@@ -46,7 +56,7 @@ export default function App() {
           <Route path="/formula"      element={<Navigate to="/terminal" replace />} />
           <Route path="/guide"        element={<Navigate to="/terminal" replace />} />
           <Route path="/risk"         element={<Navigate to="/terminal" replace />} />
-          <Route path="*"             element={<Navigate to="/terminal" replace />} />
+          <Route path="*"             element={<Navigate to={isNativeMobile() ? "/mobile" : "/terminal"} replace />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

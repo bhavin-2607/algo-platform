@@ -1,0 +1,19 @@
+{
+  "name": "Algo Mobile",
+  "short_name": "Algo Mobile",
+  "description": "On-the-go Algo Window & Watchlist for Algo Platform",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/branding/algo-symbol.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

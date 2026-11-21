@@ -65,14 +65,13 @@ async def list_rows(
     Return all terminal rows for the current user.
     Formulas are hidden unless user is admin.
     """
-    result = await db.execute(
-        select(TerminalRow)
-        .where(TerminalRow.owner_id == current_user.id)
-        .order_by(TerminalRow.row_order)
-    )
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    stmt = select(TerminalRow).order_by(TerminalRow.row_order)
+    if not is_admin:
+        stmt = stmt.where(TerminalRow.owner_id == current_user.id)
+    result = await db.execute(stmt)
     rows   = result.scalars().all()
     redis  = get_redis()
-    is_admin = current_user.role == UserRole.admin
 
     out = []
     for r in rows:
@@ -1210,11 +1209,11 @@ async def list_algo_rows(
     from app.strategy.excel_formula_engine import evaluate_columns_in_order, formula_for_book
     from app.models.terminal_column import STANDARD_FORMULA_COLUMNS
 
-    result = await db.execute(
-        select(BsaAlgoRow)
-        .where(BsaAlgoRow.user_id == current_user.id)
-        .order_by(BsaAlgoRow.created_at)
-    )
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    stmt = select(BsaAlgoRow).order_by(BsaAlgoRow.created_at)
+    if not is_admin:
+        stmt = stmt.where(BsaAlgoRow.user_id == current_user.id)
+    result = await db.execute(stmt)
     rows = result.scalars().all()
 
     poller = get_poller()
@@ -1400,7 +1399,8 @@ async def update_algo_row(
     from app.models.algo_row import BsaAlgoRow
 
     row = await db.get(BsaAlgoRow, row_id)
-    if not row or row.user_id != current_user.id:
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    if not row or (row.user_id != current_user.id and not is_admin):
         raise HTTPException(status_code=404, detail="Algo row not found")
 
     if payload.is_algo_active is not None:
@@ -1548,7 +1548,8 @@ async def kill_algo_row(
     from app.market.market_poller import get_poller
 
     row = await db.get(BsaAlgoRow, row_id)
-    if not row or row.user_id != current_user.id:
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    if not row or (row.user_id != current_user.id and not is_admin):
         raise HTTPException(status_code=404, detail="Algo row not found")
 
     poller = get_poller()
@@ -1581,7 +1582,8 @@ async def delete_algo_row(
     from app.models.algo_row import BsaAlgoRow
 
     row = await db.get(BsaAlgoRow, row_id)
-    if not row or row.user_id != current_user.id:
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    if not row or (row.user_id != current_user.id and not is_admin):
         raise HTTPException(status_code=404, detail="Algo row not found")
 
     await db.delete(row)
@@ -1599,7 +1601,8 @@ async def reset_algo_row(
     from app.models.algo_row import BsaAlgoRow
 
     row = await db.get(BsaAlgoRow, row_id)
-    if not row or row.user_id != current_user.id:
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    if not row or (row.user_id != current_user.id and not is_admin):
         raise HTTPException(status_code=404, detail="Algo row not found")
 
     row.trades_completed = 0
@@ -1627,7 +1630,8 @@ async def manual_algo_order(
     from app.services.bsa_algo_engine import algo_engine
 
     row = await db.get(BsaAlgoRow, row_id)
-    if not row or row.user_id != current_user.id:
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    if not row or (row.user_id != current_user.id and not is_admin):
         raise HTTPException(status_code=404, detail="Algo row not found")
 
     side = payload.side.upper().strip()
