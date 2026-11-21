@@ -1,9 +1,13 @@
+from app.core.logging_config import setup_logging
+setup_logging()
+
+import logging
+logger = logging.getLogger(__name__)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from prometheus_fastapi_instrumentator import Instrumentator
-import logging
-logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.ops_metrics import register_ops_metrics

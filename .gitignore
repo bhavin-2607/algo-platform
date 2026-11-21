@@ -29,3 +29,7 @@ celerybeat-schedule*
 dist-apk/
 *.apk
 *.aab
+
+# Logs
+logs/
+*.log
