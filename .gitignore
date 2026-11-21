@@ -24,3 +24,8 @@ celerybeat-schedule*
 .vscode/
 .idea/
 *.swp
+
+# Mobile & APK
+dist-apk/
+*.apk
+*.aab
