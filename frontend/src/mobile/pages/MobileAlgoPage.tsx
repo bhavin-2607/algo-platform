@@ -60,13 +60,18 @@ export const MobileAlgoPage: React.FC<MobileAlgoPageProps> = ({
       {/* Search & Filter Strip */}
       <div className="flex items-center space-x-2">
         <div className="flex-1 relative">
-          <Search size={15} className="absolute left-3 top-2.5 text-zinc-500" />
+          <Search size={15} className="absolute left-3 top-2.5" style={{ color: "var(--muted)" }} />
           <input
             type="text"
             placeholder="Search algo symbols..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-9 pl-9 pr-3 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-white placeholder-zinc-500 focus:border-emerald-500 focus:outline-hidden"
+            className="w-full h-9 pl-9 pr-3 rounded-xl text-xs focus:outline-hidden"
+            style={{
+              background: "var(--surface2)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+            }}
           />
         </div>
       </div>
@@ -82,17 +87,20 @@ export const MobileAlgoPage: React.FC<MobileAlgoPageProps> = ({
           <button
             key={tab.id}
             onClick={() => setFilterTab(tab.id as FilterTab)}
-            className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-all flex items-center space-x-1.5 ${
-              filterTab === tab.id
-                ? "bg-emerald-600 text-white font-bold shadow-xs"
-                : "bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800/80"
-            }`}
+            className="px-3 py-1.5 rounded-xl font-semibold whitespace-nowrap transition-all flex items-center space-x-1.5 active:scale-95 shadow-xs"
+            style={{
+              background: filterTab === tab.id ? "var(--green)" : "var(--surface2)",
+              color: filterTab === tab.id ? "var(--bg)" : "var(--muted)",
+              border: filterTab === tab.id ? "none" : "1px solid var(--border)",
+            }}
           >
             <span>{tab.label}</span>
             <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                filterTab === tab.id ? "bg-emerald-800 text-white" : "bg-zinc-800 text-zinc-400"
-              }`}
+              className="text-[10px] px-1.5 py-0.2 rounded-full font-mono"
+              style={{
+                background: filterTab === tab.id ? "rgba(0, 0, 0, 0.2)" : "var(--surface)",
+                color: filterTab === tab.id ? "inherit" : "var(--text)",
+              }}
             >
               {tab.count}
             </span>
@@ -116,13 +124,19 @@ export const MobileAlgoPage: React.FC<MobileAlgoPageProps> = ({
           ))}
         </div>
       ) : (
-        <div className="bg-zinc-900/60 border border-dashed border-zinc-800 rounded-2xl p-8 text-center space-y-4 my-6">
-          <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mx-auto text-zinc-500">
+        <div
+          className="rounded-2xl p-8 text-center space-y-4 my-6"
+          style={{ background: "var(--surface)", border: "1px dashed var(--border)" }}
+        >
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center mx-auto"
+            style={{ background: "var(--surface2)", color: "var(--muted)" }}
+          >
             <Zap size={24} />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-white">No Algo Scripts Found</h4>
-            <p className="text-xs text-zinc-400 mt-1 max-w-xs mx-auto">
+            <h4 className="text-sm font-bold" style={{ color: "var(--text)" }}>No Algo Scripts Found</h4>
+            <p className="text-xs mt-1 max-w-xs mx-auto" style={{ color: "var(--muted)" }}>
               {searchQuery
                 ? "No scripts match your search query."
                 : "Add symbols from the Watchlist to start automated execution."}
@@ -130,7 +144,8 @@ export const MobileAlgoPage: React.FC<MobileAlgoPageProps> = ({
           </div>
           <button
             onClick={onNavigateToWatchlist}
-            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl active:scale-95 shadow-md transition-all"
+            className="inline-flex items-center space-x-1.5 px-4 py-2 text-xs font-bold rounded-xl active:scale-95 shadow-md transition-all"
+            style={{ background: "var(--green)", color: "var(--bg)" }}
           >
             <Plus size={15} />
             <span>Go to Watchlist</span>

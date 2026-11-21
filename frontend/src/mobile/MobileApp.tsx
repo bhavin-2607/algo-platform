@@ -15,6 +15,19 @@ export default function MobileApp() {
   const { accessToken, user, logout, isAdmin } = useAuthStore();
   const [activeTab, setActiveTab] = useState<MobileTab>("algo");
 
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    return (localStorage.getItem("theme") as "dark" | "light") || "dark";
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
+
   const [algoRows, setAlgoRows] = useState<AlgoRowData[]>([]);
   const [watchlist, setWatchlist] = useState<WatchlistRowData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -193,7 +206,13 @@ export default function MobileApp() {
 
   // If not authenticated, render mobile login page
   if (!accessToken) {
-    return <MobileLoginPage onLoginSuccess={() => fetchAlgoRows()} />;
+    return (
+      <MobileLoginPage
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onLoginSuccess={() => fetchAlgoRows()}
+      />
+    );
   }
 
   // Admin Execution Handlers
@@ -302,7 +321,7 @@ export default function MobileApp() {
   const userIsAdmin = isAdmin();
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none">
+    <div className="mobile-app-shell select-none">
       {/* Sticky Top Header */}
       <MobileHeader
         userEmail={user?.username || user?.email || "Trader"}
@@ -312,6 +331,8 @@ export default function MobileApp() {
         wsLatencyMs={wsLatencyMs}
         wsStatus={wsStatus}
         dhanActive={dhanActive}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onLogout={logout}
       />
 

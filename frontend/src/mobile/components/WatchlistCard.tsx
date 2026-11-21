@@ -32,13 +32,18 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
   return (
     <div
       onClick={() => onOpenDetail(item)}
-      className="w-full bg-zinc-900/80 hover:bg-zinc-800/80 border border-zinc-800 rounded-xl p-3.5 shadow-sm active:bg-zinc-800 transition-all cursor-pointer space-y-2.5"
+      className="mobile-card p-3.5 space-y-2.5 transition-all cursor-pointer active:scale-[0.99]"
     >
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center space-x-2">
-            <span className="font-bold text-white text-sm tracking-tight">{item.symbol}</span>
-            <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-mono font-medium">
+            <span className="font-extrabold text-sm tracking-tight" style={{ color: "var(--text)" }}>
+              {item.symbol}
+            </span>
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
+              style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
+            >
               {item.exchange}
             </span>
           </div>
@@ -46,15 +51,18 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
           <div className="flex items-center space-x-2 mt-1">
             {signal && (
               <span
-                className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded uppercase flex items-center space-x-0.5 ${
-                  isBuy ? "bg-emerald-950 text-emerald-400" : "bg-rose-950 text-rose-400"
-                }`}
+                className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center space-x-0.5"
+                style={{
+                  background: isBuy ? "var(--green-dim)" : "var(--red-dim)",
+                  color: isBuy ? "var(--green)" : "var(--red)",
+                  border: isBuy ? "1px solid rgba(0,230,118,0.25)" : "1px solid rgba(255,59,87,0.25)",
+                }}
               >
                 {isBuy ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
                 <span>{signal}</span>
               </span>
             )}
-            <span className="text-[10px] text-zinc-400 font-mono">
+            <span className="text-[10px] font-mono" style={{ color: "var(--muted)" }}>
               H: ₹{high.toFixed(1)} / L: ₹{low.toFixed(1)}
             </span>
           </div>
@@ -63,11 +71,12 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
         {/* Price & Change Column */}
         <div className="text-right flex items-center space-x-3">
           <div>
-            <span className="text-sm font-bold font-mono text-white block">₹{ltp.toFixed(2)}</span>
+            <span className="text-sm font-extrabold font-mono block" style={{ color: "var(--text)" }}>
+              ₹{ltp.toFixed(2)}
+            </span>
             <span
-              className={`text-[11px] font-mono font-semibold block ${
-                isPositive ? "text-emerald-400" : "text-rose-400"
-              }`}
+              className="text-[11px] font-mono font-bold block"
+              style={{ color: isPositive ? "var(--green)" : "var(--red)" }}
             >
               {isPositive ? "+" : ""}
               {changePct.toFixed(2)}%
@@ -81,22 +90,33 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
                 e.stopPropagation();
                 onQuickAddToAlgo(item);
               }}
-              title="Add to Algo"
-              className="w-9 h-9 rounded-lg bg-emerald-950/80 hover:bg-emerald-800 text-emerald-400 hover:text-white border border-emerald-800/60 flex items-center justify-center active:scale-95 transition-all"
+              title="Add directly to Algo Window"
+              className="w-9 h-9 rounded-xl flex items-center justify-center active:scale-95 transition-all shadow-sm"
+              style={{
+                background: "var(--green-dim)",
+                color: "var(--green)",
+                border: "1px solid rgba(0, 230, 118, 0.4)",
+              }}
             >
-              <Plus size={16} />
+              <Plus size={16} style={{ strokeWidth: 2.5 }} />
             </button>
           )}
         </div>
       </div>
 
       {/* Mini Day Range Bar */}
-      <div className="flex items-center space-x-2 text-[9px] text-zinc-400 font-mono">
+      <div className="flex items-center space-x-2 text-[9px] font-mono" style={{ color: "var(--muted)" }}>
         <span>L: ₹{low.toFixed(1)}</span>
-        <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden relative">
+        <div
+          className="flex-1 h-1.5 rounded-full overflow-hidden relative"
+          style={{ background: "rgba(128, 128, 128, 0.2)" }}
+        >
           <div
-            className={`h-full ${isPositive ? "bg-emerald-500" : "bg-rose-500"}`}
-            style={{ width: `${rangeProgress}%` }}
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${rangeProgress}%`,
+              background: isPositive ? "var(--green)" : "var(--red)",
+            }}
           />
         </div>
         <span>H: ₹{high.toFixed(1)}</span>

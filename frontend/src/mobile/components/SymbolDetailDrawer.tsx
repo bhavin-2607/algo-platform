@@ -85,23 +85,28 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-xs transition-opacity animate-in fade-in">
-      <div className="w-full max-w-lg bg-zinc-900 border-t border-zinc-700/80 rounded-t-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto space-y-5">
+    <div className="mobile-drawer-overlay">
+      <div
+        className="w-full max-w-lg mobile-drawer-content p-5 space-y-4"
+        style={{ background: "var(--surface)", borderTop: "1px solid var(--border)" }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
           <div>
             <div className="flex items-center space-x-2">
-              <span className="text-lg font-bold text-white tracking-tight">{item.symbol}</span>
-              <span className="text-[10px] bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded font-mono">
+              <span className="text-lg font-extrabold tracking-tight" style={{ color: "var(--text)" }}>{item.symbol}</span>
+              <span
+                className="text-[10px] px-2 py-0.5 rounded font-mono font-medium"
+                style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
+              >
                 {item.exchange}
               </span>
             </div>
             <div className="flex items-center space-x-2 mt-1">
-              <span className="text-xl font-extrabold font-mono text-white">₹{ltp.toFixed(2)}</span>
+              <span className="text-xl font-extrabold font-mono" style={{ color: "var(--text)" }}>₹{ltp.toFixed(2)}</span>
               <span
-                className={`text-xs font-mono font-bold flex items-center ${
-                  isPositive ? "text-emerald-400" : "text-rose-400"
-                }`}
+                className="text-xs font-mono font-bold flex items-center"
+                style={{ color: isPositive ? "var(--green)" : "var(--red)" }}
               >
                 {isPositive ? "+" : ""}₹{change.toFixed(2)} ({isPositive ? "+" : ""}
                 {changePct.toFixed(2)}%)
@@ -110,7 +115,8 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-zinc-400 hover:text-white rounded-full bg-zinc-800/60 active:scale-95"
+            className="p-2 rounded-full transition-all active:scale-95"
+            style={{ background: "var(--surface2)", color: "var(--muted)" }}
           >
             <X size={18} />
           </button>
@@ -118,45 +124,47 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
 
         {/* Vital Signal Indicators Strip */}
         <div className="grid grid-cols-4 gap-2 text-center">
-          <div className="bg-zinc-950/80 p-2 rounded-lg border border-zinc-800">
-            <span className="text-[9px] uppercase text-zinc-400 block font-semibold">Trend</span>
+          <div className="p-2 rounded-xl" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+            <span className="text-[9px] uppercase block font-semibold" style={{ color: "var(--muted)" }}>Trend</span>
             <span
-              className={`text-xs font-bold font-mono ${
-                item.trend === "UP" ? "text-emerald-400" : "text-rose-400"
-              }`}
+              className="text-xs font-bold font-mono"
+              style={{ color: item.trend === "UP" ? "var(--green)" : "var(--red)" }}
             >
               {item.trend || "—"}
             </span>
           </div>
 
-          <div className="bg-zinc-950/80 p-2 rounded-lg border border-zinc-800">
-            <span className="text-[9px] uppercase text-zinc-400 block font-semibold">Super</span>
+          <div className="p-2 rounded-xl" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+            <span className="text-[9px] uppercase block font-semibold" style={{ color: "var(--muted)" }}>Super</span>
             <span
-              className={`text-xs font-bold font-mono ${
-                item.supersignal === "BUY" ? "text-emerald-400" : item.supersignal === "SELL" ? "text-rose-400" : "text-zinc-400"
-              }`}
+              className="text-xs font-bold font-mono"
+              style={{
+                color: item.supersignal === "BUY" ? "var(--green)" : item.supersignal === "SELL" ? "var(--red)" : "var(--muted)",
+              }}
             >
               {item.supersignal || "—"}
             </span>
           </div>
 
-          <div className="bg-zinc-950/80 p-2 rounded-lg border border-zinc-800">
-            <span className="text-[9px] uppercase text-zinc-400 block font-semibold">Intra</span>
+          <div className="p-2 rounded-xl" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+            <span className="text-[9px] uppercase block font-semibold" style={{ color: "var(--muted)" }}>Intra</span>
             <span
-              className={`text-xs font-bold font-mono ${
-                item.intrasignal === "BUY" ? "text-emerald-400" : item.intrasignal === "SELL" ? "text-rose-400" : "text-zinc-400"
-              }`}
+              className="text-xs font-bold font-mono"
+              style={{
+                color: item.intrasignal === "BUY" ? "var(--green)" : item.intrasignal === "SELL" ? "var(--red)" : "var(--muted)",
+              }}
             >
               {item.intrasignal || "—"}
             </span>
           </div>
 
-          <div className="bg-zinc-950/80 p-2 rounded-lg border border-zinc-800">
-            <span className="text-[9px] uppercase text-zinc-400 block font-semibold">VWAP Sig</span>
+          <div className="p-2 rounded-xl" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+            <span className="text-[9px] uppercase block font-semibold" style={{ color: "var(--muted)" }}>VWAP Sig</span>
             <span
-              className={`text-xs font-bold font-mono ${
-                item.vwapsignal === "BUY" ? "text-emerald-400" : item.vwapsignal === "SELL" ? "text-rose-400" : "text-zinc-400"
-              }`}
+              className="text-xs font-bold font-mono"
+              style={{
+                color: item.vwapsignal === "BUY" ? "var(--green)" : item.vwapsignal === "SELL" ? "var(--red)" : "var(--muted)",
+              }}
             >
               {item.vwapsignal || "—"}
             </span>
@@ -164,75 +172,85 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
         </div>
 
         {/* OHLC & Price Levels */}
-        <div className="space-y-2 bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/60">
-          <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">
+        <div
+          className="space-y-2 p-3.5 rounded-2xl"
+          style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}
+        >
+          <span className="text-[11px] font-bold uppercase tracking-wider block" style={{ color: "var(--muted)" }}>
             Day High / Low & Entry
           </span>
           <div className="grid grid-cols-4 gap-2 text-xs font-mono">
             <div>
-              <span className="text-[9px] text-zinc-400 block">Open</span>
-              <span className="text-zinc-200">₹{item.open?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Open</span>
+              <span style={{ color: "var(--text)" }}>₹{item.open?.toFixed(1) || "—"}</span>
             </div>
             <div>
-              <span className="text-[9px] text-zinc-400 block">High</span>
-              <span className="text-emerald-400">₹{item.high?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>High</span>
+              <span style={{ color: "var(--green)", fontWeight: 700 }}>₹{item.high?.toFixed(1) || "—"}</span>
             </div>
             <div>
-              <span className="text-[9px] text-zinc-400 block">Low</span>
-              <span className="text-rose-400">₹{item.low?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Low</span>
+              <span style={{ color: "var(--red)", fontWeight: 700 }}>₹{item.low?.toFixed(1) || "—"}</span>
             </div>
             <div>
-              <span className="text-[9px] text-zinc-400 block">VWAP</span>
-              <span className="text-zinc-200">₹{item.vwap?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>VWAP</span>
+              <span style={{ color: "var(--text)" }}>₹{item.vwap?.toFixed(1) || "—"}</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-xs font-mono pt-2 border-t border-zinc-800/40">
+          <div className="grid grid-cols-3 gap-2 text-xs font-mono pt-2" style={{ borderTop: "1px solid var(--border)" }}>
             <div>
-              <span className="text-[9px] text-zinc-400 block">Entry Level</span>
-              <span className="text-emerald-400 font-bold">₹{item.entry?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Entry Level</span>
+              <span style={{ color: "var(--green)", fontWeight: 700 }}>₹{item.entry?.toFixed(1) || "—"}</span>
             </div>
             <div>
-              <span className="text-[9px] text-zinc-400 block">Stop Loss (SL)</span>
-              <span className="text-rose-400 font-bold">₹{item.sl?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Stop Loss (SL)</span>
+              <span style={{ color: "var(--red)", fontWeight: 700 }}>₹{item.sl?.toFixed(1) || "—"}</span>
             </div>
             <div>
-              <span className="text-[9px] text-zinc-400 block">GANN</span>
-              <span className="text-blue-400 font-bold">₹{item.gann?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>GANN</span>
+              <span style={{ color: "var(--blue)", fontWeight: 700 }}>₹{item.gann?.toFixed(1) || "—"}</span>
             </div>
           </div>
         </div>
 
         {/* Targets & Pivot Levels */}
-        <div className="space-y-2 bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/60">
-          <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">
+        <div
+          className="space-y-2 p-3.5 rounded-2xl"
+          style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}
+        >
+          <span className="text-[11px] font-bold uppercase tracking-wider block" style={{ color: "var(--muted)" }}>
             Targets (T1 to T5)
           </span>
           <div className="grid grid-cols-5 gap-1.5 text-center font-mono text-xs">
             {["T1", "T2", "T3", "T4", "T5"].map((tLabel, idx) => {
               const val = [item.tgt1, item.tgt2, item.tgt3, item.tgt4, item.tgt5][idx];
               return (
-                <div key={tLabel} className="bg-zinc-900 p-1.5 rounded border border-zinc-800">
-                  <span className="text-[9px] text-zinc-400 block">{tLabel}</span>
-                  <span className="text-emerald-400 font-semibold">{val ? `₹${val.toFixed(1)}` : "—"}</span>
+                <div
+                  key={tLabel}
+                  className="p-1.5 rounded-lg"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                >
+                  <span className="text-[9px] block" style={{ color: "var(--muted)" }}>{tLabel}</span>
+                  <span style={{ color: "var(--green)", fontWeight: 700 }}>{val ? `₹${val.toFixed(1)}` : "—"}</span>
                 </div>
               );
             })}
           </div>
 
           {/* Pivot levels */}
-          <div className="pt-2 border-t border-zinc-800/40 grid grid-cols-3 gap-2 text-xs font-mono">
+          <div className="pt-2 grid grid-cols-3 gap-2 text-xs font-mono" style={{ borderTop: "1px solid var(--border)" }}>
             <div>
-              <span className="text-[9px] text-zinc-400 block">Pivot (PP)</span>
-              <span className="text-zinc-300">₹{item.pp?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Pivot (PP)</span>
+              <span style={{ color: "var(--text)" }}>₹{item.pp?.toFixed(1) || "—"}</span>
             </div>
             <div>
-              <span className="text-[9px] text-zinc-400 block">Resistance R1</span>
-              <span className="text-blue-400">₹{item.r1?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Resistance R1</span>
+              <span style={{ color: "var(--blue)", fontWeight: 700 }}>₹{item.r1?.toFixed(1) || "—"}</span>
             </div>
             <div>
-              <span className="text-[9px] text-zinc-400 block">Support S1</span>
-              <span className="text-rose-400">₹{item.s1?.toFixed(1) || "—"}</span>
+              <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Support S1</span>
+              <span style={{ color: "var(--red)", fontWeight: 700 }}>₹{item.s1?.toFixed(1) || "—"}</span>
             </div>
           </div>
         </div>
@@ -243,11 +261,11 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
             <button
               onClick={handleAdd}
               disabled={isAdding || addedSuccess}
-              className={`w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all shadow-md active:scale-98 ${
-                addedSuccess
-                  ? "bg-emerald-600 text-white"
-                  : "bg-emerald-600 hover:bg-emerald-500 text-white"
-              }`}
+              className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all shadow-md active:scale-98"
+              style={{
+                background: "var(--green)",
+                color: "var(--bg)",
+              }}
             >
               {addedSuccess ? <Check size={18} /> : <PlusCircle size={18} />}
               <span>{addedSuccess ? "Added to Algo Window!" : "Add to Algo Window"}</span>
@@ -256,7 +274,12 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
 
           <button
             onClick={() => onRemoveFromWatchlist(item.id)}
-            className="w-full h-10 text-xs font-medium text-zinc-400 hover:text-rose-400 bg-zinc-800/40 rounded-lg flex items-center justify-center"
+            className="w-full h-10 text-xs font-semibold rounded-xl flex items-center justify-center transition-all active:scale-95"
+            style={{
+              background: "var(--surface2)",
+              color: "var(--red)",
+              border: "1px solid var(--border)",
+            }}
           >
             Remove from Watchlist
           </button>

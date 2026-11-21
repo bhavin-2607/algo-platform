@@ -97,22 +97,29 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-xs transition-opacity animate-in fade-in">
-      <div className="w-full max-w-lg bg-zinc-900 border-t border-zinc-700/80 rounded-t-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto space-y-5">
+    <div className="mobile-drawer-overlay">
+      <div
+        className="w-full max-w-lg mobile-drawer-content p-5 space-y-4"
+        style={{ background: "var(--surface)", borderTop: "1px solid var(--border)" }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
           <div>
             <div className="flex items-center space-x-2">
-              <span className="text-base font-bold text-white">{row.symbol}</span>
-              <span className="text-[10px] bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded font-mono">
+              <span className="text-base font-extrabold" style={{ color: "var(--text)" }}>{row.symbol}</span>
+              <span
+                className="text-[10px] px-2 py-0.5 rounded font-mono font-medium"
+                style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
+              >
                 {row.exchange}
               </span>
             </div>
-            <p className="text-xs text-zinc-400 mt-0.5">Configure Algo Parameters</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>Configure Algo Parameters</p>
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-zinc-400 hover:text-white rounded-full bg-zinc-800/60 active:scale-95"
+            className="p-2 rounded-full transition-all active:scale-95"
+            style={{ background: "var(--surface2)", color: "var(--muted)" }}
           >
             <X size={18} />
           </button>
@@ -120,11 +127,12 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
 
         {/* Quantity Controls */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-zinc-300">Order Quantity</label>
+          <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>Order Quantity</label>
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setQty((prev) => Math.max(1, prev - 25))}
-              className="h-10 w-12 bg-zinc-800 text-white rounded-lg font-bold text-lg active:bg-zinc-700"
+              className="h-10 w-12 rounded-xl font-bold text-lg active:scale-95 transition-all"
+              style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)" }}
             >
               -
             </button>
@@ -132,11 +140,17 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
               type="number"
               value={qty}
               onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
-              className="flex-1 h-10 bg-zinc-950 border border-zinc-700 rounded-lg px-3 text-center text-white font-mono font-bold text-base focus:border-emerald-500 focus:outline-hidden"
+              className="flex-1 h-10 rounded-xl px-3 text-center font-mono font-bold text-base focus:outline-hidden"
+              style={{
+                background: "var(--surface2)",
+                border: "1px solid var(--border)",
+                color: "var(--text)",
+              }}
             />
             <button
               onClick={() => setQty((prev) => prev + 25)}
-              className="h-10 w-12 bg-zinc-800 text-white rounded-lg font-bold text-lg active:bg-zinc-700"
+              className="h-10 w-12 rounded-xl font-bold text-lg active:scale-95 transition-all"
+              style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)" }}
             >
               +
             </button>
@@ -146,11 +160,12 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
               <button
                 key={p}
                 onClick={() => setQty(p)}
-                className={`text-[11px] px-2.5 py-1 rounded font-mono ${
-                  qty === p
-                    ? "bg-emerald-600 text-white font-semibold"
-                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
-                }`}
+                className="text-[11px] px-2.5 py-1 rounded-lg font-mono font-semibold transition-all active:scale-95"
+                style={{
+                  background: qty === p ? "var(--green)" : "var(--surface2)",
+                  color: qty === p ? "var(--bg)" : "var(--muted)",
+                  border: qty === p ? "none" : "1px solid var(--border)",
+                }}
               >
                 {p}
               </button>
@@ -160,7 +175,7 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
 
         {/* Number of Trades (1 - 5) */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-zinc-300">
+          <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>
             Number of Trades (Cycle Limit)
           </label>
           <div className="grid grid-cols-5 gap-2">
@@ -168,34 +183,36 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
               <button
                 key={count}
                 onClick={() => setMaxTrades(count)}
-                className={`h-9 rounded-lg font-mono text-sm font-semibold transition-all ${
-                  maxTrades === count
-                    ? "bg-emerald-600 text-white shadow-sm"
-                    : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                }`}
+                className="h-9 rounded-xl font-mono text-sm font-bold transition-all active:scale-95 shadow-xs"
+                style={{
+                  background: maxTrades === count ? "var(--green)" : "var(--surface2)",
+                  color: maxTrades === count ? "var(--bg)" : "var(--muted)",
+                  border: maxTrades === count ? "none" : "1px solid var(--border)",
+                }}
               >
                 {count}
               </button>
             ))}
           </div>
-          <p className="text-[11px] text-zinc-400">
-            Completed: {row.trades_completed} / {maxTrades} trades
+          <p className="text-[11px]" style={{ color: "var(--muted)" }}>
+            Completed: <strong>{row.trades_completed}</strong> / {maxTrades} trades
           </p>
         </div>
 
         {/* Target Type Selector */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-zinc-300">Target Type</label>
+          <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>Target Type</label>
           <div className="grid grid-cols-3 gap-2">
             {TARGET_OPTIONS.map((opt) => (
               <button
                 key={opt}
                 onClick={() => setTargetType(opt)}
-                className={`h-9 rounded-lg font-mono text-xs font-bold transition-all ${
-                  targetType === opt
-                    ? "bg-blue-600 text-white shadow-sm"
-                    : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                }`}
+                className="h-9 rounded-xl font-mono text-xs font-bold transition-all active:scale-95 shadow-xs"
+                style={{
+                  background: targetType === opt ? "var(--blue)" : "var(--surface2)",
+                  color: targetType === opt ? "#ffffff" : "var(--muted)",
+                  border: targetType === opt ? "none" : "1px solid var(--border)",
+                }}
               >
                 {opt}
               </button>
@@ -206,7 +223,7 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
         {/* Custom Target Input */}
         {targetType === "CUSTOM" && (
           <div className="space-y-1.5 animate-in fade-in">
-            <label className="text-xs font-semibold text-zinc-300">
+            <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>
               Custom Target Price (₹)
             </label>
             <input
@@ -215,14 +232,19 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
               placeholder="e.g. 24850.00"
               value={customTarget}
               onChange={(e) => setCustomTarget(e.target.value)}
-              className="w-full h-10 bg-zinc-950 border border-zinc-700 rounded-lg px-3 text-white font-mono text-sm focus:border-blue-500 focus:outline-hidden"
+              className="w-full h-10 rounded-xl px-3 font-mono text-sm focus:outline-hidden"
+              style={{
+                background: "var(--surface2)",
+                border: "1px solid var(--border)",
+                color: "var(--text)",
+              }}
             />
           </div>
         )}
 
         {/* Custom Entry Input */}
         <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-zinc-300">
+          <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>
             Custom Entry Price (₹, optional override)
           </label>
           <input
@@ -231,13 +253,18 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
             placeholder="Leave empty for Formula Entry"
             value={customEntry}
             onChange={(e) => setCustomEntry(e.target.value)}
-            className="w-full h-10 bg-zinc-950 border border-zinc-700 rounded-lg px-3 text-white font-mono text-sm focus:border-blue-500 focus:outline-hidden"
+            className="w-full h-10 rounded-xl px-3 font-mono text-sm focus:outline-hidden"
+            style={{
+              background: "var(--surface2)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+            }}
           />
         </div>
 
         {/* Trade Mode Selector */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-zinc-300">Trade Mode</label>
+          <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>Trade Mode</label>
           <div className="grid grid-cols-3 gap-2">
             {[
               { id: "FULL", label: "Full Cycle" },
@@ -247,11 +274,12 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
               <button
                 key={m.id}
                 onClick={() => setTradeMode(m.id)}
-                className={`h-9 rounded-lg text-xs font-medium ${
-                  tradeMode === m.id
-                    ? "bg-zinc-100 text-zinc-900 font-bold"
-                    : "bg-zinc-800 text-zinc-400"
-                }`}
+                className="h-9 rounded-xl text-xs font-semibold transition-all active:scale-95"
+                style={{
+                  background: tradeMode === m.id ? "var(--ba-cyan, var(--blue))" : "var(--surface2)",
+                  color: tradeMode === m.id ? "#ffffff" : "var(--muted)",
+                  border: tradeMode === m.id ? "none" : "1px solid var(--border)",
+                }}
               >
                 {m.label}
               </button>
@@ -264,7 +292,11 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="w-full h-11 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white rounded-xl font-semibold text-sm flex items-center justify-center space-x-2 transition-all shadow-md"
+            className="w-full h-11 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all shadow-md active:scale-98"
+            style={{
+              background: "var(--green)",
+              color: "var(--bg)",
+            }}
           >
             <Check size={18} />
             <span>{isSaving ? "Saving..." : "Save Parameters"}</span>
@@ -273,18 +305,24 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleResetCycle}
-              className="h-10 bg-zinc-800 hover:bg-zinc-700 active:scale-98 text-zinc-300 rounded-lg font-medium text-xs flex items-center justify-center space-x-1.5"
+              className="h-10 rounded-xl font-semibold text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95"
+              style={{
+                background: "var(--surface2)",
+                color: "var(--text)",
+                border: "1px solid var(--border)",
+              }}
             >
               <RotateCcw size={14} />
               <span>Reset Cycle</span>
             </button>
             <button
               onClick={handleDelete}
-              className={`h-10 rounded-lg font-medium text-xs flex items-center justify-center space-x-1.5 transition-all ${
-                confirmDelete
-                  ? "bg-rose-600 text-white font-bold"
-                  : "bg-zinc-800 hover:bg-rose-950/60 text-rose-400"
-              }`}
+              className="h-10 rounded-xl font-semibold text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95"
+              style={{
+                background: confirmDelete ? "var(--red)" : "var(--surface2)",
+                color: confirmDelete ? "#ffffff" : "var(--red)",
+                border: confirmDelete ? "none" : "1px solid var(--border)",
+              }}
             >
               {confirmDelete ? <AlertTriangle size={14} /> : <Trash2 size={14} />}
               <span>{confirmDelete ? "Confirm Delete?" : "Delete Script"}</span>

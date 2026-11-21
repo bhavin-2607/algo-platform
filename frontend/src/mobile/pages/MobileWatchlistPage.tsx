@@ -82,23 +82,31 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
     <div className="space-y-3 pb-24 px-3 pt-2">
       {/* Search Bar */}
       <div className="relative">
-        <Search size={15} className="absolute left-3 top-2.5 text-zinc-500" />
+        <Search size={15} className="absolute left-3 top-2.5" style={{ color: "var(--muted)" }} />
         <input
           type="text"
           placeholder="Search stocks, indices, futures, options..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full h-9 pl-9 pr-8 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-white placeholder-zinc-500 focus:border-emerald-500 focus:outline-hidden"
+          className="w-full h-9 pl-9 pr-8 rounded-xl text-xs focus:outline-hidden"
+          style={{
+            background: "var(--surface2)",
+            border: "1px solid var(--border)",
+            color: "var(--text)",
+          }}
         />
         {isSearching && (
-          <Loader2 size={14} className="absolute right-3 top-2.5 text-emerald-400 animate-spin" />
+          <Loader2 size={14} className="absolute right-3 top-2.5 animate-spin" style={{ color: "var(--green)" }} />
         )}
       </div>
 
       {/* Search Results Dropdown / Panel */}
       {searchResults.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2 space-y-1 shadow-xl animate-in fade-in">
-          <div className="px-2 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+        <div
+          className="rounded-2xl p-2.5 space-y-1 shadow-xl animate-in fade-in"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+        >
+          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
             Matching Instruments ({searchResults.length})
           </div>
           <div className="max-h-60 overflow-y-auto space-y-1">
@@ -107,11 +115,12 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
               return (
                 <div
                   key={`${inst.exchange}-${inst.symbol}`}
-                  className="flex items-center justify-between p-2 rounded-lg bg-zinc-950/60 hover:bg-zinc-800/80 transition-all text-xs"
+                  className="flex items-center justify-between p-2 rounded-xl transition-all text-xs"
+                  style={{ background: "var(--surface2)" }}
                 >
                   <div>
-                    <span className="font-bold text-white block">{inst.symbol}</span>
-                    <span className="text-[10px] text-zinc-400 font-mono">
+                    <span className="font-bold block" style={{ color: "var(--text)" }}>{inst.symbol}</span>
+                    <span className="text-[10px] font-mono" style={{ color: "var(--muted)" }}>
                       {inst.exchange} • {inst.segment || "EQ"}
                     </span>
                   </div>
@@ -120,11 +129,12 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
                     <button
                       onClick={() => handleAddFromSearch(inst)}
                       disabled={alreadyInList}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-all active:scale-95 ${
-                        alreadyInList
-                          ? "bg-zinc-800 text-zinc-500 cursor-default"
-                          : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                      }`}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1 transition-all active:scale-95 shadow-sm"
+                      style={{
+                        background: alreadyInList ? "var(--surface)" : "var(--green)",
+                        color: alreadyInList ? "var(--muted)" : "var(--bg)",
+                        border: alreadyInList ? "1px solid var(--border)" : "none",
+                      }}
                     >
                       {alreadyInList ? <Check size={12} /> : <Plus size={12} />}
                       <span>{alreadyInList ? "Added" : "Add"}</span>
@@ -138,11 +148,12 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
       )}
 
       {/* Watchlist Counter */}
-      <div className="flex items-center justify-between px-1 text-xs text-zinc-400 font-medium">
+      <div className="flex items-center justify-between px-1 text-xs font-medium" style={{ color: "var(--muted)" }}>
         <span>Tracked Symbols ({watchlist.length})</span>
         <button
           onClick={onRefresh}
-          className="text-emerald-400 text-[11px] font-semibold active:opacity-70"
+          className="text-[11px] font-semibold active:opacity-70"
+          style={{ color: "var(--green)" }}
         >
           Refresh Feed
         </button>
@@ -162,13 +173,19 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
           ))}
         </div>
       ) : (
-        <div className="bg-zinc-900/60 border border-dashed border-zinc-800 rounded-2xl p-8 text-center space-y-4 my-6">
-          <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mx-auto text-zinc-500">
+        <div
+          className="rounded-2xl p-8 text-center space-y-4 my-6"
+          style={{ background: "var(--surface)", border: "1px dashed var(--border)" }}
+        >
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center mx-auto"
+            style={{ background: "var(--surface2)", color: "var(--muted)" }}
+          >
             <ListOrdered size={24} />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-white">Watchlist is Empty</h4>
-            <p className="text-xs text-zinc-400 mt-1 max-w-xs mx-auto">
+            <h4 className="text-sm font-bold" style={{ color: "var(--text)" }}>Watchlist is Empty</h4>
+            <p className="text-xs mt-1 max-w-xs mx-auto" style={{ color: "var(--muted)" }}>
               Search for symbols above to add them to your live monitoring feed.
             </p>
           </div>

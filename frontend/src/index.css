@@ -1,5 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
 
+@tailwind components;
+@tailwind utilities;
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root, [data-theme="dark"] {
@@ -615,5 +618,89 @@ select option {
   background: var(--surface2);
   color: var(--green);
   border: 1px solid var(--green);
+}
+
+/* ── MOBILE DESIGN SYSTEM TOKENS & UTILITIES ───────────────────────────────── */
+.mobile-app-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font);
+}
+
+.mobile-header-bar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.mobile-bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.06);
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+
+.mobile-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mobile-surface2 {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.mobile-pnl-pill-pos {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(0, 230, 118, 0.3);
+}
+
+.mobile-pnl-pill-neg {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(255, 59, 87, 0.3);
+}
+
+.mobile-badge-neutral {
+  background: var(--surface2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.mobile-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.mobile-drawer-content {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.25);
+  max-height: 85vh;
+  overflow-y: auto;
 }
 
