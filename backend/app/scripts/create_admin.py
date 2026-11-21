@@ -17,15 +17,24 @@ from app.models.user import User, UserRole
 
 async def main() -> None:
     password = os.environ.get("FIRST_ADMIN_PASSWORD", "").strip()
+    if not password and len(sys.argv) > 1:
+        password = sys.argv[1].strip()
+
     if len(password) < 8:
-        print("FIRST_ADMIN_PASSWORD must be at least 8 characters", file=sys.stderr)
+        print("Usage: python backend/app/scripts/create_admin.py <password> (min 8 chars) or set FIRST_ADMIN_PASSWORD env var.", file=sys.stderr)
         sys.exit(2)
+
     await init_db()
     async with AsyncSessionLocal() as db:
-        count = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
-        if count:
-            print("Users already exist. No admin was created.")
+        result = await db.execute(select(User).where(User.username == "admin"))
+        existing_admin = result.scalar_one_or_none()
+        if existing_admin:
+            existing_admin.hashed_password = hash_password(password)
+            existing_admin.is_active = True
+            await db.commit()
+            print("Successfully updated password for existing admin user 'admin'.")
             return
+
         db.add(User(
             email="admin@example.com",
             username="admin",
