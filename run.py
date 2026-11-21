@@ -311,7 +311,17 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Web server port (default: 8000)")
     parser.add_argument("--dev", action="store_true", help="Run with live Vite frontend hot-reloading")
     parser.add_argument("--open-browser", action="store_true", default=False, help="Automatically open web browser on startup (default: False)")
+    parser.add_argument("--create-admin", type=str, metavar="PASSWORD", help="Create or reset admin user password and exit")
     args = parser.parse_args()
+
+    py_exe = find_python_executable()
+
+    if args.create_admin:
+        admin_script = os.path.join(BACKEND_DIR, "app", "scripts", "create_admin.py")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = BACKEND_DIR
+        res = subprocess.run([py_exe, admin_script, args.create_admin], cwd=ROOT_DIR, env=env)
+        sys.exit(res.returncode)
 
     print(f"""
 {Colors.CYAN}{Colors.BOLD}=============================================================
