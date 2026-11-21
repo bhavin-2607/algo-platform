@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Capacitor } from "@capacitor/core";
+import { StatusBar, Style } from "@capacitor/status-bar";
 import { useAuthStore } from "@/store/auth";
 import { api } from "@/utils/api";
 import { wsBase } from "@/utils/ws";
@@ -22,6 +24,21 @@ export default function MobileApp() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
+
+    // Synchronize native Android status bar colors and icons with theme
+    try {
+      if (Capacitor.isPluginAvailable("StatusBar")) {
+        StatusBar.show().catch(() => {});
+        StatusBar.setOverlaysWebView({ overlay: false }).catch(() => {});
+        if (theme === "dark") {
+          StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+          StatusBar.setBackgroundColor({ color: "#0B1933" }).catch(() => {});
+        } else {
+          StatusBar.setStyle({ style: Style.Light }).catch(() => {});
+          StatusBar.setBackgroundColor({ color: "#f4f7fa" }).catch(() => {});
+        }
+      }
+    } catch {}
   }, [theme]);
 
   const toggleTheme = () => {

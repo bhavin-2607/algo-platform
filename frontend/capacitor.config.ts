@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
-    cleartext: true,
+    cleartext: false,
     allowNavigation: [
       'pyregex.dpdns.org',
       '*.dpdns.org',
@@ -16,9 +16,16 @@ const config: CapacitorConfig = {
     ],
   },
   android: {
-    allowMixedContent: true,
+    allowMixedContent: false,
     captureInput: true,
-    webContentsDebuggingEnabled: true,
+    webContentsDebuggingEnabled: false,
+  },
+  plugins: {
+    StatusBar: {
+      overlaysWebView: false,
+      style: 'DARK',
+      backgroundColor: '#0B1933',
+    },
   },
 };
 

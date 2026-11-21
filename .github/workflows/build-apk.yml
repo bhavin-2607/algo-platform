@@ -51,14 +51,14 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x frontend/android/gradlew
 
-      - name: Build Android Debug APK
+      - name: Build Android Release APK
         run: |
           cd frontend/android
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Upload Debug APK Artifact
+      - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AlgoMobile-debug-apk
-          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          name: AlgoMobile-release-apk
+          path: frontend/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
