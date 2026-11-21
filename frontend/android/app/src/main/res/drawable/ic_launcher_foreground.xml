@@ -1,0 +1,30 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportHeight="108"
+    android:viewportWidth="108">
+    <!-- Cyan Pillars -->
+    <path
+        android:fillColor="#08B6DE"
+        android:pathData="M34.2,72.45 V60.75 H43.2 V72.45 Z M49.95,72.45 V50.62 H58.95 V72.45 Z M65.7,72.45 V39.38 H74.7 V72.45 Z" />
+    <!-- White Trend Line -->
+    <path
+        android:strokeColor="#F7FAFC"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M33.3,52 L47.7,45.9 L57.8,50.6 L74.5,34.9" />
+    <!-- Amber Data Points -->
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M33.3,49.75 A2.25,2.25 0 1,0 33.3,54.25 A2.25,2.25 0 1,0 33.3,49.75 Z" />
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M47.7,43.65 A2.25,2.25 0 1,0 47.7,48.15 A2.25,2.25 0 1,0 47.7,43.65 Z" />
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M57.8,48.35 A2.25,2.25 0 1,0 57.8,52.85 A2.25,2.25 0 1,0 57.8,48.35 Z" />
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M74.5,32.65 A2.25,2.25 0 1,0 74.5,37.15 A2.25,2.25 0 1,0 74.5,32.65 Z" />
+</vector>
