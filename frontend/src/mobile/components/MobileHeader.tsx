@@ -33,12 +33,12 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
       {/* Top Strip */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2.5">
-          <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center font-extrabold text-xs tracking-wider shadow-sm"
-            style={{ background: "var(--blue)", color: "#ffffff" }}
-          >
-            BA
-          </div>
+          <img
+            src="/branding/algo-symbol.svg"
+            alt="Algo Platform Logo"
+            className="w-8 h-8 rounded-xl shadow-sm"
+            style={{ borderRadius: 9 }}
+          />
           <div>
             <div className="flex items-center space-x-1.5">
               <span className="font-extrabold text-sm tracking-tight" style={{ color: "var(--text)" }}>

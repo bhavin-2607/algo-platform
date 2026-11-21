@@ -71,11 +71,16 @@ export const MobileLoginPage: React.FC<MobileLoginPageProps> = ({
 
       {/* Branding */}
       <div className="space-y-4 text-center my-auto">
-        <div
-          className="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center shadow-lg"
-          style={{ background: "var(--blue)", color: "#ffffff" }}
-        >
-          <span className="font-black text-2xl tracking-wider">BA</span>
+        <div className="flex justify-center">
+          <img
+            src="/branding/algo-symbol.svg"
+            alt="Algo Platform Logo"
+            className="w-16 h-16 shadow-xl"
+            style={{
+              borderRadius: 16,
+              boxShadow: "0 8px 24px rgba(8, 182, 222, 0.25)",
+            }}
+          />
         </div>
 
         <div>
@@ -169,8 +174,15 @@ export const MobileLoginPage: React.FC<MobileLoginPageProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="text-center text-[10px] font-mono" style={{ color: "var(--muted)" }}>
-        Algo Platform Mobile • v1.0.0
+      <div className="flex flex-col items-center space-y-2 pb-2">
+        <img
+          src={theme === "dark" ? "/branding/endorsed-by-ba-dark.svg" : "/branding/endorsed-by-ba-light.svg"}
+          alt="An Independent Product by Bhavin Amesara"
+          style={{ width: 155, height: "auto", opacity: 0.85 }}
+        />
+        <div className="text-[10px] font-mono" style={{ color: "var(--muted)" }}>
+          Algo Platform Mobile • Authorized Access Only
+        </div>
       </div>
     </div>
   );
