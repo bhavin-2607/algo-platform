@@ -19,7 +19,7 @@ npx cap sync android
 
 echo "=== Checking Android Build Environment ==="
 if ! command -v javac >/dev/null 2>&1 || ! java -version >/dev/null 2>&1; then
-    echo "Notice: Java Development Kit (JDK 17+) is not configured in this shell environment."
+    echo "Notice: Java Development Kit (JDK 21+) is not configured in this shell environment."
     echo ""
     echo "Options to generate your .apk:"
     echo "1. GitHub Actions (Automated Cloud Build):"
@@ -33,9 +33,9 @@ if ! command -v javac >/dev/null 2>&1 || ! java -version >/dev/null 2>&1; then
     echo "   Then select: Build > Build Bundle(s) / APK(s) > Build APK(s)."
     echo ""
     echo "3. Install OpenJDK locally:"
-    echo "   brew install openjdk@17"
-    echo "   sudo ln -sfn /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-17.jdk"
-    echo "   export JAVA_HOME=/opt/homebrew/opt/openjdk@17"
+    echo "   brew install openjdk@21"
+    echo "   sudo ln -sfn /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk"
+    echo "   export JAVA_HOME=/opt/homebrew/opt/openjdk@21"
     echo "   cd '${ANDROID_DIR}' && ./gradlew assembleDebug"
     exit 0
 fi
