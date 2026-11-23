@@ -10,6 +10,7 @@ from app.services.astro_service import (
     compute_active_aspects,
     get_astro_risk_multiplier,
     get_market_week_outlook,
+    get_mumbai_sunrise,
     SPAN_NAKSHATRA,
     SPAN_PADA,
     NAKSHATRAS,
@@ -235,6 +236,48 @@ class AstroServiceTests(unittest.TestCase):
         # Current + Next
         res_curr_next = get_market_week_outlook(include_prev=False, include_next=True, ref_date=ref_d)
         self.assertEqual(res_curr_next.total_trading_days, 10)
+
+    def test_mumbai_sunrise_and_time_modes(self):
+        """Verify astronomical Sunrise calculation and time mode snapshots (Sunrise vs 09:00 AM)."""
+        test_d = date(2026, 11, 23)
+        sunrise_dt = get_mumbai_sunrise(test_d)
+        self.assertEqual(sunrise_dt.date(), test_d)
+        self.assertEqual(sunrise_dt.hour, 6)
+        self.assertTrue(45 <= sunrise_dt.minute <= 55)
+
+        # 1. Sunrise snapshot
+        snap_sr = get_astro_snapshot(date_obj=test_d, time_mode="SUNRISE")
+        self.assertIn("Sunrise", snap_sr.reference_time_label)
+        self.assertIsNotNone(snap_sr.sunrise_time_iso)
+        moon_sr = next(p for p in snap_sr.planets if p.name == "Moon")
+        self.assertIsNotNone(moon_sr.speed_str)
+        self.assertTrue("°" in moon_sr.speed_str and "'" in moon_sr.speed_str)
+
+        # 2. 09:00 AM snapshot
+        snap_9am = get_astro_snapshot(date_obj=test_d, time_mode="09:00")
+        self.assertIn("09:00 AM", snap_9am.reference_time_label)
+        moon_9am = next(p for p in snap_9am.planets if p.name == "Moon")
+
+        # Moon longitude at 09:00 AM must be ahead of Sunrise (~1.3 degrees in ~2.15 hours)
+        self.assertGreater(moon_9am.longitude, moon_sr.longitude)
+        diff_deg = moon_9am.longitude - moon_sr.longitude
+        self.assertTrue(1.0 <= diff_deg <= 1.6)
+
+        # 3. HTTP endpoint with date_str and time_mode
+        from fastapi.testclient import TestClient
+        from app.main import app
+        client = TestClient(app)
+
+        res_sr = client.get("/api/v1/astro/snapshot?date_str=2026-11-16&time_mode=SUNRISE")
+        self.assertEqual(res_sr.status_code, 200)
+        data_sr = res_sr.json()
+        self.assertIn("Sunrise", data_sr["reference_time_label"])
+
+        res_9am = client.get("/api/v1/astro/snapshot?date_str=2026-11-16&time_mode=09:00")
+        self.assertEqual(res_9am.status_code, 200)
+        data_9am = res_9am.json()
+        self.assertIn("09:00 AM", data_9am["reference_time_label"])
+
 
 
 

@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 IST = zoneinfo.ZoneInfo("Asia/Kolkata")
 UTC = zoneinfo.ZoneInfo("UTC")
 
+# National Stock Exchange (NSE) / Mumbai geographic coordinates (19.0760° N, 72.8777° E)
+NSE_GEO = (72.8777, 19.0760, 0.0)
+
 # Initialize Swiss Ephemeris in Lahiri Sidereal mode
 swe.set_sid_mode(swe.SIDM_LAHIRI)
 
@@ -141,6 +144,46 @@ def _format_dms(deg: float) -> str:
     return f"{d}° {m:02d}' {s:02d}\""
 
 
+def _format_speed_dms(speed: float) -> str:
+    """Format daily velocity in traditional Vedic degrees/minutes/seconds per day (e.g. +14° 34' 05\"/d)."""
+    sign = "+" if speed >= 0 else "-"
+    abs_speed = abs(speed)
+    deg = int(abs_speed)
+    rem = (abs_speed - deg) * 60.0
+    minute = int(rem)
+    sec = int(round((rem - minute) * 60.0))
+    if sec >= 60:
+        sec = 0
+        minute += 1
+    if minute >= 60:
+        minute = 0
+        deg += 1
+    return f"{sign}{deg:02d}° {minute:02d}' {sec:02d}\"/d"
+
+
+def get_mumbai_sunrise(target_date: date) -> datetime:
+    """
+    Calculates astronomical Sunrise in Asia/Kolkata (IST) for Mumbai/NSE coordinates (19.0760° N, 72.8777° E).
+    Uses Swiss Ephemeris analytical Moshier engine.
+    """
+    jd = swe.julday(target_date.year, target_date.month, target_date.day, 0.0)
+    res, tret = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, NSE_GEO, 1013.25, 25.0, swe.FLG_MOSEPH)
+    tjd_rise = tret[0]
+    year, month, day, hour_dec = swe.revjul(tjd_rise)
+    h = int(hour_dec)
+    m = int((hour_dec - h) * 60)
+    s = int(round(((hour_dec - h) * 60 - m) * 60))
+    if s >= 60:
+        s = 0
+        m += 1
+    if m >= 60:
+        m = 0
+        h += 1
+    dt_ut = datetime(year, month, day, h, m, s, tzinfo=UTC)
+    return dt_ut.astimezone(IST)
+
+
+
 def _to_julian_day(dt: datetime) -> float:
     """Convert a timezone-aware or naive datetime to Julian Day (UT)."""
     if dt.tzinfo is None:
@@ -227,6 +270,7 @@ def get_planetary_telemetry(dt: datetime) -> List[PlanetTelemetry]:
                 pada=pada,
                 kp_sub_lord=kp_sub,
                 speed=round(speed, 4),
+                speed_str=_format_speed_dms(speed),
                 is_retrograde=is_retrograde,
                 is_stationary=is_stationary,
             )
@@ -251,6 +295,7 @@ def get_planetary_telemetry(dt: datetime) -> List[PlanetTelemetry]:
             pada=k_pada,
             kp_sub_lord=k_sub,
             speed=round(ketu_speed, 4),
+            speed_str=_format_speed_dms(ketu_speed),
             is_retrograde=True,
             is_stationary=False,
         )
@@ -316,14 +361,55 @@ def compute_active_aspects(planets: List[PlanetTelemetry]) -> List[AspectDetail]
     return active
 
 
-def get_astro_snapshot(dt: Optional[datetime] = None) -> AstroMarketSignal:
-    """Generate a complete AstroMarketSignal snapshot for a given time (defaults to current IST)."""
-    if dt is None:
-        dt = datetime.now(IST)
-    elif dt.tzinfo is None:
-        dt = dt.replace(tzinfo=IST)
+def get_astro_snapshot(
+    dt: Optional[datetime] = None,
+    date_obj: Optional[date] = None,
+    time_mode: str = "SUNRISE",
+    reference_label: Optional[str] = None,
+) -> AstroMarketSignal:
+    """
+    Generate a complete AstroMarketSignal snapshot for a given timestamp or (date, time_mode).
+    Time modes:
+      - "SUNRISE": Exact astronomical sunrise for Mumbai/NSE coordinates (standard Vedic benchmark).
+      - "09:00": Market pre-open benchmark (09:00 AM IST).
+      - "LIVE": Current live moment in IST.
+    """
+    sunrise_dt = None
+    if dt is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=IST)
+        eval_dt = dt
+        try:
+            sunrise_dt = get_mumbai_sunrise(eval_dt.date())
+        except Exception:
+            sunrise_dt = None
+        label = reference_label or eval_dt.strftime("%H:%M:%S IST")
+    elif date_obj is not None:
+        try:
+            sunrise_dt = get_mumbai_sunrise(date_obj)
+        except Exception:
+            sunrise_dt = None
 
-    planets = get_planetary_telemetry(dt)
+        mode_upper = time_mode.upper()
+        if mode_upper in ("09:00", "09:00 AM", "MARKET_OPEN"):
+            eval_dt = datetime.combine(date_obj, time(9, 0), tzinfo=IST)
+            label = reference_label or f"09:00 AM IST (Pre-Market)"
+        elif mode_upper == "LIVE":
+            eval_dt = datetime.now(IST)
+            label = reference_label or f"Live ({eval_dt.strftime('%H:%M:%S IST')})"
+        else:  # default SUNRISE
+            eval_dt = sunrise_dt if sunrise_dt else datetime.combine(date_obj, time(6, 45), tzinfo=IST)
+            sr_str = sunrise_dt.strftime("%H:%M:%S IST") if sunrise_dt else "06:45 IST"
+            label = reference_label or f"Sunrise ({sr_str})"
+    else:
+        eval_dt = datetime.now(IST)
+        try:
+            sunrise_dt = get_mumbai_sunrise(eval_dt.date())
+        except Exception:
+            sunrise_dt = None
+        label = reference_label or f"Live ({eval_dt.strftime('%H:%M:%S IST')})"
+
+    planets = get_planetary_telemetry(eval_dt)
     aspects = compute_active_aspects(planets)
 
     hard_score = round(sum(a.weight for a in aspects if a.is_hard), 2)
@@ -344,8 +430,8 @@ def get_astro_snapshot(dt: Optional[datetime] = None) -> AstroMarketSignal:
     moon_nak = moon.nakshatra if moon else "Unknown"
     moon_sub = moon.kp_sub_lord if moon else "Unknown"
 
-    dt_ist = dt.astimezone(IST)
-    dt_utc = dt.astimezone(UTC)
+    dt_ist = eval_dt.astimezone(IST)
+    dt_utc = eval_dt.astimezone(UTC)
 
     # Observational risk multiplier (for watch gauge display)
     risk_mult = 0.5 if volatility_alert else 1.0
@@ -353,6 +439,8 @@ def get_astro_snapshot(dt: Optional[datetime] = None) -> AstroMarketSignal:
     return AstroMarketSignal(
         timestamp_iso=dt_ist.isoformat(),
         timestamp_utc=dt_utc.isoformat(),
+        reference_time_label=label,
+        sunrise_time_iso=sunrise_dt.isoformat() if sunrise_dt else None,
         regime_bias=regime_bias,
         volatility_alert=volatility_alert,
         hard_aspect_score=hard_score,
@@ -477,6 +565,7 @@ def get_market_week_outlook(
     include_prev: bool = True,
     include_next: bool = True,
     ref_date: Optional[date] = None,
+    time_mode: str = "SUNRISE",
 ) -> MarketWeekOutlookResponse:
     """
     Computes a market-days (Monday-to-Friday only) astrological timing outlook across:
@@ -484,6 +573,7 @@ def get_market_week_outlook(
     - Current week (Mon-Fri, 5 trading days): Past days, today, remaining days of the week
     - Next week (Mon-Fri, 5 trading days): Forward-looking cyclical projections (if include_next is True)
 
+    Evaluates daily baseline at astronomical Sunrise for Mumbai/NSE (or 09:00 AM IST if requested).
     Excludes non-trading weekends (Saturday and Sunday).
     """
     now_ist = datetime.now(IST)
@@ -513,8 +603,15 @@ def get_market_week_outlook(
 
     for days_list, category in trading_blocks:
         for d in days_list:
-            midday_dt = datetime.combine(d, time(12, 0), tzinfo=IST)
-            snap = get_astro_snapshot(midday_dt)
+            sunrise_dt = get_mumbai_sunrise(d)
+            if time_mode.upper() in ("09:00", "09:00 AM", "MARKET_OPEN"):
+                eval_dt = datetime.combine(d, time(9, 0), tzinfo=IST)
+                label = f"09:00 AM IST ({d.strftime('%d %b')})"
+            else:
+                eval_dt = sunrise_dt
+                label = f"Sunrise ({sunrise_dt.strftime('%H:%M IST')})"
+
+            snap = get_astro_snapshot(eval_dt, reference_label=label)
             win_res = get_intraday_windows(d)
 
             items.append(
@@ -532,6 +629,8 @@ def get_market_week_outlook(
                     moon_nakshatra=snap.moon_nakshatra,
                     moon_kp_sub_lord=snap.moon_kp_sub_lord,
                     total_shift_windows=win_res.total_windows,
+                    sunrise_time_str=sunrise_dt.strftime("%H:%M IST"),
+                    time_mode=time_mode.upper(),
                 )
             )
 
@@ -539,6 +638,7 @@ def get_market_week_outlook(
         reference_date=ref_date.isoformat(),
         include_previous_week=include_prev,
         include_next_week=include_next,
+        time_mode=time_mode.upper(),
         total_trading_days=len(items),
         days=items,
     )

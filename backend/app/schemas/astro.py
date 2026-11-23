@@ -20,6 +20,7 @@ class PlanetTelemetry(BaseModel):
     pada: int = Field(..., ge=1, le=4, description="Nakshatra Pada (quarter, 1 to 4)")
     kp_sub_lord: str = Field(..., description="Krishnamurti Paddhati (KP) Sub-Lord")
     speed: float = Field(..., description="Apparent daily velocity in degrees per day")
+    speed_str: str = Field(..., description="Daily speed formatted in DMS: e.g. +14° 34' 05\"/d")
     is_retrograde: bool = Field(..., description="True if apparent daily speed is negative")
     is_stationary: bool = Field(..., description="True if speed is nearly zero (|speed| < 0.05 deg/day)")
 
@@ -39,6 +40,8 @@ class AspectDetail(BaseModel):
 class AstroMarketSignal(BaseModel):
     timestamp_iso: str = Field(..., description="ISO 8601 timestamp in Asia/Kolkata (IST)")
     timestamp_utc: str = Field(..., description="ISO 8601 timestamp in UTC")
+    reference_time_label: str = Field("Live IST", description="Time label (e.g. Sunrise 06:46 IST, 09:00 AM IST, Live)")
+    sunrise_time_iso: Optional[str] = Field(None, description="ISO timestamp of astronomical sunrise in Mumbai/NSE")
     regime_bias: str = Field(..., description="BULLISH_TAILWIND, HIGH_VOLATILITY_CAUTION, or NEUTRAL_RANGE")
     volatility_alert: bool = Field(..., description="True if hard aspects >= 1.8 or any major planet is stationary")
     hard_aspect_score: float = Field(..., description="Cumulative stress score from hard aspects")
@@ -81,15 +84,18 @@ class MarketDayOutlookItem(BaseModel):
     hard_aspect_score: float = Field(..., description="Cumulative stress score from hard aspects")
     soft_aspect_score: float = Field(..., description="Cumulative harmony score from soft aspects")
     net_sentiment_score: float = Field(..., description="Net sentiment score (Soft minus Hard)")
-    moon_nakshatra: str = Field(..., description="Midday Moon Nakshatra")
-    moon_kp_sub_lord: str = Field(..., description="Midday Moon KP Sub-Lord")
+    moon_nakshatra: str = Field(..., description="Moon Nakshatra at reference benchmark")
+    moon_kp_sub_lord: str = Field(..., description="Moon KP Sub-Lord at reference benchmark")
     total_shift_windows: int = Field(..., description="Total Moon Nakshatra & KP Sub-Lord shifts during NSE session")
+    sunrise_time_str: Optional[str] = Field(None, description="Astronomical sunrise time (Mumbai/NSE)")
+    time_mode: str = Field("SUNRISE", description="Benchmark mode: SUNRISE or 09:00")
 
 
 class MarketWeekOutlookResponse(BaseModel):
     reference_date: str = Field(..., description="Reference date in YYYY-MM-DD")
     include_previous_week: bool = Field(..., description="Whether previous week (testing/audit) is included")
     include_next_week: bool = Field(..., description="Whether next week (projections) is included")
+    time_mode: str = Field("SUNRISE", description="Benchmark time mode: SUNRISE or 09:00")
     total_trading_days: int = Field(..., description="Total market trading days returned (5, 10, or 15)")
     days: List[MarketDayOutlookItem] = Field(..., description="List of trading days")
 

@@ -13,6 +13,8 @@ import {
   ChevronRight,
   Calendar,
   Layers,
+  Sun,
+  Info,
 } from "lucide-react";
 import {
   getAstroSettings,
@@ -31,6 +33,7 @@ export interface PlanetTelemetry {
   pada: number;
   kp_sub_lord: string;
   speed: number;
+  speed_str?: string;
   is_retrograde: boolean;
   is_stationary: boolean;
 }
@@ -50,6 +53,8 @@ export interface AspectDetail {
 export interface AstroMarketSignal {
   timestamp_iso: string;
   timestamp_utc: string;
+  reference_time_label?: string;
+  sunrise_time_iso?: string;
   regime_bias: "BULLISH_TAILWIND" | "HIGH_VOLATILITY_CAUTION" | "NEUTRAL_RANGE" | string;
   volatility_alert: boolean;
   hard_aspect_score: number;
@@ -97,12 +102,15 @@ export interface MarketDayOutlookItem {
   moon_nakshatra: string;
   moon_kp_sub_lord: string;
   total_shift_windows: number;
+  sunrise_time_str?: string;
+  time_mode?: string;
 }
 
 export interface MarketWeekOutlookResponse {
   reference_date: string;
   include_previous_week: boolean;
   include_next_week: boolean;
+  time_mode: string;
   total_trading_days: number;
   days: MarketDayOutlookItem[];
 }
@@ -118,6 +126,9 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
 
   // Load persistent user settings
   const [settings, setSettings] = useState<AstroTimingSettings>(getAstroSettings);
+
+  // Time benchmark mode: SUNRISE (default Kundli benchmark), 09:00 (Pre-Market), or LIVE (today only)
+  const [timeMode, setTimeMode] = useState<"SUNRISE" | "09:00" | "LIVE">("SUNRISE");
 
   // Sync settings across components
   useEffect(() => {
@@ -148,12 +159,21 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
     }
   }, [open, todayDate]);
 
+  const isSelectedToday = selectedDate === todayDate;
+
   // Query multi-week Monday-to-Friday market outlook
+  const outlookTimeMode = timeMode === "09:00" ? "09:00" : "SUNRISE";
   const { data: weekData, isLoading: weekLoading } = useQuery<MarketWeekOutlookResponse>({
-    queryKey: ["astro-market-week-outlook", settings.includePreviousWeek, settings.includeNextWeek, todayDate],
+    queryKey: [
+      "astro-market-week-outlook",
+      settings.includePreviousWeek,
+      settings.includeNextWeek,
+      todayDate,
+      outlookTimeMode,
+    ],
     queryFn: async () => {
       const res = await api.get(
-        `/v1/astro/market-week-outlook?include_prev=${settings.includePreviousWeek}&include_next=${settings.includeNextWeek}&ref_date_str=${todayDate}`
+        `/v1/astro/market-week-outlook?include_prev=${settings.includePreviousWeek}&include_next=${settings.includeNextWeek}&ref_date_str=${todayDate}&time_mode=${outlookTimeMode}`
       );
       return res.data;
     },
@@ -161,7 +181,7 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
     staleTime: 60000,
   });
 
-  // Query intraday shift windows for the selected trading day
+  // Query intraday shift windows for the selected trading day (09:15-15:30 IST)
   const { data: windowsData, isLoading: windowsLoading } = useQuery<IntradayAstroResponse>({
     queryKey: ["astro-intraday-windows", selectedDate],
     queryFn: async () => {
@@ -172,19 +192,18 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
     staleTime: 60000,
   });
 
-  // Query snapshot telemetry for selected trading day (midday 12:00 IST)
-  const isSelectedToday = selectedDate === todayDate;
+  // Query snapshot telemetry for selected trading day at the requested benchmark time
   const { data: selectedDaySnapshot, isLoading: snapshotLoading } = useQuery<AstroMarketSignal>({
-    queryKey: ["astro-snapshot-day", selectedDate],
+    queryKey: ["astro-snapshot-day", selectedDate, timeMode],
     queryFn: async () => {
-      const res = await api.get(`/v1/astro/snapshot?timestamp_iso=${selectedDate}T12:00:00+05:30`);
+      const res = await api.get(`/v1/astro/snapshot?date_str=${selectedDate}&time_mode=${timeMode}`);
       return res.data;
     },
-    enabled: open && !isSelectedToday && !!selectedDate,
+    enabled: open && !!selectedDate,
     staleTime: 60000,
   });
 
-  const activeSignal: AstroMarketSignal | null = isSelectedToday && signal ? signal : selectedDaySnapshot ?? signal;
+  const activeSignal: AstroMarketSignal | null = selectedDaySnapshot ?? (isSelectedToday && timeMode === "LIVE" ? signal : null);
 
   const togglePreviousWeek = () => {
     const next = { ...settings, includePreviousWeek: !settings.includePreviousWeek };
@@ -224,6 +243,11 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
   const currWeekDays = tradingDays.filter((d) => d.week_category === "CURRENT_WEEK");
   const nextWeekDays = tradingDays.filter((d) => d.week_category === "NEXT_WEEK");
 
+  // Format active sunrise time preview
+  const activeSunriseDisplay = activeSignal?.sunrise_time_iso
+    ? `${activeSignal.sunrise_time_iso.slice(11, 16)} IST`
+    : "~06:48 IST";
+
   return (
     <div
       style={{
@@ -240,7 +264,7 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
       <div
         style={{
           width: "100%",
-          maxWidth: 680,
+          maxWidth: 700,
           height: "100%",
           background: "var(--surface)",
           borderLeft: "1px solid var(--border)",
@@ -301,7 +325,7 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
                 </span>
               </div>
               <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-                Lahiri Sidereal • KP Sub-Lord Vimshottari • Monday-to-Friday Market Cycles
+                Lahiri Sidereal • KP Sub-Lord Vimshottari • Mon–Fri Indian Market Cycles
               </div>
             </div>
           </div>
@@ -581,6 +605,107 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
           </div>
         </div>
 
+        {/* Benchmark Time Selector Strip (Sunrise vs 09:00 AM vs Live) */}
+        <div
+          style={{
+            padding: "8px 20px",
+            background: "var(--surface2)",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase" }}>
+              TIME BENCHMARK:
+            </span>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button
+                type="button"
+                onClick={() => setTimeMode("SUNRISE")}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: "3px 9px",
+                  borderRadius: 3,
+                  background: timeMode === "SUNRISE" ? "var(--ba-cyan)" : "var(--surface)",
+                  color: timeMode === "SUNRISE" ? "#000" : "var(--muted)",
+                  border: `1px solid ${timeMode === "SUNRISE" ? "var(--ba-cyan)" : "var(--border)"}`,
+                  cursor: "pointer",
+                }}
+                title="Traditional Vedic Kundli benchmark: astronomical sunrise for Mumbai/NSE"
+              >
+                SUNRISE ({activeSunriseDisplay})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTimeMode("09:00")}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: "3px 9px",
+                  borderRadius: 3,
+                  background: timeMode === "09:00" ? "var(--ba-cyan)" : "var(--surface)",
+                  color: timeMode === "09:00" ? "#000" : "var(--muted)",
+                  border: `1px solid ${timeMode === "09:00" ? "var(--ba-cyan)" : "var(--border)"}`,
+                  cursor: "pointer",
+                }}
+                title="Indian market pre-open setup benchmark (09:00 AM IST)"
+              >
+                09:00 AM IST (PRE-MARKET)
+              </button>
+
+              {isSelectedToday && (
+                <button
+                  type="button"
+                  onClick={() => setTimeMode("LIVE")}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    padding: "3px 9px",
+                    borderRadius: 3,
+                    background: timeMode === "LIVE" ? "var(--green)" : "var(--surface)",
+                    color: timeMode === "LIVE" ? "#000" : "var(--muted)",
+                    border: `1px solid ${timeMode === "LIVE" ? "var(--green)" : "var(--border)"}`,
+                    cursor: "pointer",
+                  }}
+                  title="Current live clock time"
+                >
+                  LIVE NOW
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ fontSize: 10, color: "var(--ba-cyan)", fontWeight: 700, fontFamily: "monospace" }}>
+            {activeSignal?.reference_time_label || timeMode}
+          </div>
+        </div>
+
+        {/* Aspect Score Explanation Banner */}
+        <div
+          style={{
+            padding: "6px 20px",
+            background: "rgba(255, 255, 255, 0.02)",
+            borderBottom: "1px solid var(--border)",
+            fontSize: 10,
+            color: "var(--muted)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <Info size={12} style={{ color: "var(--ba-cyan)", flexShrink: 0 }} />
+          <span>
+            <strong style={{ color: "var(--text)" }}>Aspect Score:</strong> Net planetary aspect sentiment (Soft
+            Harmonies like 120° Trine minus Hard Stress Aspects like 90° Square). Positive (<span style={{ color: "var(--green)" }}>+</span>) = Harmonic tailwind, Negative (<span style={{ color: "var(--red)" }}>-</span>) = Hard aspect volatility & tension.
+          </span>
+        </div>
+
         {/* Real-time Summary Cards Strip for Selected Trading Day */}
         {activeSignal && (
           <div
@@ -684,7 +809,7 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
               }}
             >
               <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>
-                Moon Transit (Midday)
+                Moon Transit ({timeMode})
               </div>
               <div style={{ fontSize: 12, fontWeight: 800, marginTop: 4, color: "var(--text)" }}>
                 {activeSignal.moon_nakshatra}{" "}
@@ -875,217 +1000,262 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
           )}
 
           {/* TAB 2: ASPECT RADAR & STRESS */}
-          {activeTab === "ASPECTS" && activeSignal && (
+          {activeTab === "ASPECTS" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {/* Stress vs Harmony Visual Bar */}
-              <div
-                style={{
-                  padding: "12px 16px",
-                  borderRadius: 4,
-                  background: "var(--surface2)",
-                  border: "1px solid var(--border)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 8,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700 }}>
-                  <span style={{ color: "var(--red)" }}>
-                    Hard Aspects Stress: {activeSignal.hard_aspect_score}
-                  </span>
-                  <span style={{ color: "var(--green)" }}>
-                    Soft Aspects Harmony: {activeSignal.soft_aspect_score}
-                  </span>
+              {snapshotLoading ? (
+                <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+                  Calculating planetary aspects for {selectedDate} ({timeMode})...
                 </div>
-
-                <div
-                  style={{
-                    height: 8,
-                    background: "rgba(255, 255, 255, 0.08)",
-                    borderRadius: 4,
-                    overflow: "hidden",
-                    display: "flex",
-                  }}
-                >
+              ) : activeSignal ? (
+                <>
+                  {/* Stress vs Harmony Visual Bar */}
                   <div
                     style={{
-                      width: `${Math.min(
-                        100,
-                        (activeSignal.hard_aspect_score /
-                          (activeSignal.hard_aspect_score + activeSignal.soft_aspect_score || 1)) *
-                          100
-                      )}%`,
-                      background: "var(--red)",
+                      padding: "12px 16px",
+                      borderRadius: 4,
+                      background: "var(--surface2)",
+                      border: "1px solid var(--border)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
                     }}
-                  />
-                  <div
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        (activeSignal.soft_aspect_score /
-                          (activeSignal.hard_aspect_score + activeSignal.soft_aspect_score || 1)) *
-                          100
-                      )}%`,
-                      background: "var(--green)",
-                    }}
-                  />
-                </div>
-              </div>
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700 }}>
+                      <span style={{ color: "var(--red)" }}>
+                        Hard Aspects Stress: {activeSignal.hard_aspect_score}
+                      </span>
+                      <span style={{ color: "var(--green)" }}>
+                        Soft Aspects Harmony: {activeSignal.soft_aspect_score}
+                      </span>
+                    </div>
 
-              {/* Aspects List */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {activeSignal.active_aspects.length === 0 ? (
-                  <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-                    No major geometric aspects active within strict orbs on {selectedDate}.
-                  </div>
-                ) : (
-                  activeSignal.active_aspects.map((asp, idx) => {
-                    const isHard = asp.is_hard;
-                    const aspectColor = isHard ? "var(--red)" : "var(--green)";
-
-                    return (
+                    <div
+                      style={{
+                        height: 8,
+                        background: "rgba(255, 255, 255, 0.08)",
+                        borderRadius: 4,
+                        overflow: "hidden",
+                        display: "flex",
+                      }}
+                    >
                       <div
-                        key={idx}
                         style={{
-                          padding: "10px 14px",
-                          borderRadius: 4,
-                          background: "var(--surface2)",
-                          border: "1px solid var(--border)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
+                          width: `${Math.min(
+                            100,
+                            (activeSignal.hard_aspect_score /
+                              (activeSignal.hard_aspect_score + activeSignal.soft_aspect_score || 1)) *
+                              100
+                          )}%`,
+                          background: "var(--red)",
                         }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <span
-                            style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: "50%",
-                              background: aspectColor,
-                            }}
-                          />
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text)" }}>
-                              {asp.body_a}{" "}
-                              <span style={{ color: aspectColor, margin: "0 4px" }}>{asp.aspect_type}</span>{" "}
-                              {asp.body_b}
-                            </div>
-                            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                              {asp.description}
-                            </div>
-                          </div>
-                        </div>
+                      />
+                      <div
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            (activeSignal.soft_aspect_score /
+                              (activeSignal.hard_aspect_score + activeSignal.soft_aspect_score || 1)) *
+                              100
+                          )}%`,
+                          background: "var(--green)",
+                        }}
+                      />
+                    </div>
+                  </div>
 
-                        <div style={{ textAlign: "right", fontFamily: "monospace" }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>
-                            Orb: {asp.orb_deg}°
-                          </div>
-                          <div style={{ fontSize: 10, color: aspectColor }}>
-                            Weight: {asp.weight.toFixed(2)}
-                          </div>
-                        </div>
+                  {/* Aspects List */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {activeSignal.active_aspects.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+                        No major geometric aspects active within strict orbs on {selectedDate} ({timeMode}).
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                    ) : (
+                      activeSignal.active_aspects.map((asp, idx) => {
+                        const isHard = asp.is_hard;
+                        const aspectColor = isHard ? "var(--red)" : "var(--green)";
+
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              padding: "10px 14px",
+                              borderRadius: 4,
+                              background: "var(--surface2)",
+                              border: "1px solid var(--border)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <span
+                                style={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: "50%",
+                                  background: aspectColor,
+                                }}
+                              />
+                              <div>
+                                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text)" }}>
+                                  {asp.body_a}{" "}
+                                  <span style={{ color: aspectColor, margin: "0 4px" }}>{asp.aspect_type}</span>{" "}
+                                  {asp.body_b}
+                                </div>
+                                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                                  {asp.description}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ textAlign: "right", fontFamily: "monospace" }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>
+                                Orb: {asp.orb_deg}°
+                              </div>
+                              <div style={{ fontSize: 10, color: aspectColor }}>
+                                Weight: {asp.weight.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              ) : null}
             </div>
           )}
 
           {/* TAB 3: PLANETARY EPHEMERIS GRID */}
-          {activeTab === "EPHEMERIS" && activeSignal && (
-            <div style={{ overflowX: "auto" }}>
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: 11,
-                  textAlign: "left",
-                }}
-              >
-                <thead>
-                  <tr
+          {activeTab === "EPHEMERIS" && (
+            <div>
+              {snapshotLoading ? (
+                <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+                  Scanning ephemeris positions and daily motion for {selectedDate} ({timeMode})...
+                </div>
+              ) : activeSignal ? (
+                <div style={{ overflowX: "auto" }}>
+                  <div
                     style={{
-                      borderBottom: "1px solid var(--border)",
-                      color: "var(--muted)",
-                      fontSize: 10,
-                      textTransform: "uppercase",
+                      padding: "8px 12px",
+                      background: "rgba(255, 255, 255, 0.02)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 4,
+                      marginBottom: 10,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      fontSize: 11,
                     }}
                   >
-                    <th style={{ padding: "8px 10px" }}>Body</th>
-                    <th style={{ padding: "8px 10px" }}>Sidereal Sign</th>
-                    <th style={{ padding: "8px 10px" }}>Nakshatra</th>
-                    <th style={{ padding: "8px 10px" }}>Pada</th>
-                    <th style={{ padding: "8px 10px" }}>KP Sub-Lord</th>
-                    <th style={{ padding: "8px 10px" }}>Speed</th>
-                    <th style={{ padding: "8px 10px", textAlign: "right" }}>Motion</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeSignal.planets.map((p, idx) => (
-                    <tr
-                      key={idx}
-                      style={{
-                        borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
-                        background: idx % 2 === 0 ? "transparent" : "rgba(255, 255, 255, 0.015)",
-                      }}
-                    >
-                      <td style={{ padding: "8px 10px", fontWeight: 800, color: "var(--text)" }}>
-                        {p.name}
-                      </td>
-                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                        <span style={{ fontWeight: 700, color: "var(--ba-cyan)" }}>{p.sign}</span>{" "}
-                        <span style={{ color: "var(--muted)", fontSize: 10 }}>{p.sign_degree_str}</span>
-                      </td>
-                      <td style={{ padding: "8px 10px", fontWeight: 700 }}>
-                        {p.nakshatra}{" "}
-                        <span style={{ fontSize: 9, color: "var(--muted)" }}>({p.nakshatra_lord})</span>
-                      </td>
-                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                        P{p.pada}
-                      </td>
-                      <td style={{ padding: "8px 10px", fontWeight: 700, color: "var(--ba-amber)" }}>
-                        {p.kp_sub_lord}
-                      </td>
-                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                        {p.speed > 0 ? `+${p.speed.toFixed(2)}` : p.speed.toFixed(2)}°/d
-                      </td>
-                      <td style={{ padding: "8px 10px", textAlign: "right" }}>
-                        {p.is_stationary ? (
-                          <span
-                            style={{
-                              fontSize: 9,
-                              fontWeight: 800,
-                              padding: "2px 5px",
-                              borderRadius: 3,
-                              background: "rgba(255,59,87,0.2)",
-                              color: "var(--red)",
-                            }}
-                          >
-                            STATIONARY
-                          </span>
-                        ) : p.is_retrograde ? (
-                          <span
-                            style={{
-                              fontSize: 9,
-                              fontWeight: 800,
-                              padding: "2px 5px",
-                              borderRadius: 3,
-                              background: "rgba(255,183,3,0.15)",
-                              color: "var(--yellow)",
-                            }}
-                          >
-                            RETRO
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: 9, color: "var(--muted)" }}>DIRECT</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    <div>
+                      <span style={{ color: "var(--muted)" }}>Calculated at: </span>
+                      <strong style={{ color: "var(--ba-cyan)" }}>
+                        {activeSignal.reference_time_label || timeMode}
+                      </strong>
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 10 }}>
+                      Lahiri Sidereal Ayanamsha • Daily Motion in Deg/Min/Sec per Day
+                    </div>
+                  </div>
+
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: 11,
+                      textAlign: "left",
+                    }}
+                  >
+                    <thead>
+                      <tr
+                        style={{
+                          borderBottom: "1px solid var(--border)",
+                          color: "var(--muted)",
+                          fontSize: 10,
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        <th style={{ padding: "8px 10px" }}>Body</th>
+                        <th style={{ padding: "8px 10px" }}>Sidereal Sign & Deg</th>
+                        <th style={{ padding: "8px 10px" }}>Nakshatra (Lord)</th>
+                        <th style={{ padding: "8px 10px" }}>Pada</th>
+                        <th style={{ padding: "8px 10px" }}>KP Sub-Lord</th>
+                        <th style={{ padding: "8px 10px" }}>Daily Motion (Speed)</th>
+                        <th style={{ padding: "8px 10px", textAlign: "right" }}>State</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeSignal.planets.map((p, idx) => (
+                        <tr
+                          key={idx}
+                          style={{
+                            borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
+                            background: idx % 2 === 0 ? "transparent" : "rgba(255, 255, 255, 0.015)",
+                          }}
+                        >
+                          <td style={{ padding: "8px 10px", fontWeight: 800, color: "var(--text)" }}>
+                            {p.name}
+                          </td>
+                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                            <span style={{ fontWeight: 700, color: "var(--ba-cyan)" }}>{p.sign}</span>{" "}
+                            <span style={{ color: "var(--text)", fontSize: 11 }}>{p.sign_degree_str}</span>
+                          </td>
+                          <td style={{ padding: "8px 10px", fontWeight: 700 }}>
+                            {p.nakshatra}{" "}
+                            <span style={{ fontSize: 9, color: "var(--muted)" }}>({p.nakshatra_lord})</span>
+                          </td>
+                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                            P{p.pada}
+                          </td>
+                          <td style={{ padding: "8px 10px", fontWeight: 700, color: "var(--ba-amber)" }}>
+                            {p.kp_sub_lord}
+                          </td>
+                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                            <div style={{ fontWeight: 700, color: "var(--text)" }}>
+                              {p.speed_str || `${p.speed > 0 ? `+${p.speed.toFixed(2)}` : p.speed.toFixed(2)}°/d`}
+                            </div>
+                            <div style={{ fontSize: 9, color: "var(--muted)" }}>
+                              {p.speed > 0 ? `+${p.speed.toFixed(4)}` : p.speed.toFixed(4)}°/d
+                            </div>
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            {p.is_stationary ? (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 800,
+                                  padding: "2px 5px",
+                                  borderRadius: 3,
+                                  background: "rgba(255,59,87,0.2)",
+                                  color: "var(--red)",
+                                }}
+                              >
+                                STATIONARY
+                              </span>
+                            ) : p.is_retrograde ? (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 800,
+                                  padding: "2px 5px",
+                                  borderRadius: 3,
+                                  background: "rgba(255,183,3,0.15)",
+                                  color: "var(--yellow)",
+                                }}
+                              >
+                                RETRO
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 9, color: "var(--muted)" }}>DIRECT</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -1104,7 +1274,9 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
           }}
         >
           <span>Swiss Ephemeris Moshier Analytical Model (Lahiri Sidereal Mode)</span>
-          <span style={{ fontFamily: "monospace" }}>Selected: {selectedDate} (Midday 12:00 IST)</span>
+          <span style={{ fontFamily: "monospace" }}>
+            Selected: {selectedDate} • {activeSignal?.reference_time_label || timeMode}
+          </span>
         </div>
       </div>
     </div>
@@ -1135,7 +1307,7 @@ function renderMarketDayChip(
         alignItems: "center",
         justifyContent: "center",
         padding: "6px 8px",
-        minWidth: 70,
+        minWidth: 72,
         borderRadius: 4,
         background: isSelected ? "var(--surface2)" : "var(--surface)",
         border: isSelected
@@ -1147,6 +1319,7 @@ function renderMarketDayChip(
         cursor: "pointer",
         position: "relative",
       }}
+      title={`Date: ${day.date} (${day.day_name})\nSunrise: ${day.sunrise_time_str || "06:48 IST"}\nAspect Score: ${day.net_sentiment_score > 0 ? "+" + day.net_sentiment_score : day.net_sentiment_score}\nRegime: ${day.regime_bias}\nShift Windows: ${day.total_shift_windows}`}
     >
       {day.is_today && (
         <span
@@ -1186,12 +1359,16 @@ function renderMarketDayChip(
         </span>
       </div>
 
+      <div style={{ fontSize: 7, color: "var(--muted)", textTransform: "uppercase", fontWeight: 700, marginTop: 3 }}>
+        Aspect Score
+      </div>
+
       <div
         style={{
-          fontSize: 9,
-          fontWeight: 700,
+          fontSize: 10,
+          fontWeight: 800,
           fontFamily: "monospace",
-          marginTop: 2,
+          marginTop: 1,
           color:
             day.net_sentiment_score > 0
               ? "var(--green)"

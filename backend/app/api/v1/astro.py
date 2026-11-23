@@ -23,21 +23,38 @@ IST = zoneinfo.ZoneInfo("Asia/Kolkata")
 async def get_snapshot(
     timestamp_iso: Optional[str] = Query(
         None,
-        description="Optional ISO 8601 timestamp (e.g. 2026-11-23T09:15:00+05:30). Defaults to current IST time."
-    )
+        description="Optional exact ISO 8601 timestamp (e.g. 2026-11-23T09:15:00+05:30)."
+    ),
+    date_str: Optional[str] = Query(
+        None,
+        description="Optional date in YYYY-MM-DD format (e.g. 2026-11-16). If provided without timestamp, uses time_mode."
+    ),
+    time_mode: str = Query(
+        "SUNRISE",
+        description="Benchmark time when date_str is used: SUNRISE (astronomical sunrise for Mumbai/NSE), 09:00 (Pre-Market), or LIVE."
+    ),
 ):
     """
     Returns full planetary telemetry (Lahiri Sidereal mode), 27 Vedic Nakshatras & Padas,
     KP Sub-Lords, pairwise geometric aspect stress scores, and market regime classification.
+    Supports exact Sunrise (~06:48 IST) or Pre-Market 09:00 AM IST for exact Kundli app parity.
     """
     dt: Optional[datetime] = None
+    date_obj: Optional[date] = None
+
     if timestamp_iso:
         try:
             dt = datetime.fromisoformat(timestamp_iso)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid timestamp_iso format: {exc}")
+    elif date_str:
+        try:
+            date_obj = date.fromisoformat(date_str)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid date_str format (use YYYY-MM-DD): {exc}")
+
     try:
-        return get_astro_snapshot(dt)
+        return get_astro_snapshot(dt=dt, date_obj=date_obj, time_mode=time_mode)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Astro snapshot calculation error: {exc}")
 
@@ -83,6 +100,10 @@ async def get_week_outlook(
         None,
         description="Optional reference date in YYYY-MM-DD. Defaults to current IST date."
     ),
+    time_mode: str = Query(
+        "SUNRISE",
+        description="Daily benchmark: SUNRISE (astronomical sunrise for Mumbai/NSE) or 09:00 (Pre-Market open)."
+    ),
 ):
     """
     Returns Monday-to-Friday market trading days structured across:
@@ -90,7 +111,7 @@ async def get_week_outlook(
     - Current week (5 trading days, past days + today + remaining days)
     - Next week (5 trading days, forward cyclical projections)
 
-    Excludes non-trading weekends.
+    Excludes non-trading weekends. Daily positions evaluated at Sunrise or 09:00 AM.
     """
     ref_d: Optional[date] = None
     if ref_date_str:
@@ -103,7 +124,9 @@ async def get_week_outlook(
             include_prev=include_prev,
             include_next=include_next,
             ref_date=ref_d,
+            time_mode=time_mode,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Market-week outlook calculation error: {exc}")
+
 
