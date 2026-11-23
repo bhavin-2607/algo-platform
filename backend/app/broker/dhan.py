@@ -182,11 +182,13 @@ class DhanAdapter(BaseBrokerAdapter):
                 headers={
                     "access-token": self._access_token,
                     "dhanClientId": self._client_id,
-                    "client-id":    self._client_id,
                     "Accept":       "application/json",
                 },
                 timeout=10,
             )
+            if resp.status_code != 200:
+                logger.warning(f"Dhan renew_token returned HTTP {resp.status_code}: {resp.text}")
+                return False
             data = resp.json()
             new_token = (
                 data.get("token") or

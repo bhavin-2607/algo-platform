@@ -3,7 +3,9 @@ Dhan Token Management API
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user
+from app.core.database import get_db
 from app.models.user import User
 
 router = APIRouter(prefix="/dhan-auth", tags=["dhan-auth"])
@@ -41,20 +43,27 @@ async def token_status(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/renew-token")
-async def renew_token(current_user: User = Depends(get_current_user)):
+async def renew_token(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Trigger token renewal — admin only."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
     from app.broker.dhan_auth import get_auth_manager
+    from app.api.routes.settings import _sync_dhan_token_to_db
+
     mgr    = get_auth_manager()
     result = mgr.auto_renew(max_retries=1)
 
     if not result:
         raise HTTPException(
             status_code=502,
-            detail="Token renewal failed. Use /manual-token to paste a new token."
+            detail="Token renewal failed: RenewToken requires an active token, or configure Dhan PIN & TOTP. Use /manual-token to paste a new token."
         )
+
+    await _sync_dhan_token_to_db(db, result["access_token"], mgr.client_id)
     return {"status": "renewed", "method": result["method"], "expires_at": result.get("expires_at")}
 
 
@@ -66,6 +75,7 @@ class ManualTokenInput(BaseModel):
 async def set_manual_token(
     body: ManualTokenInput,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Manually set a new Dhan access token.
@@ -79,12 +89,15 @@ async def set_manual_token(
         raise HTTPException(status_code=403, detail="Admin only")
 
     from app.broker.dhan_auth import get_auth_manager
+    from app.api.routes.settings import _sync_dhan_token_to_db
     from app.core.config import settings
     import redis
 
+    new_token = body.access_token.strip()
     mgr = get_auth_manager()
-    mgr._apply_token(body.access_token.strip())
+    mgr._apply_token(new_token)
     mgr._set_token_status("ok")
+    await _sync_dhan_token_to_db(db, new_token, mgr.client_id)
 
     # Clear alert flag
     try:

@@ -75,12 +75,16 @@ class DhanAuthManager:
                 },
                 timeout=10,
             )
+            if resp.status_code != 200:
+                logger.warning(f"RenewToken returned HTTP {resp.status_code}: {resp.text}")
+                return None
+
             data = resp.json()
 
             # Check for expired token error
             err_code = str(data.get("errorCode", ""))
-            if err_code in ("DH-901", "DH-902", "808"):
-                logger.warning("Token already expired — RenewToken cannot extend expired tokens")
+            if err_code in ("DH-901", "DH-902", "DH-906", "808"):
+                logger.warning(f"Token expired/invalid ({err_code}) — RenewToken cannot extend expired tokens")
                 return None
 
             new_token = (
@@ -132,6 +136,9 @@ class DhanAuthManager:
                     "dhanClientId": self.client_id,
                     "pin":          pin,
                     "totp":         totp_code,
+                },
+                headers={
+                    "Accept": "application/json",
                 },
                 timeout=10,
             )

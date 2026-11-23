@@ -198,6 +198,7 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
       qc.invalidateQueries({queryKey:["broker-accounts"]});
       qc.invalidateQueries({queryKey:["brokers"]});
       qc.invalidateQueries({queryKey:["dhan-funds"]});
+      qc.invalidateQueries({queryKey:["admin-dhan-ip"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed — token may be expired"),
   });
@@ -212,6 +213,7 @@ function BrokerRow({ broker: b, qc, onActivate, onRemove, activating }: {
       qc.invalidateQueries({queryKey:["broker-accounts"]});
       qc.invalidateQueries({queryKey:["brokers"]});
       qc.invalidateQueries({queryKey:["dhan-funds"]});
+      qc.invalidateQueries({queryKey:["admin-dhan-ip"]});
       setToken(""); setExpanded(false);
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Update failed"),

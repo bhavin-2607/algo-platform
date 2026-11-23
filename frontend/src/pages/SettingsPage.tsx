@@ -4,7 +4,7 @@ import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
-import { Eye, EyeOff, MapPin, Locate, Monitor } from "lucide-react";
+import { Eye, EyeOff, MapPin, Locate, Monitor, Key, ShieldCheck } from "lucide-react";
 import {
   getAstroSettings,
   saveAstroSettings,
@@ -202,10 +202,16 @@ function DisplayScalingCard() {
 function TokenRenewalCard({qc}: {qc: any}) {
   const [newToken, setNewToken] = useState("");
   const [showToken, setShow]    = useState(false);
+  const [pin, setPin] = useState("");
+  const [totpSecret, setTotpSecret] = useState("");
+  const [showTotpSetup, setShowTotpSetup] = useState(false);
+  const [showPin, setShowPin] = useState(false);
+  const [showTotpSecret, setShowTotpSecret] = useState(false);
+
   const { data } = useQuery({
     queryKey: ["settings-status"],
     queryFn: () => api.get("/settings/status").then(r => r.data),
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
   });
   const dhan = data?.dhan ?? {};
 
@@ -219,6 +225,7 @@ function TokenRenewalCard({qc}: {qc: any}) {
       qc.invalidateQueries({queryKey:["broker-accounts"]});
       qc.invalidateQueries({queryKey:["brokers"]});
       qc.invalidateQueries({queryKey:["dhan-funds"]});
+      qc.invalidateQueries({queryKey:["admin-dhan-ip"]});
       setNewToken("");
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Update failed"),
@@ -227,24 +234,50 @@ function TokenRenewalCard({qc}: {qc: any}) {
   const renewMutation = useMutation({
     mutationFn: () => api.post("/settings/dhan-renew"),
     onSuccess: (res: any) => {
-      toast.success(`Token renewed — expires ${res.data?.expires_at ?? "in 24h"}`);
+      toast.success(`Token renewed via ${res.data?.method?.toUpperCase() || "RENEW"} — expires ${res.data?.expires_at ?? "in 24h"}`);
       qc.invalidateQueries({queryKey:["settings-status"]});
       qc.invalidateQueries({queryKey:["dhan-credentials"]});
       qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
       qc.invalidateQueries({queryKey:["broker-accounts"]});
       qc.invalidateQueries({queryKey:["brokers"]});
       qc.invalidateQueries({queryKey:["dhan-funds"]});
+      qc.invalidateQueries({queryKey:["admin-dhan-ip"]});
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Renewal failed"),
+  });
+
+  const totpMutation = useMutation({
+    mutationFn: () => api.post("/settings/dhan-totp", { pin, totp_secret: totpSecret }),
+    onSuccess: (res: any) => {
+      toast.success("Fresh Dhan token generated via TOTP successfully");
+      qc.invalidateQueries({ queryKey: ["settings-status"] });
+      qc.invalidateQueries({ queryKey: ["dhan-credentials"] });
+      qc.invalidateQueries({ queryKey: ["dhan-auth-token-status"] });
+      qc.invalidateQueries({ queryKey: ["broker-accounts"] });
+      qc.invalidateQueries({ queryKey: ["brokers"] });
+      qc.invalidateQueries({ queryKey: ["dhan-funds"] });
+      qc.invalidateQueries({ queryKey: ["admin-dhan-ip"] });
+      setPin("");
+      setTotpSecret("");
+      setShowTotpSetup(false);
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "TOTP token generation failed"),
   });
 
   return (
     <div className="card settings-card">
       <div className="card-header">
         <span className="card-title">DHAN TOKEN REFRESH</span>
-        <span className={`badge ${dhan.token_valid ? "badge-green" : "badge-red"}`}>
-          {dhan.token_valid ? "CONNECTED" : "NEEDS TOKEN"}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {dhan.totp_configured && (
+            <span className="badge badge-blue" style={{ fontSize: 9 }}>
+              TOTP CONFIGURED
+            </span>
+          )}
+          <span className={`badge ${dhan.token_valid ? "badge-green" : "badge-red"}`}>
+            {dhan.token_valid ? "CONNECTED" : "NEEDS TOKEN"}
+          </span>
+        </div>
       </div>
       <div className="token-grid">
         <div>
@@ -259,20 +292,120 @@ function TokenRenewalCard({qc}: {qc: any}) {
           <div className="field-label">AUTO RENEW</div>
           <div className="token-value">7:45 IST</div>
         </div>
-        <button className="connect-btn" onClick={() => renewMutation.mutate()} disabled={renewMutation.isPending}>
-          {renewMutation.isPending ? "RENEWING" : "RENEW 24H"}
+        <button
+          className="connect-btn"
+          onClick={() => renewMutation.mutate()}
+          disabled={renewMutation.isPending}
+          title={dhan.totp_configured ? "Renew token via TOTP or RenewToken" : "Renew existing active token"}
+        >
+          {renewMutation.isPending ? "RENEWING..." : (dhan.totp_configured ? "RENEW / GENERATE" : "RENEW 24H")}
         </button>
       </div>
+
+      {/* Manual Access Token Input */}
       <div className="token-update">
-        <input className="field-input" type={showToken ? "text" : "password"} value={newToken}
-          onChange={e => setNewToken(e.target.value)} placeholder="Paste a new access token" />
-        <button type="button" className="connect-btn" onClick={() => setShow(v => !v)}>{showToken ? "HIDE" : "SHOW"}</button>
-        <button className="connect-btn" onClick={() => updateMutation.mutate()} disabled={!newToken.trim() || updateMutation.isPending}>
-          {updateMutation.isPending ? "SAVING" : "SAVE"}
+        <input
+          className="field-input"
+          type={showToken ? "text" : "password"}
+          value={newToken}
+          onChange={e => setNewToken(e.target.value)}
+          placeholder="Paste fresh access token from web.dhan.co"
+        />
+        <button type="button" className="connect-btn" onClick={() => setShow(v => !v)}>
+          {showToken ? "HIDE" : "SHOW"}
+        </button>
+        <button
+          className="connect-btn"
+          onClick={() => updateMutation.mutate()}
+          disabled={!newToken.trim() || updateMutation.isPending}
+        >
+          {updateMutation.isPending ? "SAVING..." : "SAVE TOKEN"}
         </button>
       </div>
+
+      {/* Automated TOTP Setup Trigger */}
+      <div style={{ padding: "0 14px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={() => setShowTotpSetup(v => !v)}
+          style={{ fontSize: 11, color: "var(--ba-cyan, #08B6DE)", display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
+        >
+          <Key size={13} />
+          <span>{showTotpSetup ? "Hide PIN & TOTP Setup" : (dhan.totp_configured ? "Update Dhan PIN & TOTP Secret" : "Setup Automated Token Generation (PIN + TOTP)")}</span>
+        </button>
+        {dhan.totp_configured && (
+          <span style={{ fontSize: 10, color: "var(--green)", display: "flex", alignItems: "center", gap: 4 }}>
+            <ShieldCheck size={12} /> Auto-active
+          </span>
+        )}
+      </div>
+
+      {/* TOTP Setup Drawer */}
+      {showTotpSetup && (
+        <div style={{ margin: "0 14px 12px", padding: "12px", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 4, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>
+            AUTOMATED ACCESS TOKEN GENERATION (PIN + TOTP)
+          </div>
+          <div style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.5 }}>
+            Per Dhan API specifications, generating a fresh access token without logging into web.dhan.co requires your 6-digit Dhan PIN and TOTP Authenticator Secret. Once saved, token generation runs hands-free daily.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label className="field-label" style={{ fontSize: 9 }}>6-DIGIT DHAN PIN</label>
+              <div style={{ position: "relative" }}>
+                <input
+                  className="field-input"
+                  type={showPin ? "text" : "password"}
+                  maxLength={6}
+                  value={pin}
+                  onChange={e => setPin(e.target.value)}
+                  placeholder="e.g. 123456"
+                  style={{ fontSize: 12, paddingRight: 30 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPin(v => !v)}
+                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", color: "var(--muted)" }}
+                >
+                  {showPin ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="field-label" style={{ fontSize: 9 }}>TOTP SECRET KEY (BASE32)</label>
+              <div style={{ position: "relative" }}>
+                <input
+                  className="field-input"
+                  type={showTotpSecret ? "text" : "password"}
+                  value={totpSecret}
+                  onChange={e => setTotpSecret(e.target.value)}
+                  placeholder="Base32 secret from QR code"
+                  style={{ fontSize: 12, paddingRight: 30 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowTotpSecret(v => !v)}
+                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", color: "var(--muted)" }}
+                >
+                  {showTotpSecret ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="connect-btn"
+            onClick={() => totpMutation.mutate()}
+            disabled={!pin.trim() || !totpSecret.trim() || totpMutation.isPending}
+            style={{ alignSelf: "flex-start", padding: "6px 14px", fontSize: 11 }}
+          >
+            {totpMutation.isPending ? "GENERATING TOKEN..." : "SAVE & GENERATE FRESH TOKEN"}
+          </button>
+        </div>
+      )}
+
       <p className="token-note">
-        Generate a token at <a href="https://web.dhan.co" target="_blank" rel="noreferrer">web.dhan.co</a>.
+        Generate a token at <a href="https://web.dhan.co" target="_blank" rel="noreferrer">web.dhan.co</a> or automate via PIN + TOTP.
         Renewal runs at 7:45, instruments at 8:00, and risk limits reset at 9:15 IST.
       </p>
     </div>

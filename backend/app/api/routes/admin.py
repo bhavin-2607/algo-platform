@@ -57,7 +57,7 @@ class WhitelistDhanIpPayload(BaseModel):
 async def _get_active_dhan_credentials(db: AsyncSession) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Helper to fetch Dhan client_id, access_token, and account name."""
     from app.core.config import settings
-    from app.core.security import decrypt_broker_token
+    from app.core.security import decrypt_broker_token, encrypt_broker_token
 
     result = await db.execute(
         select(BrokerAccount).where(
@@ -68,14 +68,28 @@ async def _get_active_dhan_credentials(db: AsyncSession) -> tuple[Optional[str],
     accounts = result.scalars().all()
     master = next((a for a in accounts if a.account_role == "MASTER"), None) or (accounts[0] if accounts else None)
 
-    client_id = (master.client_id if master else "") or getattr(settings, "DHAN_CLIENT_ID", "")
+    client_id = getattr(settings, "DHAN_CLIENT_ID", "") or (master.client_id if master else "")
+    account_name = master.account_name if master else "Primary Master Account"
+
+    # Always prefer settings.DHAN_ACCESS_TOKEN as runtime settings/.env is the active source of truth
     token = getattr(settings, "DHAN_ACCESS_TOKEN", "")
-    if master and master.encrypted_access_token:
+    if not token and master and master.encrypted_access_token:
         try:
             token = decrypt_broker_token(master.encrypted_access_token)
         except Exception:
             pass
-    account_name = master.account_name if master else "Dhan Master"
+
+    # Reconcile database master record with settings.DHAN_ACCESS_TOKEN so database is never stale
+    if token and master:
+        try:
+            existing = decrypt_broker_token(master.encrypted_access_token) if master.encrypted_access_token else ""
+            if existing != token:
+                master.encrypted_access_token = encrypt_broker_token(token)
+                await db.commit()
+        except Exception:
+            master.encrypted_access_token = encrypt_broker_token(token)
+            await db.commit()
+
     return client_id, token, account_name
 
 
