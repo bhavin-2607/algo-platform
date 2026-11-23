@@ -111,7 +111,7 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
                 className="text-[10px] px-2 py-0.5 rounded font-mono font-medium"
                 style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
               >
-                {row.exchange}
+                {(row.segment?.includes("MCX") || row.exchange === "MCX") ? "MCX" : row.exchange}
               </span>
             </div>
             <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>Configure Algo Parameters</p>

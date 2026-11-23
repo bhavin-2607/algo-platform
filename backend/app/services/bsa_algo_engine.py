@@ -306,21 +306,32 @@ class BsaAlgoEngine:
                 logger.info(f"Live broker adapter not available ({e}); falling back to simulated paper execution.")
                 adapter = None
 
-        # Resolve Dhan security ID and exchange
-        security_id = str(row.symbol)
-        exchange = row.exchange or "NSE_EQ"
-        try:
-            import os
-            import pandas as _pd
-            csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "market", "instruments.csv"))
-            if os.path.exists(csv_path):
-                _df = _pd.read_csv(csv_path, usecols=["SYMBOL_NAME", "SECURITY_ID", "EXCH_ID"], dtype=str)
-                _match = _df[(_df["SYMBOL_NAME"] == row.symbol) & (_df["EXCH_ID"] == "NSE")]
-                if not _match.empty:
-                    security_id = str(_match.iloc[0]["SECURITY_ID"]).strip()
-                    exchange = "NSE_EQ"
-        except Exception as e:
-            logger.warning(f"Dhan security lookup failed for {row.symbol}: {e}")
+        # Resolve Dhan security ID and exchange segment
+        security_id = str(row.token).strip() if (row.token and str(row.token).strip() not in ("0", "None", "")) else str(row.symbol)
+        seg_str = str(row.segment or "").upper()
+        exch_str = str(row.exchange or "").upper()
+        if "MCX" in seg_str or exch_str == "MCX":
+            exchange = "MCX_COMM"
+        elif "BSE" in seg_str or "BFO" in seg_str or exch_str in ("BSE", "BFO"):
+            exchange = "BSE_FNO" if is_option_symbol(row.symbol) else "BSE_EQ"
+        elif is_option_symbol(row.symbol) or "FNO" in seg_str or exch_str == "NFO":
+            exchange = "NSE_FNO"
+        else:
+            exchange = row.exchange or "NSE_EQ"
+
+        if not row.token or str(row.token).strip() in ("0", "None", ""):
+            try:
+                import os
+                import pandas as _pd
+                csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "market", "instruments.csv"))
+                if os.path.exists(csv_path):
+                    _df = _pd.read_csv(csv_path, usecols=["SYMBOL_NAME", "SECURITY_ID", "EXCH_ID"], dtype=str)
+                    target_exch_id = "MCX" if "MCX" in exchange else ("BSE" if "BSE" in exchange else "NSE")
+                    _match = _df[(_df["SYMBOL_NAME"] == row.symbol) & (_df["EXCH_ID"] == target_exch_id)]
+                    if not _match.empty:
+                        security_id = str(_match.iloc[0]["SECURITY_ID"]).strip()
+            except Exception as e:
+                logger.warning(f"Dhan security lookup failed for {row.symbol}: {e}")
 
         # Resolve price
         from app.market.market_poller import get_poller

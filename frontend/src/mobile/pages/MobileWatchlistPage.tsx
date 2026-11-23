@@ -51,14 +51,21 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
           params: { q: searchQuery.trim().toUpperCase() },
         });
         const raw = Array.isArray(res.data) ? res.data : res.data?.instruments || [];
-        const items: InstrumentResult[] = raw.map((i: any) => ({
-          symbol: i.symbol,
-          name: i.name || i.symbol,
-          exchange: i.exchange || "NSE",
-          segment: i.exchange_segment || i.segment || "NSE_EQ",
-          token: String(i.security_id || i.token || "0"),
-          security_id: String(i.security_id || i.token || "0"),
-        }));
+        const items: InstrumentResult[] = raw.map((i: any) => {
+          const seg = i.exchange_segment || i.segment || "NSE_EQ";
+          const isMcx = seg === "MCX_COMM" || seg.includes("MCX");
+          const isBse = seg.startsWith("BSE") || seg.includes("BFO");
+          const isNfo = seg === "NSE_FNO" || seg.includes("FNO");
+          const exch = isMcx ? "MCX" : (isBse ? "BSE" : (isNfo ? "NFO" : (i.exchange || "NSE")));
+          return {
+            symbol: i.symbol,
+            name: i.name || i.symbol,
+            exchange: exch,
+            segment: seg,
+            token: String(i.security_id || i.token || "0"),
+            security_id: String(i.security_id || i.token || "0"),
+          };
+        });
         setSearchResults(items);
       } catch (err) {
         console.error("Instrument search failed", err);

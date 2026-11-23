@@ -42,6 +42,11 @@ EXCHANGE_MAP = {
     "MCX": "MCX_COMM",
     "NSE_EQ":  "NSE_EQ",
     "NSE_FNO": "NSE_FNO",
+    "BSE_EQ":  "BSE_EQ",
+    "BSE_FNO": "BSE_FNO",
+    "MCX_COMM": "MCX_COMM",
+    "NSE_CURR": "NSE_CURR",
+    "BSE_CURR": "BSE_CURR",
 }
 
 # Product type mapping
@@ -266,7 +271,9 @@ class DhanAdapter(BaseBrokerAdapter):
                 )
 
             err_code = resp.get("errorCode") if isinstance(resp, dict) else ""
-            if err_code == "DH-905":
+            err_msg = resp.get("errorMessage") or resp.get("remarks") or ""
+            is_ip_error = err_code == "DH-905" and any(k in str(err_msg).upper() for k in ("IP", "WHITELIST", "STATIC"))
+            if is_ip_error:
                 detected_ip = get_public_ipv4()
                 logger.error(
                     f"Dhan DH-905 (Invalid IP): Outgoing IP mismatch or token invalidation. "
@@ -281,7 +288,7 @@ class DhanAdapter(BaseBrokerAdapter):
                     f"Ensure this IP is whitelisted on Dhan portal AND generate a NEW token afterwards."
                 )
             else:
-                msg = resp.get("remarks") or resp.get("errorMessage") or str(resp) if isinstance(resp, dict) else str(resp or "No response")
+                msg = f"{err_msg} ({err_code})" if (err_msg and err_code) else (err_msg or str(resp if isinstance(resp, dict) else (resp or "No response")))
                 logger.error(f"Dhan place_order failed: {msg}")
 
             return OrderResponse(broker_order_id="", status="FAILED", message=msg)

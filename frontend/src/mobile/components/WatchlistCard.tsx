@@ -44,7 +44,7 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
               className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
               style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
             >
-              {item.exchange}
+              {(item.segment?.includes("MCX") || item.exchange === "MCX") ? "MCX" : item.exchange}
             </span>
           </div>
 

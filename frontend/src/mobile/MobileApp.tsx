@@ -314,12 +314,17 @@ export default function MobileApp() {
 
   const handleAddToAlgo = async (item: WatchlistRowData) => {
     try {
+      const seg = item.segment || "NSE_EQ";
+      const isMcx = seg === "MCX_COMM" || seg.includes("MCX");
+      const isBse = seg.startsWith("BSE") || seg.includes("BFO");
+      const isNfo = seg === "NSE_FNO" || seg.includes("FNO");
+      const exch = isMcx ? "MCX" : (isBse ? "BSE" : (isNfo ? "NFO" : (item.exchange || "NSE")));
       await api.post("/terminal/algo-rows", {
         symbol: item.symbol,
-        exchange: item.exchange || "NSE",
-        segment: item.segment || "NSE_EQ",
+        exchange: exch,
+        segment: seg,
         token: item.token,
-        quantity: 25,
+        quantity: isMcx ? 1 : 25,
         number_of_trades: 1,
         target_type: "T1",
         trade_mode: "FULL",

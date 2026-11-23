@@ -1254,8 +1254,22 @@ async def list_algo_rows(
     for r in rows:
         live = cached_quotes.get(r.symbol)
         if not live:
-            from app.api.routes.market import _sim_quote
-            live = _sim_quote(r.symbol)
+            try:
+                from app.api.routes.market import _sim_quote
+                live = _sim_quote(r.symbol)
+            except Exception:
+                base_price = float(r.buy_price or 0.0)
+                live = {
+                    "symbol": r.symbol,
+                    "ltp": base_price,
+                    "open": base_price,
+                    "high": base_price,
+                    "low": base_price,
+                    "close": base_price,
+                    "p_close": base_price,
+                    "volume": 0,
+                    "source": "fallback",
+                }
         ltp = float(live.get("ltp") or r.buy_price or 0)
         is_option = is_option_symbol(r.symbol, r.segment if r.segment != "NSE_EQ" else None)
 
@@ -1492,10 +1506,20 @@ async def list_watchlist_rows(
         change = round(ltp - p_close, 2)
         change_pct = round((change / max(p_close, 1)) * 100, 2)
 
+        seg_upper = (r.exchange_segment or "").upper()
+        if "MCX" in seg_upper:
+            exch = "MCX"
+        elif "BSE" in seg_upper or "BFO" in seg_upper:
+            exch = "BSE"
+        elif "NFO" in seg_upper or "NSE_FNO" in seg_upper:
+            exch = "NFO"
+        else:
+            exch = "NSE"
+
         out.append({
             "id":               str(r.id),
             "symbol":           r.symbol,
-            "exchange":         "NSE" if "NSE" in (r.exchange_segment or "") else "BSE",
+            "exchange":         exch,
             "segment":          r.exchange_segment or "NSE_EQ",
             "token":            r.security_id,
             "ltp":              ltp,
@@ -1550,9 +1574,22 @@ async def add_algo_row(
     from app.api.routes.market import DHAN_SECURITY_IDS
 
     sym = payload.symbol.upper().strip()
-    is_opt = is_option_symbol(sym, payload.segment if payload.segment != "NSE_EQ" else None)
-    target_seg = "NSE_FNO" if is_opt else (payload.segment or "NSE_EQ")
-    target_exch = "NFO" if is_opt else (payload.exchange or "NSE")
+    seg_upper = (payload.segment or "").upper().strip()
+    exch_upper = (payload.exchange or "").upper().strip()
+    is_opt = is_option_symbol(sym, seg_upper if seg_upper != "NSE_EQ" else None)
+
+    if "MCX" in seg_upper or exch_upper == "MCX":
+        target_seg = "MCX_COMM"
+        target_exch = "MCX"
+    elif "BSE" in seg_upper or "BFO" in seg_upper or exch_upper in ("BSE", "BFO"):
+        target_seg = "BSE_FNO" if is_opt else "BSE_EQ"
+        target_exch = "BFO" if is_opt else "BSE"
+    elif is_opt or seg_upper in ("NSE_FNO", "NFO") or exch_upper == "NFO":
+        target_seg = "NSE_FNO"
+        target_exch = "NFO"
+    else:
+        target_seg = payload.segment or "NSE_EQ"
+        target_exch = payload.exchange or "NSE"
 
     sec_token = payload.token
     if not sec_token or sec_token == "0":
@@ -1993,9 +2030,22 @@ async def import_dhan_position_to_algo(
     from app.market.market_poller import get_poller
 
     sym = payload.symbol.upper().strip()
-    is_opt = is_option_symbol(sym, payload.segment if payload.segment != "NSE_EQ" else None)
-    target_seg = "NSE_FNO" if is_opt else (payload.segment or "NSE_EQ")
-    target_exch = "NFO" if is_opt else (payload.exchange or "NSE")
+    seg_upper = (payload.segment or "").upper().strip()
+    exch_upper = (payload.exchange or "").upper().strip()
+    is_opt = is_option_symbol(sym, seg_upper if seg_upper != "NSE_EQ" else None)
+
+    if "MCX" in seg_upper or exch_upper == "MCX":
+        target_seg = "MCX_COMM"
+        target_exch = "MCX"
+    elif "BSE" in seg_upper or "BFO" in seg_upper or exch_upper in ("BSE", "BFO"):
+        target_seg = "BSE_FNO" if is_opt else "BSE_EQ"
+        target_exch = "BFO" if is_opt else "BSE"
+    elif is_opt or seg_upper in ("NSE_FNO", "NFO") or exch_upper == "NFO":
+        target_seg = "NSE_FNO"
+        target_exch = "NFO"
+    else:
+        target_seg = payload.segment or "NSE_EQ"
+        target_exch = payload.exchange or "NSE"
 
     res = await db.execute(
         select(BsaAlgoRow).where(
@@ -2120,6 +2170,8 @@ async def place_manual_order(
                         exchange    = "NSE_EQ"
             except Exception as e:
                 logger.warning(f"NSE lookup failed: {e}")
+        elif "MCX" in str(exchange):
+            exchange = "MCX_COMM"
 
         adapter = get_broker_adapter(account)
         from app.core.trading_mode import assert_feed_fresh

@@ -99,7 +99,7 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
                 className="text-[10px] px-2 py-0.5 rounded font-mono font-medium"
                 style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
               >
-                {item.exchange}
+                {(item.segment?.includes("MCX") || item.exchange === "MCX") ? "MCX" : item.exchange}
               </span>
             </div>
             <div className="flex items-center space-x-2 mt-1">

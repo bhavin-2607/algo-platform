@@ -121,7 +121,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
               className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
               style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
             >
-              {row.exchange}
+              {(row.segment?.includes("MCX") || row.exchange === "MCX") ? "MCX" : row.exchange}
             </span>
             <span
               className="text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold"

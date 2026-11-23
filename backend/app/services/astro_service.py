@@ -12,10 +12,13 @@ relying on Moshier analytical precision (swe.FLG_MOSEPH) with zero external .se1
 from __future__ import annotations
 
 import logging
+import logging
 import math
 from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional, Tuple
 import zoneinfo
+
+logger = logging.getLogger(__name__)
 
 try:
     import swisseph as swe
