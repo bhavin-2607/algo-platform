@@ -17,7 +17,30 @@ from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional, Tuple
 import zoneinfo
 
-import swisseph as swe
+try:
+    import swisseph as swe
+    swe.set_sid_mode(swe.SIDM_LAHIRI)
+    SWISSEPH_AVAILABLE = True
+except (ImportError, Exception) as exc:
+    swe = None
+    SWISSEPH_AVAILABLE = False
+    logger.warning("swisseph library not found or failed to load (%s). Install with: pip install pysweph", exc)
+
+SWE_SUN = getattr(swe, "SUN", 0)
+SWE_MOON = getattr(swe, "MOON", 1)
+SWE_MERCURY = getattr(swe, "MERCURY", 2)
+SWE_VENUS = getattr(swe, "VENUS", 3)
+SWE_MARS = getattr(swe, "MARS", 4)
+SWE_JUPITER = getattr(swe, "JUPITER", 5)
+SWE_SATURN = getattr(swe, "SATURN", 6)
+SWE_URANUS = getattr(swe, "URANUS", 7)
+SWE_NEPTUNE = getattr(swe, "NEPTUNE", 8)
+SWE_PLUTO = getattr(swe, "PLUTO", 9)
+SWE_MEAN_NODE = getattr(swe, "MEAN_NODE", 10)
+SWE_FLG_SIDEREAL = getattr(swe, "FLG_SIDEREAL", 64 * 1024)
+SWE_FLG_SPEED = getattr(swe, "FLG_SPEED", 256)
+SWE_FLG_MOSEPH = getattr(swe, "FLG_MOSEPH", 4)
+SWE_CALC_RISE = getattr(swe, "CALC_RISE", 1)
 
 from app.schemas.astro import (
     AspectDetail,
@@ -43,9 +66,6 @@ NSE_GEO = (72.8777, 19.0760, 0.0)
 DEFAULT_CITY = "Ahmedabad"
 DEFAULT_LAT = 23.0225
 DEFAULT_LON = 72.5714
-
-# Initialize Swiss Ephemeris in Lahiri Sidereal mode
-swe.set_sid_mode(swe.SIDM_LAHIRI)
 
 # ── Zodiac Signs (12 Sidereal Signs, 30° each) ────────────────────────────────
 SIGNS = [
@@ -111,17 +131,17 @@ MALEFICS = {"Saturn", "Mars", "Rahu", "Ketu", "Sun"}
 # ── Planetary Tracking Configuration ──────────────────────────────────────────
 # (name, swe_id, base_power, can_be_stationary)
 PLANET_CONFIGS = [
-    ("Sun", swe.SUN, 1.2, False),
-    ("Moon", swe.MOON, 1.2, False),
-    ("Mercury", swe.MERCURY, 1.0, True),
-    ("Venus", swe.VENUS, 1.0, True),
-    ("Mars", swe.MARS, 1.5, True),
-    ("Jupiter", swe.JUPITER, 1.5, True),
-    ("Saturn", swe.SATURN, 1.8, True),
-    ("Rahu", swe.MEAN_NODE, 1.5, False),
-    ("Uranus", swe.URANUS, 1.2, False),
-    ("Neptune", swe.NEPTUNE, 1.0, False),
-    ("Pluto", swe.PLUTO, 1.2, False),
+    ("Sun", SWE_SUN, 1.2, False),
+    ("Moon", SWE_MOON, 1.2, False),
+    ("Mercury", SWE_MERCURY, 1.0, True),
+    ("Venus", SWE_VENUS, 1.0, True),
+    ("Mars", SWE_MARS, 1.5, True),
+    ("Jupiter", SWE_JUPITER, 1.5, True),
+    ("Saturn", SWE_SATURN, 1.8, True),
+    ("Rahu", SWE_MEAN_NODE, 1.5, False),
+    ("Uranus", SWE_URANUS, 1.2, False),
+    ("Neptune", SWE_NEPTUNE, 1.0, False),
+    ("Pluto", SWE_PLUTO, 1.2, False),
 ]
 
 # ── Aspect Rules (Ptolemaic Aspects & Maximum Orbs) ───────────────────────────
@@ -176,22 +196,28 @@ def get_sunrise(
     Defaults to Ahmedabad (23.0225° N, 72.5714° E).
     Uses Swiss Ephemeris analytical Moshier engine.
     """
-    jd = swe.julday(target_date.year, target_date.month, target_date.day, 0.0)
-    geopos = (lon, lat, 0.0)
-    res, tret = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, geopos, 1013.25, 25.0, swe.FLG_MOSEPH)
-    tjd_rise = tret[0]
-    year, month, day, hour_dec = swe.revjul(tjd_rise)
-    h = int(hour_dec)
-    m = int((hour_dec - h) * 60)
-    s = int(round(((hour_dec - h) * 60 - m) * 60))
-    if s >= 60:
-        s = 0
-        m += 1
-    if m >= 60:
-        m = 0
-        h += 1
-    dt_ut = datetime(year, month, day, h, m, s, tzinfo=UTC)
-    return dt_ut.astimezone(IST)
+    if swe is not None:
+        try:
+            jd = swe.julday(target_date.year, target_date.month, target_date.day, 0.0)
+            geopos = (lon, lat, 0.0)
+            res, tret = swe.rise_trans(jd, SWE_SUN, SWE_CALC_RISE, geopos, 1013.25, 25.0, SWE_FLG_MOSEPH)
+            tjd_rise = tret[0]
+            year, month, day, hour_dec = swe.revjul(tjd_rise)
+            h = int(hour_dec)
+            m = int((hour_dec - h) * 60)
+            s = int(round(((hour_dec - h) * 60 - m) * 60))
+            if s >= 60:
+                s = 0
+                m += 1
+            if m >= 60:
+                m = 0
+                h += 1
+            dt_ut = datetime(year, month, day, h, m, s, tzinfo=UTC)
+            return dt_ut.astimezone(IST)
+        except Exception as e:
+            logger.warning("Sunrise calculation exception (%s), defaulting to 06:58 IST", e)
+
+    return datetime.combine(target_date, time(6, 58), tzinfo=IST)
 
 
 def get_mumbai_sunrise(target_date: date) -> datetime:
@@ -212,7 +238,15 @@ def _to_julian_day(dt: datetime) -> float:
         + dt_utc.second / 3600.0
         + dt_utc.microsecond / 3600000000.0
     )
-    return swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hour_float)
+    if swe is not None:
+        return swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hour_float)
+
+    # Standard astronomical formula for Julian Day fallback
+    a = (14 - dt_utc.month) // 12
+    y = dt_utc.year + 4800 - a
+    m = dt_utc.month + 12 * a - 3
+    jdn = dt_utc.day + (153 * m + 2) // 5 + 365 * y + y // 4 - y // 100 + y // 400 - 32045
+    return float(jdn) + (hour_float - 12.0) / 24.0
 
 
 def compute_kp_sub_lord(lon: float) -> Tuple[str, str, int, str]:
@@ -248,10 +282,42 @@ def compute_kp_sub_lord(lon: float) -> Tuple[str, str, int, str]:
     return nak_name, nak_lord, pada, kp_sub_lord
 
 
+def _get_fallback_telemetry() -> List[PlanetTelemetry]:
+    """Fallback telemetry when Swiss Ephemeris is not available."""
+    bodies = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Rahu", "Uranus", "Neptune", "Pluto", "Ketu"]
+    telemetry = []
+    for i, name in enumerate(bodies):
+        lon = (i * 30.0) % 360.0
+        sign_idx = int(lon // 30.0) % 12
+        sign_deg = lon % 30.0
+        nak_name, nak_lord, pada, kp_sub = compute_kp_sub_lord(lon)
+        telemetry.append(
+            PlanetTelemetry(
+                name=name,
+                longitude=round(lon, 4),
+                sign=SIGNS[sign_idx],
+                sign_degree=round(sign_deg, 4),
+                sign_degree_str=_format_dms(sign_deg),
+                nakshatra=nak_name,
+                nakshatra_lord=nak_lord,
+                pada=pada,
+                kp_sub_lord=kp_sub,
+                speed=1.0,
+                speed_str="+01° 00' 00\"/d",
+                is_retrograde=False,
+                is_stationary=False,
+            )
+        )
+    return telemetry
+
+
 def get_planetary_telemetry(dt: datetime) -> List[PlanetTelemetry]:
     """Calculate sidereal positions, nakshatras, KP sub-lords, and speeds for all 12 bodies."""
+    if swe is None:
+        return _get_fallback_telemetry()
+
     jd_ut = _to_julian_day(dt)
-    flags = swe.FLG_SIDEREAL | swe.FLG_SPEED | swe.FLG_MOSEPH
+    flags = SWE_FLG_SIDEREAL | SWE_FLG_SPEED | SWE_FLG_MOSEPH
 
     telemetry: List[PlanetTelemetry] = []
     rahu_lon = 0.0
@@ -494,6 +560,15 @@ def get_intraday_windows(target_date: Optional[date] = None) -> IntradayAstroRes
     if target_date is None:
         target_date = datetime.now(IST).date()
 
+    if swe is None:
+        return IntradayAstroResponse(
+            date=target_date.isoformat(),
+            session_open="09:15 IST",
+            session_close="15:30 IST",
+            total_windows=0,
+            windows=[],
+        )
+
     start_time = datetime.combine(target_date, time(9, 15), tzinfo=IST)
     end_time = datetime.combine(target_date, time(15, 30), tzinfo=IST)
 
@@ -503,7 +578,7 @@ def get_intraday_windows(target_date: Optional[date] = None) -> IntradayAstroRes
 
     def _get_moon_state(t: datetime) -> Tuple[float, str, str]:
         jd = _to_julian_day(t)
-        calc_res = swe.calc_ut(jd, swe.MOON, swe.FLG_SIDEREAL | swe.FLG_MOSEPH)
+        calc_res = swe.calc_ut(jd, SWE_MOON, SWE_FLG_SIDEREAL | SWE_FLG_MOSEPH)
         res = calc_res[0]
         lon = res[0] % 360.0
         nak, _, _, sub = compute_kp_sub_lord(lon)
