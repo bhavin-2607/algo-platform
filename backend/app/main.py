@@ -30,6 +30,7 @@ from app.api.routes import (
 )
 from app.api.routes.dhan_auth_route import router as dhan_auth_router
 from app.api.routes.settings import router as settings_router
+from app.api.v1.astro import router as astro_router
 
 
 import app.models  # noqa
@@ -90,6 +91,8 @@ app.include_router(terminal.router, prefix="/api/terminal", tags=["Terminal"])
 app.include_router(copy_trading.router, prefix="/api/copy-trading", tags=["DhanCopyTrading"])
 app.include_router(dhan_auth_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
+app.include_router(astro_router, prefix="/api/v1/astro", tags=["AstroTiming"])
+app.include_router(astro_router, prefix="/api/astro", tags=["AstroTiming"])
 
 
 

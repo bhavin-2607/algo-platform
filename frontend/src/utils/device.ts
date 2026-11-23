@@ -1,15 +1,16 @@
+import { Capacitor } from "@capacitor/core";
+
 /**
  * Device and environment detection utilities.
  */
 
 export function isNativeMobile(): boolean {
   if (typeof window === "undefined") return false;
-  return Boolean(
-    (window as any).Capacitor !== undefined ||
-    window.location.protocol === "capacitor:" ||
-    window.location.protocol === "file:" ||
-    (window.location.hostname === "localhost" && !window.location.port)
-  );
+  try {
+    return Capacitor.isNativePlatform();
+  } catch {
+    return false;
+  }
 }
 
 export function isMobileViewport(): boolean {

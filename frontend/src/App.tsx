@@ -23,13 +23,6 @@ function AdminOnly({ children }: { children: React.ReactNode }) {
   return isAdmin ? <>{children}</> : <Navigate to="/terminal" replace />;
 }
 
-function DefaultHome() {
-  if (isNativeMobile()) {
-    return <Navigate to="/mobile" replace />;
-  }
-  return <Protected><TerminalPage /></Protected>;
-}
-
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
@@ -41,10 +34,11 @@ export default function App() {
             fontFamily:"var(--font)", fontSize:12 },
         }} />
         <Routes>
+          <Route path="/"             element={<Navigate to={isNativeMobile() ? "/mobile" : "/terminal"} replace />} />
           <Route path="/mobile"       element={<MobileApp />} />
           <Route path="/login"        element={<LoginPage />} />
           <Route path="/register"     element={<Navigate to="/login" replace />} />
-          <Route path="/terminal"     element={<DefaultHome />} />
+          <Route path="/terminal"     element={<Protected><TerminalPage /></Protected>} />
           <Route path="/positions"    element={<Protected><TradingPage /></Protected>} />
           <Route path="/trading"      element={<Navigate to="/positions" replace />} />
           <Route path="/copy-trading" element={<Protected><CopyTradingPage /></Protected>} />
