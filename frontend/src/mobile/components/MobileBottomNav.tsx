@@ -1,7 +1,7 @@
 import React from "react";
-import { Zap, ListOrdered } from "lucide-react";
+import { Zap, ListOrdered, Compass } from "lucide-react";
 
-export type MobileTab = "algo" | "watchlist";
+export type MobileTab = "algo" | "watchlist" | "astro";
 
 interface MobileBottomNavProps {
   currentTab: MobileTab;
@@ -81,6 +81,30 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
           )}
         </div>
         <span className="text-[11px] mt-1 tracking-tight">Watchlist</span>
+      </button>
+
+      {/* Astro Trend Tab */}
+      <button
+        type="button"
+        onClick={() => onChangeTab("astro")}
+        className="flex-1 flex flex-col items-center justify-center py-1 transition-all active:scale-95 bg-transparent border-0 outline-hidden"
+        style={{
+          background: "transparent",
+          border: "none",
+          outline: "none",
+          color: currentTab === "astro" ? "var(--ba-cyan)" : "var(--muted)",
+          fontWeight: currentTab === "astro" ? 700 : 500,
+        }}
+      >
+        <div className="relative">
+          <Compass
+            size={21}
+            style={{
+              color: currentTab === "astro" ? "var(--ba-cyan)" : "var(--muted)",
+            }}
+          />
+        </div>
+        <span className="text-[11px] mt-1 tracking-tight">Astro Trend</span>
       </button>
     </nav>
   );

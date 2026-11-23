@@ -443,6 +443,8 @@ def get_astro_snapshot(
         regime_bias = "HIGH_VOLATILITY_CAUTION"
     elif net_score >= 0.8:
         regime_bias = "BULLISH_TAILWIND"
+    elif net_score <= -0.8:
+        regime_bias = "BEARISH_HEADWIND"
     else:
         regime_bias = "NEUTRAL_RANGE"
 

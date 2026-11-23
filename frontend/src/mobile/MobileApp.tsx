@@ -8,6 +8,7 @@ import { MobileHeader } from "./components/MobileHeader";
 import { MobileBottomNav, MobileTab } from "./components/MobileBottomNav";
 import { MobileAlgoPage } from "./pages/MobileAlgoPage";
 import { MobileWatchlistPage } from "./pages/MobileWatchlistPage";
+import { MobileAstroPage } from "./pages/MobileAstroPage";
 import { MobileLoginPage } from "./pages/MobileLoginPage";
 import { AlgoRowData } from "./components/AlgoSmartCard";
 import { WatchlistRowData } from "./components/SymbolDetailDrawer";
@@ -391,7 +392,7 @@ export default function MobileApp() {
             onDelete={handleDelete}
             onNavigateToWatchlist={() => setActiveTab("watchlist")}
           />
-        ) : (
+        ) : activeTab === "watchlist" ? (
           <MobileWatchlistPage
             watchlist={watchlist}
             isAdmin={userIsAdmin}
@@ -400,6 +401,8 @@ export default function MobileApp() {
             onAddToWatchlist={handleAddToWatchlist}
             onRemoveFromWatchlist={handleRemoveFromWatchlist}
           />
+        ) : (
+          <MobileAstroPage />
         )}
       </main>
 

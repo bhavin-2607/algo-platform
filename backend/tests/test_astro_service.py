@@ -125,7 +125,7 @@ class AstroServiceTests(unittest.TestCase):
         snapshot = get_astro_snapshot(ref_dt)
 
         self.assertIsInstance(snapshot, AstroMarketSignal)
-        self.assertIn(snapshot.regime_bias, ["BULLISH_TAILWIND", "HIGH_VOLATILITY_CAUTION", "NEUTRAL_RANGE"])
+        self.assertIn(snapshot.regime_bias, ["BULLISH_TAILWIND", "BEARISH_HEADWIND", "HIGH_VOLATILITY_CAUTION", "NEUTRAL_RANGE"])
         self.assertIsInstance(snapshot.volatility_alert, bool)
         self.assertIsInstance(snapshot.hard_aspect_score, float)
         self.assertIsInstance(snapshot.soft_aspect_score, float)

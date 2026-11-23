@@ -15,6 +15,7 @@ export const PRESET_CITIES: CityLocation[] = [
 export interface AstroTimingSettings {
   includePreviousWeek: boolean;
   includeNextWeek: boolean;
+  marketDaysCollapsed: boolean;
   city: string;
   latitude: number;
   longitude: number;
@@ -25,6 +26,7 @@ const STORAGE_KEY = "algo_platform_astro_settings";
 export const DEFAULT_ASTRO_SETTINGS: AstroTimingSettings = {
   includePreviousWeek: true,
   includeNextWeek: true,
+  marketDaysCollapsed: false,
   city: "Ahmedabad",
   latitude: 23.0225,
   longitude: 72.5714,
@@ -38,6 +40,7 @@ export function getAstroSettings(): AstroTimingSettings {
     return {
       includePreviousWeek: parsed.includePreviousWeek !== false,
       includeNextWeek: parsed.includeNextWeek !== false,
+      marketDaysCollapsed: Boolean(parsed.marketDaysCollapsed),
       city: parsed.city || "Ahmedabad",
       latitude: typeof parsed.latitude === "number" ? parsed.latitude : 23.0225,
       longitude: typeof parsed.longitude === "number" ? parsed.longitude : 72.5714,

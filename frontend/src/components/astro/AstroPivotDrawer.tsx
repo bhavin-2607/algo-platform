@@ -11,11 +11,14 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Calendar,
   Layers,
   Sun,
   Info,
   MapPin,
+  HelpCircle,
 } from "lucide-react";
 import {
   getAstroSettings,
@@ -211,6 +214,19 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
 
   const activeSignal: AstroMarketSignal | null = selectedDaySnapshot ?? (isSelectedToday && timeMode === "LIVE" ? signal : null);
 
+  const [isDaysCollapsed, setIsDaysCollapsed] = useState<boolean>(() => {
+    return settings.marketDaysCollapsed ?? false;
+  });
+  const [showTrendGuide, setShowTrendGuide] = useState<boolean>(false);
+
+  const toggleDaysCollapse = () => {
+    const nextVal = !isDaysCollapsed;
+    setIsDaysCollapsed(nextVal);
+    const nextSettings = { ...settings, marketDaysCollapsed: nextVal };
+    setSettings(nextSettings);
+    saveAstroSettings(nextSettings);
+  };
+
   const togglePreviousWeek = () => {
     const next = { ...settings, includePreviousWeek: !settings.includePreviousWeek };
     setSettings(next);
@@ -243,6 +259,7 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
 
   const isVol = activeSignal?.volatility_alert;
   const isBullish = activeSignal?.regime_bias === "BULLISH_TAILWIND";
+  const isBearish = activeSignal?.regime_bias === "BEARISH_HEADWIND";
 
   // Group market days by week category
   const prevWeekDays = tradingDays.filter((d) => d.week_category === "PREVIOUS_WEEK");
@@ -336,34 +353,128 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setShowTrendGuide((prev) => !prev)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: 10,
+                fontWeight: 800,
+                padding: "4px 8px",
+                borderRadius: 4,
+                background: showTrendGuide ? "rgba(8, 182, 222, 0.2)" : "rgba(255, 255, 255, 0.06)",
+                color: showTrendGuide ? "var(--ba-cyan)" : "var(--muted)",
+                border: `1px solid ${showTrendGuide ? "rgba(8, 182, 222, 0.4)" : "var(--border)"}`,
+                cursor: "pointer",
+              }}
+              title="How to identify market trend using cyclical timing & price action"
+            >
+              <HelpCircle size={13} />
+              <span>TREND GUIDE</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: 6,
+                background: "transparent",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible Trend Identification Guide Panel */}
+        {showTrendGuide && (
+          <div
             style={{
-              padding: 6,
-              background: "transparent",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--muted)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
+              padding: "12px 20px",
+              background: "var(--surface)",
+              borderBottom: "1px solid var(--border)",
+              fontSize: 11,
+              lineHeight: 1.6,
+              color: "var(--text)",
             }}
           >
-            <X size={16} />
-          </button>
-        </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800, color: "var(--ba-cyan)", fontSize: 11 }}>
+                <Compass size={14} />
+                <span>MARKET TREND IDENTIFICATION FRAMEWORK</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTrendGuide(false)}
+                style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", padding: 2 }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ padding: "8px 10px", background: "var(--surface2)", borderRadius: 4, border: "1px solid var(--border)" }}>
+                <div style={{ fontWeight: 800, color: "var(--ba-cyan)", marginBottom: 4, fontSize: 11 }}>
+                  1. Cyclical Regime Bias (The Tide)
+                </div>
+                <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", flexDirection: "column", gap: 3 }}>
+                  <div>
+                    <strong style={{ color: "var(--green)" }}>BULLISH TAILWIND (Score &ge; +0.8):</strong> Harmonic trines/sextiles dominate. Momentum supports buying dips.
+                  </div>
+                  <div>
+                    <strong style={{ color: "var(--yellow)" }}>BEARISH HEADWIND (Score &le; -0.8):</strong> Resistance aspects dominate. Rallies face selling pressure.
+                  </div>
+                  <div>
+                    <strong style={{ color: "var(--red)" }}>HIGH VOLATILITY:</strong> Hard aspects &ge; 1.8 or stationary turning planets. Expect sharp two-way whipsaws.
+                  </div>
+                  <div>
+                    <strong style={{ color: "var(--muted)" }}>NEUTRAL RANGE:</strong> Balanced forces. Range-bound, mean-reverting rotational action.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ padding: "8px 10px", background: "var(--surface2)", borderRadius: 4, border: "1px solid var(--border)" }}>
+                <div style={{ fontWeight: 800, color: "var(--green)", marginBottom: 4, fontSize: 11 }}>
+                  2. Price Confirmation (The Trigger)
+                </div>
+                <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", flexDirection: "column", gap: 3 }}>
+                  <div>
+                    <strong>Uptrend:</strong> Price &gt; VWAP + EMA 20 &gt; EMA 50 + Higher Highs structure.
+                  </div>
+                  <div>
+                    <strong>Downtrend:</strong> Price &lt; VWAP + EMA 20 &lt; EMA 50 + Lower Lows structure.
+                  </div>
+                  <div>
+                    <strong>Intraday Windows:</strong> Exact timestamps (09:15-15:30) where Moon changes KP Sub-Lords. Benefics (Jupiter, Venus) support continuation; malefics (Saturn, Mars) trigger pullbacks.
+                  </div>
+                  <div>
+                    <strong style={{ color: "var(--text)" }}>Watch Only:</strong> Astro timing provides cyclical direction; enter trades only on confirmed BSA triggers!
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Multi-Week Market Days Strip Header Controls */}
         <div
           style={{
-            padding: "10px 20px",
+            padding: isDaysCollapsed ? "8px 20px" : "10px 20px",
             background: "var(--bg)",
             borderBottom: "1px solid var(--border)",
             display: "flex",
             flexDirection: "column",
-            gap: 10,
+            gap: isDaysCollapsed ? 0 : 10,
+            transition: "all 0.2s ease",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -404,47 +515,56 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
                   ? "HISTORICAL AUDIT"
                   : "CYCLICAL PROJECTION"}
               </span>
+              {isDaysCollapsed && (
+                <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "monospace" }}>
+                  ({selectedDate})
+                </span>
+              )}
             </div>
 
             {/* Quick Toggle Buttons for Previous & Next Week */}
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button
-                type="button"
-                onClick={togglePreviousWeek}
-                title="Toggle Previous Week (Testing / Audit)"
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 8px",
-                  borderRadius: 3,
-                  background: settings.includePreviousWeek ? "rgba(255, 183, 3, 0.15)" : "transparent",
-                  color: settings.includePreviousWeek ? "var(--yellow)" : "var(--muted)",
-                  border: `1px solid ${settings.includePreviousWeek ? "rgba(255, 183, 3, 0.4)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-              >
-                {settings.includePreviousWeek ? "AUDIT: ON" : "AUDIT: OFF"}
-              </button>
+              {!isDaysCollapsed && (
+                <>
+                  <button
+                    type="button"
+                    onClick={togglePreviousWeek}
+                    title="Toggle Previous Week (Testing / Audit)"
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: "3px 8px",
+                      borderRadius: 3,
+                      background: settings.includePreviousWeek ? "rgba(255, 183, 3, 0.15)" : "transparent",
+                      color: settings.includePreviousWeek ? "var(--yellow)" : "var(--muted)",
+                      border: `1px solid ${settings.includePreviousWeek ? "rgba(255, 183, 3, 0.4)" : "var(--border)"}`,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {settings.includePreviousWeek ? "AUDIT: ON" : "AUDIT: OFF"}
+                  </button>
 
-              <button
-                type="button"
-                onClick={toggleNextWeek}
-                title="Toggle Next Week (Forward Projections)"
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 8px",
-                  borderRadius: 3,
-                  background: settings.includeNextWeek ? "rgba(8, 182, 222, 0.15)" : "transparent",
-                  color: settings.includeNextWeek ? "var(--ba-cyan)" : "var(--muted)",
-                  border: `1px solid ${settings.includeNextWeek ? "rgba(8, 182, 222, 0.4)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-              >
-                {settings.includeNextWeek ? "PROJ: ON" : "PROJ: OFF"}
-              </button>
+                  <button
+                    type="button"
+                    onClick={toggleNextWeek}
+                    title="Toggle Next Week (Forward Projections)"
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: "3px 8px",
+                      borderRadius: 3,
+                      background: settings.includeNextWeek ? "rgba(8, 182, 222, 0.15)" : "transparent",
+                      color: settings.includeNextWeek ? "var(--ba-cyan)" : "var(--muted)",
+                      border: `1px solid ${settings.includeNextWeek ? "rgba(8, 182, 222, 0.4)" : "var(--border)"}`,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {settings.includeNextWeek ? "PROJ: ON" : "PROJ: OFF"}
+                  </button>
 
-              <div style={{ height: 16, width: 1, background: "var(--border)", margin: "0 2px" }} />
+                  <div style={{ height: 16, width: 1, background: "var(--border)", margin: "0 2px" }} />
+                </>
+              )}
 
               {/* Stepper Navigation */}
               <button
@@ -524,91 +644,118 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
                   height: 22,
                 }}
               />
+
+              <div style={{ height: 16, width: 1, background: "var(--border)", margin: "0 2px" }} />
+
+              {/* Collapsible Strip Toggle Button */}
+              <button
+                type="button"
+                onClick={toggleDaysCollapse}
+                title={isDaysCollapsed ? "Expand Market Trading Days Strip" : "Collapse Market Trading Days Strip to expand Grid area"}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: "3px 8px",
+                  borderRadius: 3,
+                  background: isDaysCollapsed ? "rgba(8, 182, 222, 0.15)" : "var(--surface2)",
+                  color: isDaysCollapsed ? "var(--ba-cyan)" : "var(--muted)",
+                  border: `1px solid ${isDaysCollapsed ? "rgba(8, 182, 222, 0.4)" : "var(--border)"}`,
+                  cursor: "pointer",
+                }}
+              >
+                {isDaysCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+                <span>{isDaysCollapsed ? "EXPAND" : "COLLAPSE"}</span>
+              </button>
             </div>
           </div>
 
-          {/* Horizontal Scrollable Monday-to-Friday Days Strip */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "stretch",
-              gap: 8,
-              overflowX: "auto",
-              paddingBottom: 4,
-            }}
-          >
-            {weekLoading && (
-              <div style={{ fontSize: 11, color: "var(--muted)", padding: "10px 0" }}>
-                Calculating market-days astrological cycles...
-              </div>
-            )}
+          {/* Horizontal Scrollable Monday-to-Friday Days Strip (Collapsible) */}
+          {!isDaysCollapsed && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "stretch",
+                gap: 8,
+                overflowX: "auto",
+                paddingBottom: 4,
+              }}
+            >
+              {weekLoading && (
+                <div style={{ fontSize: 11, color: "var(--muted)", padding: "10px 0" }}>
+                  Calculating market-days astrological cycles...
+                </div>
+              )}
 
-            {/* Render Section: Previous Week (Audit) */}
-            {settings.includePreviousWeek && prevWeekDays.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                  padding: "6px 8px",
-                  background: "rgba(255, 183, 3, 0.04)",
-                  borderRadius: 4,
-                  border: "1px dashed rgba(255, 183, 3, 0.25)",
-                }}
-              >
-                <div style={{ fontSize: 9, fontWeight: 800, color: "var(--yellow)", letterSpacing: 0.5 }}>
-                  PREVIOUS WEEK (TESTING / AUDIT)
+              {/* Render Section: Previous Week (Audit) */}
+              {settings.includePreviousWeek && prevWeekDays.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    padding: "6px 8px",
+                    background: "rgba(255, 183, 3, 0.04)",
+                    borderRadius: 4,
+                    border: "1px dashed rgba(255, 183, 3, 0.25)",
+                  }}
+                >
+                  <div style={{ fontSize: 9, fontWeight: 800, color: "var(--yellow)", letterSpacing: 0.5 }}>
+                    PREVIOUS WEEK (TESTING / AUDIT)
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {prevWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {prevWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
-                </div>
-              </div>
-            )}
+              )}
 
-            {/* Render Section: Current Week */}
-            {currWeekDays.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                  padding: "6px 8px",
-                  background: "rgba(8, 182, 222, 0.04)",
-                  borderRadius: 4,
-                  border: "1px solid rgba(8, 182, 222, 0.25)",
-                }}
-              >
-                <div style={{ fontSize: 9, fontWeight: 800, color: "var(--ba-cyan)", letterSpacing: 0.5 }}>
-                  CURRENT WEEK (ACTIVE)
+              {/* Render Section: Current Week */}
+              {currWeekDays.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    padding: "6px 8px",
+                    background: "rgba(8, 182, 222, 0.04)",
+                    borderRadius: 4,
+                    border: "1px solid rgba(8, 182, 222, 0.25)",
+                  }}
+                >
+                  <div style={{ fontSize: 9, fontWeight: 800, color: "var(--ba-cyan)", letterSpacing: 0.5 }}>
+                    CURRENT WEEK (ACTIVE)
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {currWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {currWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
-                </div>
-              </div>
-            )}
+              )}
 
-            {/* Render Section: Next Week (Projected) */}
-            {settings.includeNextWeek && nextWeekDays.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                  padding: "6px 8px",
-                  background: "rgba(168, 85, 247, 0.04)",
-                  borderRadius: 4,
-                  border: "1px dashed rgba(168, 85, 247, 0.25)",
-                }}
-              >
-                <div style={{ fontSize: 9, fontWeight: 800, color: "#c084fc", letterSpacing: 0.5 }}>
-                  NEXT WEEK (PROJECTED TIMING)
+              {/* Render Section: Next Week (Projected) */}
+              {settings.includeNextWeek && nextWeekDays.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    padding: "6px 8px",
+                    background: "rgba(168, 85, 247, 0.04)",
+                    borderRadius: 4,
+                    border: "1px dashed rgba(168, 85, 247, 0.25)",
+                  }}
+                >
+                  <div style={{ fontSize: 9, fontWeight: 800, color: "#c084fc", letterSpacing: 0.5 }}>
+                    NEXT WEEK (PROJECTED TIMING)
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {nextWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {nextWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Benchmark Time Selector Strip (Sunrise vs 09:00 AM vs Live) */}
@@ -766,7 +913,13 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  color: isVol ? "var(--red)" : isBullish ? "var(--green)" : "var(--text)",
+                  color: isVol
+                    ? "var(--red)"
+                    : isBullish
+                    ? "var(--green)"
+                    : isBearish
+                    ? "var(--yellow)"
+                    : "var(--text)",
                 }}
               >
                 <span
@@ -774,11 +927,19 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    background: isVol ? "var(--red)" : isBullish ? "var(--green)" : "var(--muted)",
+                    background: isVol
+                      ? "var(--red)"
+                      : isBullish
+                      ? "var(--green)"
+                      : isBearish
+                      ? "var(--yellow)"
+                      : "var(--muted)",
                     boxShadow: isVol
                       ? "0 0 6px var(--red)"
                       : isBullish
                       ? "0 0 6px var(--green)"
+                      : isBearish
+                      ? "0 0 6px var(--yellow)"
                       : "none",
                   }}
                 />
@@ -787,6 +948,8 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
                     ? "HIGH VOLATILITY"
                     : activeSignal.regime_bias === "BULLISH_TAILWIND"
                     ? "BULLISH TAILWIND"
+                    : activeSignal.regime_bias === "BEARISH_HEADWIND"
+                    ? "BEARISH HEADWIND"
                     : "NEUTRAL RANGE"}
                 </span>
               </div>
@@ -1320,8 +1483,15 @@ function renderMarketDayChip(
   const isSelected = selectedDate === day.date;
   const isVol = day.volatility_alert;
   const isBull = day.regime_bias === "BULLISH_TAILWIND";
+  const isBear = day.regime_bias === "BEARISH_HEADWIND";
 
-  const dotColor = isVol ? "var(--red)" : isBull ? "var(--green)" : "var(--muted)";
+  const dotColor = isVol
+    ? "var(--red)"
+    : isBull
+    ? "var(--green)"
+    : isBear
+    ? "var(--yellow)"
+    : "var(--muted)";
   const formattedDate = day.date.slice(5); // MM-DD
 
   return (
