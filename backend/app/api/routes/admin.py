@@ -68,7 +68,7 @@ async def _get_active_dhan_credentials(db: AsyncSession) -> tuple[Optional[str],
     accounts = result.scalars().all()
     master = next((a for a in accounts if a.account_role == "MASTER"), None) or (accounts[0] if accounts else None)
 
-    client_id = getattr(settings, "DHAN_CLIENT_ID", "") or (master.client_id if master else "")
+    client_id = (master.client_id if master else "") or getattr(settings, "DHAN_CLIENT_ID", "")
     account_name = master.account_name if master else "Primary Master Account"
 
     # Always prefer settings.DHAN_ACCESS_TOKEN as runtime settings/.env is the active source of truth
