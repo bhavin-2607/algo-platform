@@ -299,7 +299,7 @@ def _dhan_quote(securities: dict, client_id: str, access_token: str) -> dict:
 _dhan_ohlc = _dhan_quote
 
 
-def _parse_ohlc(raw: dict, symbol: str) -> dict:
+def _parse_ohlc(raw: dict, symbol: str, segment: str = "", security_id: str = "") -> dict:
     """Parse a /marketfeed/quote response row into a unified tick dict."""
     ltp   = float(raw.get("last_price", 0))
     ohlc  = raw.get("ohlc", {})
@@ -307,8 +307,28 @@ def _parse_ohlc(raw: dict, symbol: str) -> dict:
     high  = float(ohlc.get("high",  ltp))
     low   = float(ohlc.get("low",   ltp))
     close = float(ohlc.get("close", ltp))
-    chg   = round(ltp - close, 2)
-    chgp  = round(chg / max(close, 1) * 100, 2)
+    net_chg = float(raw.get("net_change", 0))
+
+    from app.market.daily_ohlc import get_previous_day_ohlc, enqueue_daily_ohlc_fetch
+    p_data = get_previous_day_ohlc(segment, security_id) if segment and security_id else None
+    if p_data:
+        p_close = float(p_data["p_close"])
+        p_high  = float(p_data["p_high"])
+        p_low   = float(p_data["p_low"])
+        p_open  = float(p_data.get("p_open", p_close))
+    else:
+        if segment and security_id and str(security_id) != "0":
+            enqueue_daily_ohlc_fetch(segment, security_id, symbol)
+        if net_chg != 0:
+            p_close = round(ltp - net_chg, 2)
+        else:
+            p_close = close
+        p_high = p_close
+        p_low  = p_close
+        p_open = p_close
+
+    chg   = round(ltp - p_close, 2)
+    chgp  = round(chg / max(p_close, 1) * 100, 2)
     depth  = raw.get("depth", {})
     buy0   = depth.get("buy",  [{}])[0] if depth else {}
     sell0  = depth.get("sell", [{}])[0] if depth else {}
@@ -319,9 +339,10 @@ def _parse_ohlc(raw: dict, symbol: str) -> dict:
         "high":       high,
         "low":        low,
         "close":      close,
-        "p_close":    close,
-        "p_high":     float(raw.get("previous_day_high") or raw.get("high_52_week") or round(close * 1.012, 2)),
-        "p_low":      float(raw.get("previous_day_low") or raw.get("low_52_week") or round(close * 0.988, 2)),
+        "p_close":    p_close,
+        "p_high":     p_high,
+        "p_low":      p_low,
+        "p_open":     p_open,
         "volume":     int(raw.get("volume", 0)),
         "oi":         int(raw.get("oi", 0)),
         "atp":        float(raw.get("average_price", 0)),   # VWAP
@@ -330,7 +351,7 @@ def _parse_ohlc(raw: dict, symbol: str) -> dict:
         "sell_qty":   int(raw.get("sell_quantity", 0)),
         "bp1":        float(buy0.get("price",  0)),
         "sp1":        float(sell0.get("price", 0)),
-        "net_change": float(raw.get("net_change", 0)),
+        "net_change": net_chg,
         "change":     chg,
         "change_pct": chgp,
         "source":     "dhan_live",
@@ -385,7 +406,12 @@ async def get_live_quote(
                     str(inst["security_id"]), {}
                 )
                 if raw:
-                    return _parse_ohlc(raw, symbol)
+                    return _parse_ohlc(
+                        raw,
+                        symbol,
+                        segment=inst.get("exchange_segment", ""),
+                        security_id=str(inst.get("security_id", "")),
+                    )
             except Exception as e:
                 logger.warning(f"Dhan live quote failed [{symbol}]: {e}")
 
@@ -433,7 +459,17 @@ async def get_live_quotes(
                         result.append(_sim_quote(sym))
                         continue
                     raw = data.get(inst["exchange_segment"], {}).get(str(inst["security_id"]), {})
-                    result.append(_parse_ohlc(raw, sym) if raw else _sim_quote(sym))
+                    if raw:
+                        result.append(
+                            _parse_ohlc(
+                                raw,
+                                sym,
+                                segment=inst.get("exchange_segment", ""),
+                                security_id=str(inst.get("security_id", "")),
+                            )
+                        )
+                    else:
+                        result.append(_sim_quote(sym))
                 return result
         except Exception as e:
             logger.warning(f"Dhan bulk quote failed: {e}")

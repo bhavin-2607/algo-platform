@@ -1243,7 +1243,7 @@ async def list_algo_rows(
                         seg = r.segment or "NSE_EQ"
                         raw = raw_dhan.get(seg, {}).get(sec_id, {})
                         if raw:
-                            parsed = _parse_ohlc(raw, r.symbol)
+                            parsed = _parse_ohlc(raw, r.symbol, segment=seg, security_id=sec_id)
                             cached_quotes[r.symbol] = parsed
                             if not any(x.get("symbol") == r.symbol for x in (poller._last_data or [])):
                                 poller._last_data.append(parsed)
@@ -1274,6 +1274,16 @@ async def list_algo_rows(
         is_option = is_option_symbol(r.symbol, r.segment if r.segment != "NSE_EQ" else None)
 
         # Compute live formula outputs
+        from app.market.daily_ohlc import get_previous_day_ohlc, enqueue_daily_ohlc_fetch
+        sec_id_val = str(r.token or poller._watchlist.get(r.symbol, {}).get("security_id") or "")
+        p_data = get_previous_day_ohlc(seg, sec_id_val) if sec_id_val and sec_id_val != "0" else None
+        if not p_data and sec_id_val and sec_id_val != "0":
+            enqueue_daily_ohlc_fetch(seg, sec_id_val, r.symbol)
+
+        p_close_val = float(p_data["p_close"]) if p_data else float(live.get("p_close") or live.get("prev_close") or live.get("close") or ltp)
+        p_high_val  = float(p_data["p_high"]) if p_data else float(live.get("p_high") or live.get("high") or ltp)
+        p_low_val   = float(p_data["p_low"]) if p_data else float(live.get("p_low") or live.get("low") or ltp)
+
         tick_data = {
             "symbol":  r.symbol,
             "ltp":     ltp,
@@ -1283,9 +1293,9 @@ async def list_algo_rows(
             "close":   live.get("close"),
             "volume":  live.get("volume"),
             "vwap":    live.get("vwap") or live.get("atp"),
-            "p_close": live.get("p_close") or live.get("prev_close") or live.get("close"),
-            "p_high":  live.get("p_high") or live.get("high"),
-            "p_low":   live.get("p_low") or live.get("low"),
+            "p_close": p_close_val,
+            "p_high":  p_high_val,
+            "p_low":   p_low_val,
         }
         open_val = float(tick_data["open"] or ltp or 100.0)
 
@@ -1455,7 +1465,7 @@ async def list_watchlist_rows(
                     seg = r.exchange_segment or "NSE_EQ"
                     raw = raw_dhan.get(seg, {}).get(sec_id, {})
                     if raw:
-                        parsed = _parse_ohlc(raw, r.symbol)
+                        parsed = _parse_ohlc(raw, r.symbol, segment=seg, security_id=sec_id)
                         cached_quotes[r.symbol] = parsed
                         if not any(x.get("symbol") == r.symbol for x in (poller._last_data or [])):
                             poller._last_data.append(parsed)
@@ -1471,6 +1481,17 @@ async def list_watchlist_rows(
         ltp = float(live.get("ltp") or 0)
         is_opt = is_option_symbol(r.symbol, r.exchange_segment if r.exchange_segment != "NSE_EQ" else None)
 
+        from app.market.daily_ohlc import get_previous_day_ohlc, enqueue_daily_ohlc_fetch
+        sec_id = str(r.security_id or "")
+        seg = r.exchange_segment or "NSE_EQ"
+        p_data = get_previous_day_ohlc(seg, sec_id) if sec_id and sec_id != "0" else None
+        if not p_data and sec_id and sec_id != "0":
+            enqueue_daily_ohlc_fetch(seg, sec_id, r.symbol)
+
+        p_close_val = float(p_data["p_close"]) if p_data else float(live.get("p_close") or live.get("prev_close") or live.get("close") or ltp)
+        p_high_val  = float(p_data["p_high"]) if p_data else float(live.get("p_high") or live.get("high") or ltp)
+        p_low_val   = float(p_data["p_low"]) if p_data else float(live.get("p_low") or live.get("low") or ltp)
+
         tick_data = {
             "symbol":  r.symbol,
             "ltp":     ltp,
@@ -1480,9 +1501,9 @@ async def list_watchlist_rows(
             "close":   live.get("close", ltp),
             "volume":  live.get("volume", 0),
             "vwap":    live.get("vwap") or live.get("atp") or ltp,
-            "p_close": live.get("p_close") or live.get("prev_close") or live.get("close") or ltp,
-            "p_high":  live.get("p_high") or live.get("high") or ltp,
-            "p_low":   live.get("p_low") or live.get("low") or ltp,
+            "p_close": p_close_val,
+            "p_high":  p_high_val,
+            "p_low":   p_low_val,
         }
         open_val = float(tick_data["open"] or ltp or 100.0)
 

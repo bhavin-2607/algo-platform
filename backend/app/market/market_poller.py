@@ -18,6 +18,11 @@ from typing import Optional
 
 from app.core.config import settings
 from app.api.routes.market import DHAN_SECURITY_IDS
+from app.market.daily_ohlc import (
+    get_previous_day_ohlc,
+    enqueue_daily_ohlc_fetch,
+    start_daily_ohlc_worker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,7 @@ class MarketPoller:
             "security_id":      str(security_id),
             "exchange_segment": exchange_segment,
         }
+        enqueue_daily_ohlc_fetch(exchange_segment, str(security_id), symbol)
         logger.info(f"MarketPoller: added {symbol} ({exchange_segment}:{security_id})")
 
     def remove_symbol(self, symbol: str):
@@ -124,6 +130,11 @@ class MarketPoller:
     async def _poll_loop(self):
         """Background task: poll Dhan and broadcast to all clients."""
         backoff = self._interval
+        start_daily_ohlc_worker()
+
+        # Enqueue initial watchlist symbols for daily OHLC loading
+        for sym, info in self._watchlist.items():
+            enqueue_daily_ohlc_fetch(info["exchange_segment"], str(info["security_id"]), sym)
 
         async with httpx.AsyncClient(timeout=20) as client:
             while True:
@@ -157,6 +168,27 @@ class MarketPoller:
                             ltp   = float(raw.get("last_price", 0))
                             ohlc  = raw.get("ohlc", {})
                             close = float(ohlc.get("close", ltp))
+                            net_chg = float(raw.get("net_change", 0))
+
+                            p_data = get_previous_day_ohlc(seg, sid)
+                            if p_data:
+                                p_close = float(p_data["p_close"])
+                                p_high  = float(p_data["p_high"])
+                                p_low   = float(p_data["p_low"])
+                                p_open  = float(p_data.get("p_open", p_close))
+                            else:
+                                enqueue_daily_ohlc_fetch(seg, sid, sym)
+                                if net_chg != 0:
+                                    p_close = round(ltp - net_chg, 2)
+                                else:
+                                    p_close = close
+                                p_high = p_close
+                                p_low  = p_close
+                                p_open = p_close
+
+                            change = round(ltp - p_close, 2)
+                            change_pct = round((change / max(p_close, 1)) * 100, 2)
+
                             depth = raw.get("depth", {})
                             buy0  = depth.get("buy",  [{}])[0] if depth else {}
                             sell0 = depth.get("sell", [{}])[0] if depth else {}
@@ -167,11 +199,12 @@ class MarketPoller:
                                 "high":       float(ohlc.get("high",  ltp)),
                                 "low":        float(ohlc.get("low",   ltp)),
                                 "close":      close,
-                                "p_close":    close,
-                                "p_high":     float(raw.get("previous_day_high") or raw.get("high_52_week") or round(close * 1.012, 2)),
-                                "p_low":      float(raw.get("previous_day_low") or raw.get("low_52_week") or round(close * 0.988, 2)),
-                                "change":     round(ltp - close, 2),
-                                "change_pct": round((ltp - close) / max(close, 1) * 100, 2),
+                                "p_close":    p_close,
+                                "p_high":     p_high,
+                                "p_low":      p_low,
+                                "p_open":     p_open,
+                                "change":     change,
+                                "change_pct": change_pct,
                                 "volume":     int(raw.get("volume", 0)),
                                 "oi":         int(raw.get("oi", 0)),
                                 "atp":        float(raw.get("average_price", 0)),  # VWAP
@@ -180,7 +213,7 @@ class MarketPoller:
                                 "sell_qty":   int(raw.get("sell_quantity", 0)),
                                 "bp1":        float(buy0.get("price",  0)),
                                 "sp1":        float(sell0.get("price", 0)),
-                                "net_change": float(raw.get("net_change", 0)),
+                                "net_change": net_chg,
                                 "source":     "dhan_live",
                             })
 

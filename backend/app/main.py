@@ -51,6 +51,13 @@ async def lifespan(app: FastAPI):
             logger.info("[OK] Dhan token valid on startup")
     except Exception as e:
         logger.warning(f"Startup token check: {e}")
+
+    try:
+        from app.market.daily_ohlc import preload_daily_ohlc
+        import asyncio
+        asyncio.create_task(preload_daily_ohlc())
+    except Exception as e:
+        logger.warning(f"Daily OHLC preloader startup error: {e}")
     yield
 
 
