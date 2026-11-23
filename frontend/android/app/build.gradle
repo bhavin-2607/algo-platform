@@ -40,6 +40,11 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "AlgoMobile-${variant.name}-v${variant.versionName}.apk"
+        }
+    }
 }
 
 repositories {

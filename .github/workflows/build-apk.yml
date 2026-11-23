@@ -60,5 +60,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AlgoMobile-release-apk
-          path: frontend/android/app/build/outputs/apk/release/app-release.apk
+          path: frontend/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
