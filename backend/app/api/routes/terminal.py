@@ -2176,6 +2176,11 @@ async def place_manual_order(
         adapter = get_broker_adapter(account)
         from app.core.trading_mode import assert_feed_fresh
         await assert_feed_fresh(get_redis())
+        # Auto-adjust CNC to MARGIN for derivatives/commodities where delivery (CNC) is invalid
+        prod_type = body.product_type.upper()
+        if ("MCX" in str(exchange) or "FNO" in str(exchange)) and prod_type == "CNC":
+            prod_type = "MARGIN"
+
         # Dhan adapter uses order.symbol as securityId
         order = OrderRequest(
             symbol        = security_id,
@@ -2183,7 +2188,7 @@ async def place_manual_order(
             direction     = body.transaction_type.upper(),
             quantity      = body.quantity,
             order_type    = body.order_type.upper(),
-            product       = body.product_type.upper(),
+            product       = prod_type,
             price         = body.price if body.order_type == "LIMIT" else 0,
             trigger_price = body.trigger_price,
         )

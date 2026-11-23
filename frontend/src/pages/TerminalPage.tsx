@@ -3057,11 +3057,12 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
   ltp: number | null; onClose: () => void;
   prefillSide?: string; prefillPrice?: number;
 }) {
+  const isDerivative = segment?.includes("MCX") || segment?.includes("FNO") || segment?.includes("BFO");
   const qc = useQueryClient();
   const [side,     setSide]     = useState<"BUY"|"SELL">((prefillSide as any) || "BUY");
   const [qty,      setQty]      = useState("1");
   const [orderType,setOrderType]= useState<"MARKET"|"LIMIT">("MARKET");
-  const [product,  setProduct]  = useState<"INTRADAY"|"CNC">("INTRADAY");
+  const [product,  setProduct]  = useState<"INTRADAY"|"MARGIN"|"CNC">(isDerivative ? "MARGIN" : "INTRADAY");
   const [price,    setPrice]    = useState(prefillPrice ? String(prefillPrice) : "");
 
   const orderMutation = useMutation({
@@ -3173,7 +3174,8 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
                 onChange={e => setProduct(e.target.value as any)}
                 style={{background:"var(--surface)", color:"var(--text)", fontFamily:"var(--font)"}}>
                 <option value="INTRADAY">INTRADAY (MIS)</option>
-                <option value="CNC">CNC (Delivery)</option>
+                <option value="MARGIN">NORMAL (MARGIN / Carryforward)</option>
+                {!isDerivative && <option value="CNC">CNC (Delivery)</option>}
               </select>
             </div>
           </div>

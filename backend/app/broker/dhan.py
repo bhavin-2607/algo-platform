@@ -51,11 +51,16 @@ EXCHANGE_MAP = {
 
 # Product type mapping
 PRODUCT_MAP = {
-    "MIS":  "INTRA",
-    "CNC":  "CNC",
-    "NRML": "MARGIN",
-    "BO":   "BO",
-    "CO":   "CO",
+    "MIS":      "INTRADAY",
+    "INTRADAY": "INTRADAY",
+    "INTRA":    "INTRADAY",
+    "CNC":      "CNC",
+    "NRML":     "MARGIN",
+    "NORMAL":   "MARGIN",
+    "MARGIN":   "MARGIN",
+    "BO":       "BO",
+    "CO":       "CO",
+    "MTF":      "MTF",
 }
 
 # Order type mapping
@@ -222,6 +227,9 @@ class DhanAdapter(BaseBrokerAdapter):
 
             exchange   = EXCHANGE_MAP.get(order.exchange, "NSE_EQ")
             product    = PRODUCT_MAP.get(order.product, "INTRADAY")
+            # CNC is invalid for derivative/commodity segments; map to MARGIN
+            if exchange in ("MCX_COMM", "NSE_FNO", "BSE_FNO") and product == "CNC":
+                product = "MARGIN"
             order_type = ORDER_TYPE_MAP.get(order.order_type, "MARKET")
             txn_type   = "BUY" if order.direction == "BUY" else "SELL"
 
@@ -240,6 +248,8 @@ class DhanAdapter(BaseBrokerAdapter):
                 "afterMarketOrder":  False,
                 "correlationId":     (order.client_order_id or "algo-platform")[:30],
             }
+
+            logger.info(f"Dhan place_order request: {txn_type} {order.quantity}x {order.symbol} ({exchange}, {product}, {order_type}, price={payload['price']})")
 
             resp_raw = _req.post(
                 "https://api.dhan.co/v2/orders",

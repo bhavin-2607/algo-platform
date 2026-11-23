@@ -339,13 +339,18 @@ class BsaAlgoEngine:
         live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
         fill_price = float(price or live.get("ltp") or row.buy_price or 100.0)
 
+        # Options and commodity derivatives default to MARGIN (Normal / Carryforward)
+        # to ensure compatibility with Dhan RMS policies which restrict Intraday on certain derivative scrips.
+        is_derivative = any(k in str(exchange) for k in ("MCX", "FNO", "COMM")) or is_option_symbol(row.symbol)
+        algo_prod = "MARGIN" if is_derivative else "INTRADAY"
+
         req = OrderRequest(
             symbol=security_id,
             exchange=exchange,
             direction=side.upper(),
             quantity=max(1, row.quantity),
             order_type="MARKET",
-            product="MIS",
+            product=algo_prod,
             price=fill_price,
         )
 
