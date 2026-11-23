@@ -31,13 +31,16 @@ async def get_snapshot(
     ),
     time_mode: str = Query(
         "SUNRISE",
-        description="Benchmark time when date_str is used: SUNRISE (astronomical sunrise for Mumbai/NSE), 09:00 (Pre-Market), or LIVE."
+        description="Benchmark time when date_str is used: SUNRISE (astronomical sunrise for user location), 09:00 (Pre-Market), or LIVE."
     ),
+    lat: float = Query(23.0225, description="Geographic latitude (default: 23.0225 N for Ahmedabad)"),
+    lon: float = Query(72.5714, description="Geographic longitude (default: 72.5714 E for Ahmedabad)"),
+    city: str = Query("Ahmedabad", description="User preferred location name"),
 ):
     """
     Returns full planetary telemetry (Lahiri Sidereal mode), 27 Vedic Nakshatras & Padas,
     KP Sub-Lords, pairwise geometric aspect stress scores, and market regime classification.
-    Supports exact Sunrise (~06:48 IST) or Pre-Market 09:00 AM IST for exact Kundli app parity.
+    Supports user location sunrise (Ahmedabad by default) or Pre-Market 09:00 AM IST for exact Kundli app parity.
     """
     dt: Optional[datetime] = None
     date_obj: Optional[date] = None
@@ -54,7 +57,14 @@ async def get_snapshot(
             raise HTTPException(status_code=400, detail=f"Invalid date_str format (use YYYY-MM-DD): {exc}")
 
     try:
-        return get_astro_snapshot(dt=dt, date_obj=date_obj, time_mode=time_mode)
+        return get_astro_snapshot(
+            dt=dt,
+            date_obj=date_obj,
+            time_mode=time_mode,
+            lat=lat,
+            lon=lon,
+            city_name=city,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Astro snapshot calculation error: {exc}")
 
@@ -102,8 +112,11 @@ async def get_week_outlook(
     ),
     time_mode: str = Query(
         "SUNRISE",
-        description="Daily benchmark: SUNRISE (astronomical sunrise for Mumbai/NSE) or 09:00 (Pre-Market open)."
+        description="Daily benchmark: SUNRISE (astronomical sunrise for user location) or 09:00 (Pre-Market open)."
     ),
+    lat: float = Query(23.0225, description="Geographic latitude (default: 23.0225 N for Ahmedabad)"),
+    lon: float = Query(72.5714, description="Geographic longitude (default: 72.5714 E for Ahmedabad)"),
+    city: str = Query("Ahmedabad", description="User preferred location name"),
 ):
     """
     Returns Monday-to-Friday market trading days structured across:
@@ -111,7 +124,7 @@ async def get_week_outlook(
     - Current week (5 trading days, past days + today + remaining days)
     - Next week (5 trading days, forward cyclical projections)
 
-    Excludes non-trading weekends. Daily positions evaluated at Sunrise or 09:00 AM.
+    Excludes non-trading weekends. Daily positions evaluated at Sunrise for the user's location (Ahmedabad by default) or 09:00 AM.
     """
     ref_d: Optional[date] = None
     if ref_date_str:
@@ -125,6 +138,9 @@ async def get_week_outlook(
             include_next=include_next,
             ref_date=ref_d,
             time_mode=time_mode,
+            lat=lat,
+            lon=lon,
+            city_name=city,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Market-week outlook calculation error: {exc}")

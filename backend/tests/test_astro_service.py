@@ -11,6 +11,7 @@ from app.services.astro_service import (
     get_astro_risk_multiplier,
     get_market_week_outlook,
     get_mumbai_sunrise,
+    get_sunrise,
     SPAN_NAKSHATRA,
     SPAN_PADA,
     NAKSHATRAS,
@@ -277,6 +278,29 @@ class AstroServiceTests(unittest.TestCase):
         self.assertEqual(res_9am.status_code, 200)
         data_9am = res_9am.json()
         self.assertIn("09:00 AM", data_9am["reference_time_label"])
+
+    def test_ahmedabad_user_location_preference(self):
+        """Verify astronomical Sunrise in Ahmedabad (23.0225° N, 72.5714° E) vs Mumbai."""
+        test_d = date(2026, 11, 23)
+        ahmedabad_sr = get_sunrise(test_d, lat=23.0225, lon=72.5714)
+        mumbai_sr = get_sunrise(test_d, lat=19.0760, lon=72.8777)
+
+        # On Nov 23, Ahmedabad sunrise is ~06:58 IST, while Mumbai sunrise is ~06:50 IST
+        self.assertEqual(ahmedabad_sr.hour, 6)
+        self.assertEqual(ahmedabad_sr.minute, 58)
+        self.assertEqual(mumbai_sr.minute, 50)
+
+        diff_minutes = (ahmedabad_sr - mumbai_sr).total_seconds() / 60.0
+        self.assertTrue(7.0 <= diff_minutes <= 8.5)
+
+        # Verify Ahmedabad snapshot schema
+        snap = get_astro_snapshot(date_obj=test_d, lat=23.0225, lon=72.5714, city_name="Ahmedabad")
+        self.assertEqual(snap.city_name, "Ahmedabad")
+        self.assertEqual(snap.latitude, 23.0225)
+        self.assertEqual(snap.longitude, 72.5714)
+        self.assertIn("Ahmedabad", snap.reference_time_label)
+        self.assertIn("06:58", snap.reference_time_label)
+
 
 
 

@@ -4,8 +4,13 @@ import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
-import { Eye, EyeOff } from "lucide-react";
-import { getAstroSettings, saveAstroSettings, AstroTimingSettings } from "@/utils/astroSettings";
+import { Eye, EyeOff, MapPin, Locate } from "lucide-react";
+import {
+  getAstroSettings,
+  saveAstroSettings,
+  AstroTimingSettings,
+  PRESET_CITIES,
+} from "@/utils/astroSettings";
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -366,17 +371,150 @@ function AstroTimingSettingsCard() {
     toast.success(`Next week ${next.includeNextWeek ? "enabled (projections)" : "hidden"}`);
   };
 
+  const handleCityChange = (cityName: string) => {
+    const preset = PRESET_CITIES.find((c) => c.name === cityName);
+    if (preset) {
+      const next = { ...settings, city: preset.name, latitude: preset.lat, longitude: preset.lon };
+      setSettings(next);
+      saveAstroSettings(next);
+      toast.success(`Location set to ${preset.name}`);
+    } else {
+      const next = { ...settings, city: cityName };
+      setSettings(next);
+      saveAstroSettings(next);
+    }
+  };
+
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocation is not supported by your browser");
+      return;
+    }
+    toast.loading("Detecting your location...");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        toast.dismiss();
+        const lat = parseFloat(pos.coords.latitude.toFixed(4));
+        const lon = parseFloat(pos.coords.longitude.toFixed(4));
+        const next = { ...settings, city: "Detected Location", latitude: lat, longitude: lon };
+        setSettings(next);
+        saveAstroSettings(next);
+        toast.success(`Location detected: ${lat}° N, ${lon}° E`);
+      },
+      (err) => {
+        toast.dismiss();
+        toast.error(`Could not detect location: ${err.message}`);
+      },
+      { timeout: 10000 }
+    );
+  };
+
   return (
     <div className="card settings-card">
       <div className="card-header">
         <span className="card-title">FINANCIAL ASTROLOGY & CYCLICAL TIMING</span>
         <span className="badge badge-gray">WATCH ONLY</span>
       </div>
-      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 14 }}>
         <p style={{ fontSize: 11, color: "var(--muted)", margin: 0, lineHeight: 1.4 }}>
-          Configure multi-week market timing blocks. Displays Monday-to-Friday market trading days strictly,
-          filtering out non-trading weekends.
+          Configure multi-week market timing blocks and user location preference. Astronomical sunrise and planetary
+          motion are calculated for your specific city location to match Kundli applications exactly.
         </p>
+
+        {/* User Location Preference */}
+        <div
+          style={{
+            padding: "12px",
+            background: "var(--surface2)",
+            borderRadius: 4,
+            border: "1px solid var(--border)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <MapPin size={14} style={{ color: "var(--ba-cyan)" }} />
+              <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text)", textTransform: "uppercase" }}>
+                User Location Preference
+              </span>
+            </div>
+            <button
+              type="button"
+              className="connect-btn"
+              onClick={handleDetectLocation}
+              style={{ padding: "3px 8px", fontSize: 10, display: "flex", alignItems: "center", gap: 4 }}
+              title="Detect current location via browser GPS/IP"
+            >
+              <Locate size={11} />
+              DETECT GPS
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 8 }}>
+            <div>
+              <label style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, display: "block", marginBottom: 3 }}>
+                CITY / PRESET
+              </label>
+              <select
+                className="field-input"
+                style={{ width: "100%", height: 30, fontSize: 11, padding: "2px 6px" }}
+                value={PRESET_CITIES.some((c) => c.name === settings.city) ? settings.city : "Custom"}
+                onChange={(e) => handleCityChange(e.target.value)}
+              >
+                {PRESET_CITIES.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.name} ({c.lat.toFixed(2)}°N, {c.lon.toFixed(2)}°E)
+                  </option>
+                ))}
+                <option value="Custom">Custom Coordinates</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, display: "block", marginBottom: 3 }}>
+                LATITUDE (°N)
+              </label>
+              <input
+                type="number"
+                step="0.0001"
+                className="field-input"
+                style={{ width: "100%", height: 30, fontSize: 11, padding: "2px 6px" }}
+                value={settings.latitude}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value) || 0;
+                  const next = { ...settings, latitude: val, city: "Custom" };
+                  setSettings(next);
+                  saveAstroSettings(next);
+                }}
+              />
+            </div>
+
+            <div>
+              <label style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, display: "block", marginBottom: 3 }}>
+                LONGITUDE (°E)
+              </label>
+              <input
+                type="number"
+                step="0.0001"
+                className="field-input"
+                style={{ width: "100%", height: 30, fontSize: 11, padding: "2px 6px" }}
+                value={settings.longitude}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value) || 0;
+                  const next = { ...settings, longitude: val, city: "Custom" };
+                  setSettings(next);
+                  saveAstroSettings(next);
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ fontSize: 10, color: "var(--ba-cyan)" }}>
+            Active: <strong>{settings.city}</strong> ({settings.latitude}° N, {settings.longitude}° E)
+          </div>
+        </div>
 
         {/* Previous Week Toggle */}
         <div

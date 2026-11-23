@@ -41,7 +41,10 @@ class AstroMarketSignal(BaseModel):
     timestamp_iso: str = Field(..., description="ISO 8601 timestamp in Asia/Kolkata (IST)")
     timestamp_utc: str = Field(..., description="ISO 8601 timestamp in UTC")
     reference_time_label: str = Field("Live IST", description="Time label (e.g. Sunrise 06:46 IST, 09:00 AM IST, Live)")
-    sunrise_time_iso: Optional[str] = Field(None, description="ISO timestamp of astronomical sunrise in Mumbai/NSE")
+    sunrise_time_iso: Optional[str] = Field(None, description="ISO timestamp of astronomical sunrise for user location")
+    city_name: str = Field("Ahmedabad", description="User preferred city (default: Ahmedabad)")
+    latitude: float = Field(23.0225, description="Geographic latitude (default: 23.0225 N)")
+    longitude: float = Field(72.5714, description="Geographic longitude (default: 72.5714 E)")
     regime_bias: str = Field(..., description="BULLISH_TAILWIND, HIGH_VOLATILITY_CAUTION, or NEUTRAL_RANGE")
     volatility_alert: bool = Field(..., description="True if hard aspects >= 1.8 or any major planet is stationary")
     hard_aspect_score: float = Field(..., description="Cumulative stress score from hard aspects")
@@ -87,8 +90,9 @@ class MarketDayOutlookItem(BaseModel):
     moon_nakshatra: str = Field(..., description="Moon Nakshatra at reference benchmark")
     moon_kp_sub_lord: str = Field(..., description="Moon KP Sub-Lord at reference benchmark")
     total_shift_windows: int = Field(..., description="Total Moon Nakshatra & KP Sub-Lord shifts during NSE session")
-    sunrise_time_str: Optional[str] = Field(None, description="Astronomical sunrise time (Mumbai/NSE)")
+    sunrise_time_str: Optional[str] = Field(None, description="Astronomical sunrise time for location")
     time_mode: str = Field("SUNRISE", description="Benchmark mode: SUNRISE or 09:00")
+    city_name: str = Field("Ahmedabad", description="Location name")
 
 
 class MarketWeekOutlookResponse(BaseModel):
@@ -96,6 +100,9 @@ class MarketWeekOutlookResponse(BaseModel):
     include_previous_week: bool = Field(..., description="Whether previous week (testing/audit) is included")
     include_next_week: bool = Field(..., description="Whether next week (projections) is included")
     time_mode: str = Field("SUNRISE", description="Benchmark time mode: SUNRISE or 09:00")
+    city_name: str = Field("Ahmedabad", description="User preferred city")
+    latitude: float = Field(23.0225, description="Latitude")
+    longitude: float = Field(72.5714, description="Longitude")
     total_trading_days: int = Field(..., description="Total market trading days returned (5, 10, or 15)")
     days: List[MarketDayOutlookItem] = Field(..., description="List of trading days")
 

@@ -39,6 +39,11 @@ UTC = zoneinfo.ZoneInfo("UTC")
 # National Stock Exchange (NSE) / Mumbai geographic coordinates (19.0760° N, 72.8777° E)
 NSE_GEO = (72.8777, 19.0760, 0.0)
 
+# Default User Location: Ahmedabad, Gujarat, India (23.0225° N, 72.5714° E)
+DEFAULT_CITY = "Ahmedabad"
+DEFAULT_LAT = 23.0225
+DEFAULT_LON = 72.5714
+
 # Initialize Swiss Ephemeris in Lahiri Sidereal mode
 swe.set_sid_mode(swe.SIDM_LAHIRI)
 
@@ -161,13 +166,19 @@ def _format_speed_dms(speed: float) -> str:
     return f"{sign}{deg:02d}° {minute:02d}' {sec:02d}\"/d"
 
 
-def get_mumbai_sunrise(target_date: date) -> datetime:
+def get_sunrise(
+    target_date: date,
+    lat: float = DEFAULT_LAT,
+    lon: float = DEFAULT_LON,
+) -> datetime:
     """
-    Calculates astronomical Sunrise in Asia/Kolkata (IST) for Mumbai/NSE coordinates (19.0760° N, 72.8777° E).
+    Calculates astronomical Sunrise in Asia/Kolkata (IST) for a given latitude and longitude.
+    Defaults to Ahmedabad (23.0225° N, 72.5714° E).
     Uses Swiss Ephemeris analytical Moshier engine.
     """
     jd = swe.julday(target_date.year, target_date.month, target_date.day, 0.0)
-    res, tret = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, NSE_GEO, 1013.25, 25.0, swe.FLG_MOSEPH)
+    geopos = (lon, lat, 0.0)
+    res, tret = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, geopos, 1013.25, 25.0, swe.FLG_MOSEPH)
     tjd_rise = tret[0]
     year, month, day, hour_dec = swe.revjul(tjd_rise)
     h = int(hour_dec)
@@ -181,6 +192,12 @@ def get_mumbai_sunrise(target_date: date) -> datetime:
         h += 1
     dt_ut = datetime(year, month, day, h, m, s, tzinfo=UTC)
     return dt_ut.astimezone(IST)
+
+
+def get_mumbai_sunrise(target_date: date) -> datetime:
+    """Convenience helper calculating sunrise for Mumbai/NSE coordinates (19.0760° N, 72.8777° E)."""
+    return get_sunrise(target_date, lat=19.0760, lon=72.8777)
+
 
 
 
@@ -365,12 +382,15 @@ def get_astro_snapshot(
     dt: Optional[datetime] = None,
     date_obj: Optional[date] = None,
     time_mode: str = "SUNRISE",
+    lat: float = DEFAULT_LAT,
+    lon: float = DEFAULT_LON,
+    city_name: str = DEFAULT_CITY,
     reference_label: Optional[str] = None,
 ) -> AstroMarketSignal:
     """
     Generate a complete AstroMarketSignal snapshot for a given timestamp or (date, time_mode).
     Time modes:
-      - "SUNRISE": Exact astronomical sunrise for Mumbai/NSE coordinates (standard Vedic benchmark).
+      - "SUNRISE": Exact astronomical sunrise for user location (default: Ahmedabad 23.0225° N, 72.5714° E).
       - "09:00": Market pre-open benchmark (09:00 AM IST).
       - "LIVE": Current live moment in IST.
     """
@@ -380,13 +400,13 @@ def get_astro_snapshot(
             dt = dt.replace(tzinfo=IST)
         eval_dt = dt
         try:
-            sunrise_dt = get_mumbai_sunrise(eval_dt.date())
+            sunrise_dt = get_sunrise(eval_dt.date(), lat=lat, lon=lon)
         except Exception:
             sunrise_dt = None
         label = reference_label or eval_dt.strftime("%H:%M:%S IST")
     elif date_obj is not None:
         try:
-            sunrise_dt = get_mumbai_sunrise(date_obj)
+            sunrise_dt = get_sunrise(date_obj, lat=lat, lon=lon)
         except Exception:
             sunrise_dt = None
 
@@ -398,13 +418,13 @@ def get_astro_snapshot(
             eval_dt = datetime.now(IST)
             label = reference_label or f"Live ({eval_dt.strftime('%H:%M:%S IST')})"
         else:  # default SUNRISE
-            eval_dt = sunrise_dt if sunrise_dt else datetime.combine(date_obj, time(6, 45), tzinfo=IST)
-            sr_str = sunrise_dt.strftime("%H:%M:%S IST") if sunrise_dt else "06:45 IST"
-            label = reference_label or f"Sunrise ({sr_str})"
+            eval_dt = sunrise_dt if sunrise_dt else datetime.combine(date_obj, time(6, 58), tzinfo=IST)
+            sr_str = sunrise_dt.strftime("%H:%M:%S IST") if sunrise_dt else "06:58 IST"
+            label = reference_label or f"Sunrise at {city_name} ({sr_str})"
     else:
         eval_dt = datetime.now(IST)
         try:
-            sunrise_dt = get_mumbai_sunrise(eval_dt.date())
+            sunrise_dt = get_sunrise(eval_dt.date(), lat=lat, lon=lon)
         except Exception:
             sunrise_dt = None
         label = reference_label or f"Live ({eval_dt.strftime('%H:%M:%S IST')})"
@@ -441,6 +461,9 @@ def get_astro_snapshot(
         timestamp_utc=dt_utc.isoformat(),
         reference_time_label=label,
         sunrise_time_iso=sunrise_dt.isoformat() if sunrise_dt else None,
+        city_name=city_name,
+        latitude=lat,
+        longitude=lon,
         regime_bias=regime_bias,
         volatility_alert=volatility_alert,
         hard_aspect_score=hard_score,
@@ -566,6 +589,9 @@ def get_market_week_outlook(
     include_next: bool = True,
     ref_date: Optional[date] = None,
     time_mode: str = "SUNRISE",
+    lat: float = DEFAULT_LAT,
+    lon: float = DEFAULT_LON,
+    city_name: str = DEFAULT_CITY,
 ) -> MarketWeekOutlookResponse:
     """
     Computes a market-days (Monday-to-Friday only) astrological timing outlook across:
@@ -573,8 +599,8 @@ def get_market_week_outlook(
     - Current week (Mon-Fri, 5 trading days): Past days, today, remaining days of the week
     - Next week (Mon-Fri, 5 trading days): Forward-looking cyclical projections (if include_next is True)
 
-    Evaluates daily baseline at astronomical Sunrise for Mumbai/NSE (or 09:00 AM IST if requested).
-    Excludes non-trading weekends (Saturday and Sunday).
+    Evaluates daily baseline at astronomical Sunrise for the user's preferred location (default: Ahmedabad 23.0225° N, 72.5714° E)
+    or at 09:00 AM IST if requested. Excludes non-trading weekends (Saturday and Sunday).
     """
     now_ist = datetime.now(IST)
     if ref_date is None:
@@ -603,15 +629,15 @@ def get_market_week_outlook(
 
     for days_list, category in trading_blocks:
         for d in days_list:
-            sunrise_dt = get_mumbai_sunrise(d)
+            sunrise_dt = get_sunrise(d, lat=lat, lon=lon)
             if time_mode.upper() in ("09:00", "09:00 AM", "MARKET_OPEN"):
                 eval_dt = datetime.combine(d, time(9, 0), tzinfo=IST)
                 label = f"09:00 AM IST ({d.strftime('%d %b')})"
             else:
                 eval_dt = sunrise_dt
-                label = f"Sunrise ({sunrise_dt.strftime('%H:%M IST')})"
+                label = f"Sunrise at {city_name} ({sunrise_dt.strftime('%H:%M IST')})"
 
-            snap = get_astro_snapshot(eval_dt, reference_label=label)
+            snap = get_astro_snapshot(eval_dt, lat=lat, lon=lon, city_name=city_name, reference_label=label)
             win_res = get_intraday_windows(d)
 
             items.append(
@@ -631,6 +657,7 @@ def get_market_week_outlook(
                     total_shift_windows=win_res.total_windows,
                     sunrise_time_str=sunrise_dt.strftime("%H:%M IST"),
                     time_mode=time_mode.upper(),
+                    city_name=city_name,
                 )
             )
 
@@ -639,6 +666,9 @@ def get_market_week_outlook(
         include_previous_week=include_prev,
         include_next_week=include_next,
         time_mode=time_mode.upper(),
+        city_name=city_name,
+        latitude=lat,
+        longitude=lon,
         total_trading_days=len(items),
         days=items,
     )

@@ -15,6 +15,7 @@ import {
   Layers,
   Sun,
   Info,
+  MapPin,
 } from "lucide-react";
 import {
   getAstroSettings,
@@ -170,10 +171,13 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
       settings.includeNextWeek,
       todayDate,
       outlookTimeMode,
+      settings.latitude,
+      settings.longitude,
+      settings.city,
     ],
     queryFn: async () => {
       const res = await api.get(
-        `/v1/astro/market-week-outlook?include_prev=${settings.includePreviousWeek}&include_next=${settings.includeNextWeek}&ref_date_str=${todayDate}&time_mode=${outlookTimeMode}`
+        `/v1/astro/market-week-outlook?include_prev=${settings.includePreviousWeek}&include_next=${settings.includeNextWeek}&ref_date_str=${todayDate}&time_mode=${outlookTimeMode}&lat=${settings.latitude}&lon=${settings.longitude}&city=${encodeURIComponent(settings.city)}`
       );
       return res.data;
     },
@@ -194,9 +198,11 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
 
   // Query snapshot telemetry for selected trading day at the requested benchmark time
   const { data: selectedDaySnapshot, isLoading: snapshotLoading } = useQuery<AstroMarketSignal>({
-    queryKey: ["astro-snapshot-day", selectedDate, timeMode],
+    queryKey: ["astro-snapshot-day", selectedDate, timeMode, settings.latitude, settings.longitude, settings.city],
     queryFn: async () => {
-      const res = await api.get(`/v1/astro/snapshot?date_str=${selectedDate}&time_mode=${timeMode}`);
+      const res = await api.get(
+        `/v1/astro/snapshot?date_str=${selectedDate}&time_mode=${timeMode}&lat=${settings.latitude}&lon=${settings.longitude}&city=${encodeURIComponent(settings.city)}`
+      );
       return res.data;
     },
     enabled: open && !!selectedDate,
@@ -636,7 +642,7 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
                   border: `1px solid ${timeMode === "SUNRISE" ? "var(--ba-cyan)" : "var(--border)"}`,
                   cursor: "pointer",
                 }}
-                title="Traditional Vedic Kundli benchmark: astronomical sunrise for Mumbai/NSE"
+                title={`Astronomical sunrise for ${settings.city} (${settings.latitude.toFixed(2)}°N, ${settings.longitude.toFixed(2)}°E)`}
               >
                 SUNRISE ({activeSunriseDisplay})
               </button>
@@ -681,8 +687,30 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
             </div>
           </div>
 
-          <div style={{ fontSize: 10, color: "var(--ba-cyan)", fontWeight: 700, fontFamily: "monospace" }}>
-            {activeSignal?.reference_time_label || timeMode}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 10,
+                color: "var(--ba-cyan)",
+                background: "rgba(8, 182, 222, 0.08)",
+                padding: "2px 8px",
+                borderRadius: 3,
+                border: "1px solid rgba(8, 182, 222, 0.2)",
+              }}
+              title={`Observer coordinates: ${settings.latitude}°N, ${settings.longitude}°E (Configurable in Settings)`}
+            >
+              <MapPin size={11} />
+              <span style={{ fontWeight: 700 }}>{settings.city}</span>
+              <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                ({settings.latitude.toFixed(2)}°N, {settings.longitude.toFixed(2)}°E)
+              </span>
+            </div>
+            <div style={{ fontSize: 10, color: "var(--ba-cyan)", fontWeight: 700, fontFamily: "monospace" }}>
+              {activeSignal?.reference_time_label || timeMode}
+            </div>
           </div>
         </div>
 
@@ -1275,7 +1303,7 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
         >
           <span>Swiss Ephemeris Moshier Analytical Model (Lahiri Sidereal Mode)</span>
           <span style={{ fontFamily: "monospace" }}>
-            Selected: {selectedDate} • {activeSignal?.reference_time_label || timeMode}
+            Selected: {selectedDate} • {activeSignal?.reference_time_label || timeMode} • {settings.city}
           </span>
         </div>
       </div>
