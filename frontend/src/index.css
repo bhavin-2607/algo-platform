@@ -69,6 +69,43 @@ button {
   --font:      'DM Sans', 'Segoe UI', -apple-system, sans-serif;
 }
 
+/* ── RESPONSIVE MONITOR SCALING (27" & HIGH-RESOLUTION MONITORS) ───── */
+/* By default on laptops / MacBooks (viewport width < 1750px), zoom remains 1.0 (standard). */
+@media screen and (min-width: 1750px) and (max-width: 2199px) {
+  html:not([data-scale="standard"]):not([data-scale="compact"]):not([data-scale="large"]):not([data-scale="extra-large"]):not([data-scale="huge"]) {
+    zoom: 1.12;
+  }
+}
+
+@media screen and (min-width: 2200px) and (max-width: 2999px) {
+  html:not([data-scale="standard"]):not([data-scale="compact"]):not([data-scale="large"]):not([data-scale="extra-large"]):not([data-scale="huge"]) {
+    zoom: 1.22;
+  }
+}
+
+@media screen and (min-width: 3000px) {
+  html:not([data-scale="standard"]):not([data-scale="compact"]):not([data-scale="large"]):not([data-scale="extra-large"]):not([data-scale="huge"]) {
+    zoom: 1.32;
+  }
+}
+
+/* Explicit user manual scale overrides */
+html[data-scale="compact"] {
+  zoom: 0.92 !important;
+}
+html[data-scale="standard"] {
+  zoom: 1.0 !important;
+}
+html[data-scale="large"] {
+  zoom: 1.15 !important;
+}
+html[data-scale="extra-large"] {
+  zoom: 1.22 !important;
+}
+html[data-scale="huge"] {
+  zoom: 1.32 !important;
+}
+
 body {
   background: var(--bg);
   color: var(--text);

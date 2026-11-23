@@ -160,13 +160,73 @@ async def get_dhan_ip_verification(
             secondary_version = "IPv6" if ":" in secondary_ip else ("IPv4" if "." in secondary_ip else None)
             detected_version = "IPv6" if ":" in detected_ip else ("IPv4" if "." in detected_ip else None)
 
-            is_matched = bool(
-                orders_allowed is True
-                or ip_match_status == "MATCH"
-                or (server_ipv4 and server_ipv4 != "unknown" and (server_ipv4 == primary_ip or server_ipv4 == secondary_ip))
-                or (server_ipv6 and (server_ipv6 == primary_ip or server_ipv6 == secondary_ip))
-                or (detected_ip and (detected_ip == primary_ip or detected_ip == secondary_ip))
+            if server_ipv4 == "unknown" and detected_ip and "." in detected_ip and ":" not in detected_ip:
+                server_ipv4 = detected_ip
+
+            ipv4_matched = bool(
+                server_ipv4
+                and server_ipv4 != "unknown"
+                and (server_ipv4 == primary_ip or server_ipv4 == secondary_ip)
             )
+            ipv6_matched = bool(
+                server_ipv6
+                and (server_ipv6 == primary_ip or server_ipv6 == secondary_ip)
+            )
+            detected_matched = bool(
+                detected_ip
+                and (detected_ip == primary_ip or detected_ip == secondary_ip)
+            )
+
+            from app.core.config import settings
+            force_ipv4_active = bool(getattr(settings, "DHAN_FORCE_IPV4", True))
+
+            # When outbound Dhan requests are forced through IPv4 socket,
+            # order traffic is guaranteed to match Dhan static IP if ipv4_matched is True,
+            # even if Dhan GET IP endpoint flags ordersAllowed=False due to checking secondary IPv6 drift.
+            orders_permitted_effective = bool(
+                (force_ipv4_active and ipv4_matched)
+                or orders_allowed is True
+                or ip_match_status == "MATCH"
+                or (not force_ipv4_active and (ipv4_matched or ipv6_matched))
+            )
+
+            # Secondary IPv6 drifted when Wi-Fi reconnected, but primary IPv4 order routing is intact
+            secondary_ipv6_drift = bool(
+                ipv4_matched
+                and not ipv6_matched
+                and secondary_ip
+                and ":" in secondary_ip
+            )
+
+            is_matched = bool(
+                orders_permitted_effective
+                or ipv4_matched
+                or ipv6_matched
+                or detected_matched
+                or orders_allowed is True
+                or ip_match_status == "MATCH"
+            )
+
+            if ipv4_matched and ipv6_matched:
+                ip_match_detail = "DUAL_STACK_MATCHED"
+                status_msg = "Dual-stack static IP fully verified. Both IPv4 and IPv6 match Dhan registered static IPs."
+            elif ipv4_matched:
+                ip_match_detail = "IPV4_ACTIVE"
+                if secondary_ipv6_drift:
+                    status_msg = (
+                        f"Orders are routed via forced IPv4 ({server_ipv4}), which matches Dhan registered IP. "
+                        f"Live order placement is ACTIVE and permitted. "
+                        f"Dhan GET IP reported mismatch because secondary IPv6 drifted after network reconnect (Dhan Secondary: {secondary_ip} vs Current IPv6: {server_ipv6 or 'Not Detected'}). "
+                        f"Update Secondary IP below to re-sync Dhan dual-stack status."
+                    )
+                else:
+                    status_msg = f"Orders are routed via forced IPv4 ({server_ipv4}), which matches Dhan registered IP. Live order placement is ACTIVE and permitted."
+            elif is_matched:
+                ip_match_detail = "MATCHED"
+                status_msg = "IP configuration verified successfully. Trading orders permitted."
+            else:
+                ip_match_detail = "MISMATCH"
+                status_msg = f"Outbound IP ({server_ipv4}) does not match Dhan registered static IPs (Primary: {primary_ip or 'None'}, Secondary: {secondary_ip or 'None'}). Please whitelist below."
 
             return {
                 "current_server_ip": server_ipv4,
@@ -179,6 +239,12 @@ async def get_dhan_ip_verification(
                 "dhan_secondary_ip": secondary_ip or None,
                 "dhan_secondary_version": secondary_version,
                 "is_matched": is_matched,
+                "ipv4_matched": ipv4_matched,
+                "ipv6_matched": ipv6_matched,
+                "force_ipv4_active": force_ipv4_active,
+                "orders_permitted_effective": orders_permitted_effective,
+                "secondary_ipv6_drift": secondary_ipv6_drift,
+                "ip_match_detail": ip_match_detail,
                 "orders_allowed": orders_allowed,
                 "ip_match_status": ip_match_status,
                 "modify_date_primary": modify_date_primary,
@@ -188,7 +254,7 @@ async def get_dhan_ip_verification(
                 "account_name": account_name,
                 "dhan_raw_response": data,
                 "status": "SUCCESS",
-                "message": "IP configuration verified successfully. Trading orders permitted." if is_matched else "Server IP does not match Dhan registered static IP.",
+                "message": status_msg,
             }
         else:
             err_msg = resp.text

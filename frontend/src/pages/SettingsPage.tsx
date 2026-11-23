@@ -4,7 +4,7 @@ import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
-import { Eye, EyeOff, MapPin, Locate } from "lucide-react";
+import { Eye, EyeOff, MapPin, Locate, Monitor } from "lucide-react";
 import {
   getAstroSettings,
   saveAstroSettings,
@@ -29,6 +29,7 @@ export default function SettingsPage() {
         {/* Left Column: User Profile & Security */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <UserProfileCard />
+          <DisplayScalingCard />
           <PasswordCard />
           <AstroTimingSettingsCard />
         </div>
@@ -110,6 +111,88 @@ function UserProfileCard() {
               {isAdmin ? "SUPER ADMIN" : "STANDARD TRADER"}
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DisplayScalingCard() {
+  const [scale, setScale] = useState(() => localStorage.getItem("display_scale") || "auto");
+
+  function handleSelect(newScale: string) {
+    setScale(newScale);
+    if (newScale && newScale !== "auto") {
+      document.documentElement.dataset.scale = newScale;
+    } else {
+      delete document.documentElement.dataset.scale;
+    }
+    localStorage.setItem("display_scale", newScale);
+    toast.success(`Display scale updated to ${newScale.toUpperCase()}`);
+  }
+
+  const options = [
+    { id: "auto", label: "Auto (Recommended)", desc: "Enlarges automatically for 27\" monitors & 4K; 100% standard on laptops/MacBooks." },
+    { id: "standard", label: "Standard (100%)", desc: "Native compact scaling ideal for 13\"-16\" MacBook and laptop displays." },
+    { id: "large", label: "Large (115%)", desc: "Slightly enlarged text and badges; comfortable for 24\" or 27\" 1080p monitors." },
+    { id: "extra-large", label: "Extra Large (122%)", desc: "Ideal for 27\" 1440p (QHD / 2K) monitors from desk viewing distance." },
+    { id: "huge", label: "Huge (132%)", desc: "Expanded scaling for 27\" to 32\" 4K ultra-high resolution monitors." },
+    { id: "compact", label: "Compact (92%)", desc: "Ultra-dense layout displaying maximum rows and columns on screen." },
+  ];
+
+  return (
+    <div className="card settings-card">
+      <div className="card-header">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Monitor size={15} style={{ color: "var(--green)" }} />
+          <span className="card-title">DISPLAY & MONITOR SCALING</span>
+        </div>
+        <span className="badge badge-gray" style={{ fontSize: 9 }}>
+          {scale.toUpperCase()}
+        </span>
+      </div>
+      <div style={{ padding: "12px 14px" }}>
+        <p style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
+          Configure UI and font scaling for your screen. Auto dynamically enhances text readability on 27" monitors without distorting laptop displays.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {options.map((opt) => {
+            const isSelected = scale === opt.id;
+            return (
+              <div
+                key={opt.id}
+                onClick={() => handleSelect(opt.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "8px 12px",
+                  borderRadius: 4,
+                  background: isSelected ? "var(--green-dim)" : "var(--surface2)",
+                  border: `1px solid ${isSelected ? "var(--green)" : "var(--border)"}`,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="display-scale"
+                  checked={isSelected}
+                  onChange={() => handleSelect(opt.id)}
+                  style={{ marginTop: 3, accentColor: "var(--green)", cursor: "pointer" }}
+                />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: isSelected ? "var(--green)" : "var(--text)" }}>
+                    {opt.label}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                    {opt.desc}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

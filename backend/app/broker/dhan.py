@@ -68,14 +68,19 @@ def get_public_ipv4() -> str:
         "https://api4.ipify.org?format=json",
         "https://api.ipify.org?format=json",
         "https://ifconfig.me/all.json",
+        "https://checkip.amazonaws.com",
+        "https://ipv4.icanhazip.com",
     ]:
         try:
-            r = requests.get(url, timeout=3)
+            r = requests.get(url, timeout=5)
             if r.status_code == 200:
-                data = r.json()
-                ip = data.get("ip") or data.get("ip_addr")
-                if ip and "." in ip:
-                    return ip
+                if "json" in r.headers.get("Content-Type", "") or "{" in r.text:
+                    data = r.json()
+                    ip = data.get("ip") or data.get("ip_addr")
+                else:
+                    ip = r.text.strip()
+                if ip and "." in ip and ":" not in ip:
+                    return ip.strip()
         except Exception:
             continue
     return "unknown"

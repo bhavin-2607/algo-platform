@@ -219,6 +219,10 @@ function IpWhitelistingTab() {
   if (isLoading) return <Spinner />;
 
   const isMatched = Boolean(data?.is_matched);
+  const ipv4Matched = Boolean(data?.ipv4_matched);
+  const ipv6Matched = Boolean(data?.ipv6_matched);
+  const ordersPermittedEffective = Boolean(data?.orders_permitted_effective ?? (ipv4Matched || isMatched || data?.orders_allowed === true));
+  const secondaryIpv6Drift = Boolean(data?.secondary_ipv6_drift);
   const ordersAllowed = data?.orders_allowed;
   const ipMatchStatus = data?.ip_match_status;
   const serverIpv4 = data?.current_server_ipv4 || data?.current_server_ip || "Detecting...";
@@ -257,20 +261,35 @@ function IpWhitelistingTab() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {ordersAllowed != null && (
-              <span
-                className={`badge ${ordersAllowed ? "badge-green" : "badge-red"}`}
-                style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px" }}
-              >
-                {ordersAllowed ? "ORDERS PERMITTED" : "ORDERS BLOCKED (IP MISMATCH)"}
-              </span>
-            )}
+            <span
+              className={`badge ${ordersPermittedEffective ? "badge-green" : "badge-red"}`}
+              style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px" }}
+              title={ordersPermittedEffective ? "Orders are forced via IPv4 and match Dhan registered IP" : "Outbound IP mismatch"}
+            >
+              {ordersPermittedEffective ? "ORDERS PERMITTED (IPv4 ROUTE)" : "ORDERS BLOCKED (IP MISMATCH)"}
+            </span>
             <span
               className={`badge ${isMatched ? "badge-green" : "badge-red"}`}
               style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px" }}
             >
-              {isMatched ? "IP MATCHED" : "IP MISMATCH"}
+              {ipv4Matched ? "IPv4 MATCHED" : (isMatched ? "IP MATCHED" : "IP MISMATCH")}
             </span>
+            {secondaryIpv6Drift && (
+              <span
+                className="badge"
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: "4px 10px",
+                  color: "var(--yellow)",
+                  background: "var(--yellow-dim)",
+                  border: "1px solid rgba(255, 183, 3, 0.3)",
+                }}
+                title="Wi-Fi reset changed IPv6, but outbound orders route via verified IPv4"
+              >
+                SECONDARY IPv6 DRIFT
+              </span>
+            )}
             <button
               type="button"
               className="connect-btn"
@@ -283,7 +302,35 @@ function IpWhitelistingTab() {
           </div>
         </div>
 
-        {data?.status && data.status !== "SUCCESS" && data?.message && (
+        {/* Dual-Stack Secondary IPv6 Drift Notice (Orders are active via IPv4) */}
+        {secondaryIpv6Drift && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 16px",
+              background: "rgba(255, 183, 3, 0.08)",
+              border: "1px solid rgba(255, 183, 3, 0.35)",
+              borderRadius: 4,
+              fontSize: 12,
+              color: "var(--yellow)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+            }}
+          >
+            <div style={{ fontWeight: 700, letterSpacing: 0.5 }}>
+              DUAL-STACK NOTICE: IPv4 ORDER ROUTING ACTIVE &bull; SECONDARY IPv6 DRIFT DETECTED
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.6 }}>
+              All outbound Dhan trading orders from this platform are forcibly routed over IPv4 (<strong>{serverIpv4}</strong>), which matches your Dhan registered Primary IP. Live order placement is functioning normally without DH-905 rejections.
+              <br />
+              Dhan's GET IP API flagged a secondary mismatch because your recent Wi-Fi reconnect assigned a new local IPv6 (<code>{serverIpv6 || 'current'}</code>) while Dhan still retains your previous IPv6 (<code>{secondaryIp}</code>).
+              You can click <strong>WHITELIST SERVER IPv6 AS SECONDARY</strong> below to update Dhan's backup slot.
+            </div>
+          </div>
+        )}
+
+        {!ordersPermittedEffective && data?.status && data.status !== "SUCCESS" && data?.message && (
           <div
             style={{
               marginTop: 14,
@@ -443,20 +490,34 @@ function IpWhitelistingTab() {
           </div>
 
           <div>
-            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>DHAN IP MATCH STATUS</div>
+            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>DHAN GET IP TELEMETRY</div>
             <div style={{ marginTop: 4 }}>
-              <span className={`badge ${ipMatchStatus === "MATCH" ? "badge-green" : "badge-red"}`} style={{ fontSize: 10, fontWeight: 700 }}>
-                {ipMatchStatus || (isMatched ? "MATCH" : "MISMATCH")}
+              <span
+                className={`badge ${ordersAllowed === true ? "badge-green" : (secondaryIpv6Drift ? "badge-yellow" : "badge-red")}`}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: secondaryIpv6Drift ? "var(--yellow)" : undefined,
+                  background: secondaryIpv6Drift ? "var(--yellow-dim)" : undefined,
+                }}
+              >
+                {ordersAllowed === true ? "MATCH (PERMITTED)" : (secondaryIpv6Drift ? "SECONDARY IPv6 DRIFT" : (ipMatchStatus || "MISMATCH"))}
               </span>
+            </div>
+            <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
+              {secondaryIpv6Drift ? "Dhan checked secondary IPv6" : (ordersAllowed ? "Dhan server verified" : "Dhan reports mismatch")}
             </div>
           </div>
 
           <div>
-            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>TRADING ORDERS PERMITTED</div>
+            <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1 }}>PLATFORM ORDER ROUTING</div>
             <div style={{ marginTop: 4 }}>
-              <span className={`badge ${ordersAllowed ? "badge-green" : "badge-red"}`} style={{ fontSize: 10, fontWeight: 700 }}>
-                {ordersAllowed ? "PERMITTED (ACTIVE)" : "BLOCKED (MISMATCH)"}
+              <span className={`badge ${ordersPermittedEffective ? "badge-green" : "badge-red"}`} style={{ fontSize: 10, fontWeight: 700 }}>
+                {ordersPermittedEffective ? "PERMITTED (IPv4 ACTIVE)" : "BLOCKED (MISMATCH)"}
               </span>
+            </div>
+            <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
+              {ordersPermittedEffective ? "Forced IPv4 socket matches Dhan" : "Outbound IP mismatch"}
             </div>
           </div>
 

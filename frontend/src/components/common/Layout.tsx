@@ -22,6 +22,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Info,
+  Monitor,
 } from "lucide-react";
 import { useNotificationStore, notifyMarket, notifyError } from "@/store/notifications";
 import { AstroTelemetryBadge } from "@/components/astro/AstroTelemetryBadge";
@@ -499,6 +500,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
+  const [displayScale, setDisplayScale] = useState(() => localStorage.getItem("display_scale") || "auto");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -506,6 +508,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (displayScale && displayScale !== "auto") {
+      document.documentElement.dataset.scale = displayScale;
+    } else {
+      delete document.documentElement.dataset.scale;
+    }
+    localStorage.setItem("display_scale", displayScale);
+  }, [displayScale]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -889,6 +900,39 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </div>
                   <span className="badge badge-gray" style={{ fontSize: 9 }}>
                     {theme.toUpperCase()}
+                  </span>
+                </button>
+
+                {/* 3b. Display Scale option (for 27" and Large Monitors) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const scaleOrder = ["auto", "standard", "large", "extra-large", "huge"] as const;
+                    const nextIdx = (scaleOrder.indexOf(displayScale as any) + 1) % scaleOrder.length;
+                    setDisplayScale(scaleOrder[nextIdx]);
+                  }}
+                  className="user-dropdown-item"
+                  style={{ justifyContent: "space-between" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Monitor size={15} style={{ color: "var(--green)", flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>Monitor Scale</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                        {displayScale === "auto"
+                          ? "Auto (Scales for 27\" Monitors)"
+                          : displayScale === "standard"
+                          ? "Standard 100% (MacBook/Laptop)"
+                          : displayScale === "large"
+                          ? "Large 115% (24\"/27\" 1080p)"
+                          : displayScale === "extra-large"
+                          ? "Extra Large 122% (27\" 1440p)"
+                          : "Huge 132% (4K Monitor)"}
+                      </div>
+                    </div>
+                  </div>
+                  <span className="badge badge-gray" style={{ fontSize: 9 }}>
+                    {displayScale.toUpperCase()}
                   </span>
                 </button>
 
