@@ -24,7 +24,10 @@ from app.schemas.astro import (
     AstroMarketSignal,
     IntradayAstroResponse,
     IntradayAstroWindow,
+    MarketDayOutlookItem,
+    MarketWeekOutlookResponse,
     PlanetTelemetry,
+    WeekCategory,
 )
 
 logger = logging.getLogger(__name__)
@@ -468,3 +471,75 @@ def get_intraday_windows(target_date: Optional[date] = None) -> IntradayAstroRes
         total_windows=len(windows),
         windows=windows,
     )
+
+
+def get_market_week_outlook(
+    include_prev: bool = True,
+    include_next: bool = True,
+    ref_date: Optional[date] = None,
+) -> MarketWeekOutlookResponse:
+    """
+    Computes a market-days (Monday-to-Friday only) astrological timing outlook across:
+    - Previous week (Mon-Fri, 5 trading days): Historical audit/testing against past sessions (if include_prev is True)
+    - Current week (Mon-Fri, 5 trading days): Past days, today, remaining days of the week
+    - Next week (Mon-Fri, 5 trading days): Forward-looking cyclical projections (if include_next is True)
+
+    Excludes non-trading weekends (Saturday and Sunday).
+    """
+    now_ist = datetime.now(IST)
+    if ref_date is None:
+        ref_date = now_ist.date()
+
+    # Calculate Monday of the current week (weekday(): 0=Mon ... 6=Sun)
+    curr_monday = ref_date - timedelta(days=ref_date.weekday())
+    today_date = now_ist.date()
+
+    trading_blocks: List[Tuple[List[date], WeekCategory]] = []
+
+    if include_prev:
+        prev_monday = curr_monday - timedelta(days=7)
+        prev_days = [prev_monday + timedelta(days=i) for i in range(5)]
+        trading_blocks.append((prev_days, WeekCategory.PREVIOUS_WEEK))
+
+    curr_days = [curr_monday + timedelta(days=i) for i in range(5)]
+    trading_blocks.append((curr_days, WeekCategory.CURRENT_WEEK))
+
+    if include_next:
+        next_monday = curr_monday + timedelta(days=7)
+        next_days = [next_monday + timedelta(days=i) for i in range(5)]
+        trading_blocks.append((next_days, WeekCategory.NEXT_WEEK))
+
+    items: List[MarketDayOutlookItem] = []
+
+    for days_list, category in trading_blocks:
+        for d in days_list:
+            midday_dt = datetime.combine(d, time(12, 0), tzinfo=IST)
+            snap = get_astro_snapshot(midday_dt)
+            win_res = get_intraday_windows(d)
+
+            items.append(
+                MarketDayOutlookItem(
+                    date=d.isoformat(),
+                    day_name=d.strftime("%a"),
+                    day_of_week=d.weekday(),
+                    week_category=category,
+                    is_today=(d == today_date),
+                    regime_bias=snap.regime_bias,
+                    volatility_alert=snap.volatility_alert,
+                    hard_aspect_score=snap.hard_aspect_score,
+                    soft_aspect_score=snap.soft_aspect_score,
+                    net_sentiment_score=snap.net_sentiment_score,
+                    moon_nakshatra=snap.moon_nakshatra,
+                    moon_kp_sub_lord=snap.moon_kp_sub_lord,
+                    total_shift_windows=win_res.total_windows,
+                )
+            )
+
+    return MarketWeekOutlookResponse(
+        reference_date=ref_date.isoformat(),
+        include_previous_week=include_prev,
+        include_next_week=include_next,
+        total_trading_days=len(items),
+        days=items,
+    )
+

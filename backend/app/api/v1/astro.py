@@ -4,8 +4,16 @@ import zoneinfo
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas.astro import AstroMarketSignal, IntradayAstroResponse
-from app.services.astro_service import get_astro_snapshot, get_intraday_windows
+from app.schemas.astro import (
+    AstroMarketSignal,
+    IntradayAstroResponse,
+    MarketWeekOutlookResponse,
+)
+from app.services.astro_service import (
+    get_astro_snapshot,
+    get_intraday_windows,
+    get_market_week_outlook,
+)
 
 router = APIRouter()
 IST = zoneinfo.ZoneInfo("Asia/Kolkata")
@@ -55,3 +63,47 @@ async def get_windows(
         return get_intraday_windows(target_d)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Intraday windows calculation error: {exc}")
+
+
+@router.get(
+    "/market-week-outlook",
+    response_model=MarketWeekOutlookResponse,
+    summary="Get multi-week Monday-to-Friday market timing outlook (previous week, current week, next week)"
+)
+async def get_week_outlook(
+    include_prev: bool = Query(
+        True,
+        description="Include previous week (Mon-Fri) for historical testing & audit"
+    ),
+    include_next: bool = Query(
+        True,
+        description="Include next week (Mon-Fri) for forward-looking cyclical projections"
+    ),
+    ref_date_str: Optional[str] = Query(
+        None,
+        description="Optional reference date in YYYY-MM-DD. Defaults to current IST date."
+    ),
+):
+    """
+    Returns Monday-to-Friday market trading days structured across:
+    - Previous week (5 trading days, testing/audit)
+    - Current week (5 trading days, past days + today + remaining days)
+    - Next week (5 trading days, forward cyclical projections)
+
+    Excludes non-trading weekends.
+    """
+    ref_d: Optional[date] = None
+    if ref_date_str:
+        try:
+            ref_d = date.fromisoformat(ref_date_str)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid ref_date_str format (use YYYY-MM-DD): {exc}")
+    try:
+        return get_market_week_outlook(
+            include_prev=include_prev,
+            include_next=include_next,
+            ref_date=ref_d,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Market-week outlook calculation error: {exc}")
+

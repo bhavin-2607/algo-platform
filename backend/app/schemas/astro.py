@@ -1,5 +1,12 @@
+from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
+
+
+class WeekCategory(str, Enum):
+    PREVIOUS_WEEK = "PREVIOUS_WEEK"
+    CURRENT_WEEK = "CURRENT_WEEK"
+    NEXT_WEEK = "NEXT_WEEK"
 
 
 class PlanetTelemetry(BaseModel):
@@ -61,3 +68,28 @@ class IntradayAstroResponse(BaseModel):
     session_close: str = Field("15:30 IST", description="NSE session close")
     total_windows: int = Field(..., description="Number of detected boundary shift windows")
     windows: List[IntradayAstroWindow] = Field(..., description="Chronological shift events")
+
+
+class MarketDayOutlookItem(BaseModel):
+    date: str = Field(..., description="Date in YYYY-MM-DD")
+    day_name: str = Field(..., description="Day abbreviation: Mon, Tue, Wed, Thu, Fri")
+    day_of_week: int = Field(..., ge=0, le=4, description="0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri")
+    week_category: WeekCategory = Field(..., description="PREVIOUS_WEEK, CURRENT_WEEK, or NEXT_WEEK")
+    is_today: bool = Field(..., description="True if this is the active trading day")
+    regime_bias: str = Field(..., description="BULLISH_TAILWIND, HIGH_VOLATILITY_CAUTION, or NEUTRAL_RANGE")
+    volatility_alert: bool = Field(..., description="True if volatility alert is triggered")
+    hard_aspect_score: float = Field(..., description="Cumulative stress score from hard aspects")
+    soft_aspect_score: float = Field(..., description="Cumulative harmony score from soft aspects")
+    net_sentiment_score: float = Field(..., description="Net sentiment score (Soft minus Hard)")
+    moon_nakshatra: str = Field(..., description="Midday Moon Nakshatra")
+    moon_kp_sub_lord: str = Field(..., description="Midday Moon KP Sub-Lord")
+    total_shift_windows: int = Field(..., description="Total Moon Nakshatra & KP Sub-Lord shifts during NSE session")
+
+
+class MarketWeekOutlookResponse(BaseModel):
+    reference_date: str = Field(..., description="Reference date in YYYY-MM-DD")
+    include_previous_week: bool = Field(..., description="Whether previous week (testing/audit) is included")
+    include_next_week: bool = Field(..., description="Whether next week (projections) is included")
+    total_trading_days: int = Field(..., description="Total market trading days returned (5, 10, or 15)")
+    days: List[MarketDayOutlookItem] = Field(..., description="List of trading days")
+

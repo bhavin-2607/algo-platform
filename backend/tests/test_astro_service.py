@@ -9,12 +9,18 @@ from app.services.astro_service import (
     get_planetary_telemetry,
     compute_active_aspects,
     get_astro_risk_multiplier,
+    get_market_week_outlook,
     SPAN_NAKSHATRA,
     SPAN_PADA,
     NAKSHATRAS,
     SIGNS,
 )
-from app.schemas.astro import AstroMarketSignal, IntradayAstroResponse
+from app.schemas.astro import (
+    AstroMarketSignal,
+    IntradayAstroResponse,
+    MarketWeekOutlookResponse,
+    WeekCategory,
+)
 
 IST = zoneinfo.ZoneInfo("Asia/Kolkata")
 
@@ -167,6 +173,69 @@ class AstroServiceTests(unittest.TestCase):
         win_data = win_res.json()
         self.assertEqual(win_data["date"], "2026-11-23")
         self.assertIn("windows", win_data)
+
+        # 3. Test /api/v1/astro/market-week-outlook
+        week_res = client.get("/api/v1/astro/market-week-outlook?include_prev=true&include_next=true&ref_date_str=2026-11-23")
+        self.assertEqual(week_res.status_code, 200)
+        week_data = week_res.json()
+        self.assertEqual(week_data["total_trading_days"], 15)
+        self.assertEqual(len(week_data["days"]), 15)
+
+    def test_market_week_outlook_monday_to_friday_only(self):
+        """Verify that get_market_week_outlook strictly generates Monday-to-Friday market days."""
+        # Test reference date: Monday Nov 23, 2026
+        ref_d = date(2026, 11, 23)
+        res = get_market_week_outlook(include_prev=True, include_next=True, ref_date=ref_d)
+
+        self.assertIsInstance(res, MarketWeekOutlookResponse)
+        self.assertEqual(res.total_trading_days, 15)
+        self.assertEqual(len(res.days), 15)
+
+        # Verify all days are Monday through Friday (0..4) and NO weekends (5 or 6)
+        for day in res.days:
+            self.assertIn(day.day_of_week, [0, 1, 2, 3, 4])
+            self.assertIn(day.day_name, ["Mon", "Tue", "Wed", "Thu", "Fri"])
+            parsed_d = date.fromisoformat(day.date)
+            self.assertNotIn(parsed_d.weekday(), [5, 6])  # No Saturday or Sunday
+
+        # Verify categories count
+        prev_week = [d for d in res.days if d.week_category == WeekCategory.PREVIOUS_WEEK]
+        curr_week = [d for d in res.days if d.week_category == WeekCategory.CURRENT_WEEK]
+        next_week = [d for d in res.days if d.week_category == WeekCategory.NEXT_WEEK]
+
+        self.assertEqual(len(prev_week), 5)
+        self.assertEqual(len(curr_week), 5)
+        self.assertEqual(len(next_week), 5)
+
+        # Check sequence: Previous week Mon-Fri
+        self.assertEqual(prev_week[0].date, "2026-11-16")
+        self.assertEqual(prev_week[4].date, "2026-11-20")
+
+        # Current week Mon-Fri
+        self.assertEqual(curr_week[0].date, "2026-11-23")
+        self.assertEqual(curr_week[4].date, "2026-11-27")
+
+        # Next week Mon-Fri
+        self.assertEqual(next_week[0].date, "2026-11-30")
+        self.assertEqual(next_week[4].date, "2026-12-04")
+
+    def test_market_week_outlook_toggles(self):
+        """Verify toggle behavior for previous and next week."""
+        ref_d = date(2026, 11, 23)
+
+        # Current week only
+        res_curr_only = get_market_week_outlook(include_prev=False, include_next=False, ref_date=ref_d)
+        self.assertEqual(res_curr_only.total_trading_days, 5)
+        self.assertTrue(all(d.week_category == WeekCategory.CURRENT_WEEK for d in res_curr_only.days))
+
+        # Previous + Current
+        res_prev_curr = get_market_week_outlook(include_prev=True, include_next=False, ref_date=ref_d)
+        self.assertEqual(res_prev_curr.total_trading_days, 10)
+
+        # Current + Next
+        res_curr_next = get_market_week_outlook(include_prev=False, include_next=True, ref_date=ref_d)
+        self.assertEqual(res_curr_next.total_trading_days, 10)
+
 
 
 if __name__ == "__main__":

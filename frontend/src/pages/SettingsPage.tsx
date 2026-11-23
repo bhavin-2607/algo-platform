@@ -5,6 +5,7 @@ import { api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { Eye, EyeOff } from "lucide-react";
+import { getAstroSettings, saveAstroSettings, AstroTimingSettings } from "@/utils/astroSettings";
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -24,6 +25,7 @@ export default function SettingsPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <UserProfileCard />
           <PasswordCard />
+          <AstroTimingSettingsCard />
         </div>
 
         {/* Right Column: Connected Broker & Token Refresh */}
@@ -342,6 +344,115 @@ function PasswordCard() {
         <p className="token-note" style={{ padding: 0, fontSize: 11, color: "var(--muted)" }}>
           Requires current password. Contact an administrator to reset if forgotten.
         </p>
+      </div>
+    </div>
+  );
+}
+
+function AstroTimingSettingsCard() {
+  const [settings, setSettings] = useState<AstroTimingSettings>(getAstroSettings);
+
+  const togglePrev = () => {
+    const next = { ...settings, includePreviousWeek: !settings.includePreviousWeek };
+    setSettings(next);
+    saveAstroSettings(next);
+    toast.success(`Previous week ${next.includePreviousWeek ? "enabled (audit)" : "hidden"}`);
+  };
+
+  const toggleNext = () => {
+    const next = { ...settings, includeNextWeek: !settings.includeNextWeek };
+    setSettings(next);
+    saveAstroSettings(next);
+    toast.success(`Next week ${next.includeNextWeek ? "enabled (projections)" : "hidden"}`);
+  };
+
+  return (
+    <div className="card settings-card">
+      <div className="card-header">
+        <span className="card-title">FINANCIAL ASTROLOGY & CYCLICAL TIMING</span>
+        <span className="badge badge-gray">WATCH ONLY</span>
+      </div>
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <p style={{ fontSize: 11, color: "var(--muted)", margin: 0, lineHeight: 1.4 }}>
+          Configure multi-week market timing blocks. Displays Monday-to-Friday market trading days strictly,
+          filtering out non-trading weekends.
+        </p>
+
+        {/* Previous Week Toggle */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "10px 12px",
+            background: "var(--surface2)",
+            borderRadius: 4,
+            border: "1px solid var(--border)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+              Include Previous Week (Testing & Audit)
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              Mon–Fri (5 trading days) of preceding week for historical reaction verification.
+            </div>
+          </div>
+          <button
+            type="button"
+            className="connect-btn"
+            style={{
+              background: settings.includePreviousWeek ? "var(--ba-cyan)" : "transparent",
+              color: settings.includePreviousWeek ? "#000" : "var(--muted)",
+              border: `1px solid ${settings.includePreviousWeek ? "var(--ba-cyan)" : "var(--border)"}`,
+              minWidth: 70,
+              fontWeight: 800,
+            }}
+            onClick={togglePrev}
+          >
+            {settings.includePreviousWeek ? "ACTIVE" : "OFF"}
+          </button>
+        </div>
+
+        {/* Next Week Toggle */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "10px 12px",
+            background: "var(--surface2)",
+            borderRadius: 4,
+            border: "1px solid var(--border)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+              Include Next Week (Cyclical Projections)
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              Mon–Fri (5 trading days) of upcoming week for advance cyclical inflection planning.
+            </div>
+          </div>
+          <button
+            type="button"
+            className="connect-btn"
+            style={{
+              background: settings.includeNextWeek ? "var(--ba-cyan)" : "transparent",
+              color: settings.includeNextWeek ? "#000" : "var(--muted)",
+              border: `1px solid ${settings.includeNextWeek ? "var(--ba-cyan)" : "var(--border)"}`,
+              minWidth: 70,
+              fontWeight: 800,
+            }}
+            onClick={toggleNext}
+          >
+            {settings.includeNextWeek ? "ACTIVE" : "OFF"}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 10, color: "var(--muted)" }}>
+          Note: The active Current Week (Mon–Fri) is always included in the timing strip.
+        </div>
       </div>
     </div>
   );
