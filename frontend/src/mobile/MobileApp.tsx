@@ -384,7 +384,16 @@ export default function MobileApp() {
 
       {/* Main Tab Content */}
       <main className="flex-1 overflow-y-auto">
-        {activeTab === "algo" ? (
+        {activeTab === "watchlist" ? (
+          <MobileWatchlistPage
+            watchlist={watchlist}
+            isAdmin={userIsAdmin}
+            onRefresh={fetchWatchlist}
+            onAddToAlgo={handleAddToAlgo}
+            onAddToWatchlist={handleAddToWatchlist}
+            onRemoveFromWatchlist={handleRemoveFromWatchlist}
+          />
+        ) : (
           <MobileAlgoPage
             rows={algoRows}
             isAdmin={userIsAdmin}
@@ -397,17 +406,6 @@ export default function MobileApp() {
             onDelete={handleDelete}
             onNavigateToWatchlist={() => setActiveTab("watchlist")}
           />
-        ) : activeTab === "watchlist" ? (
-          <MobileWatchlistPage
-            watchlist={watchlist}
-            isAdmin={userIsAdmin}
-            onRefresh={fetchWatchlist}
-            onAddToAlgo={handleAddToAlgo}
-            onAddToWatchlist={handleAddToWatchlist}
-            onRemoveFromWatchlist={handleRemoveFromWatchlist}
-          />
-        ) : (
-          <MobileAstroPage />
         )}
       </main>
 

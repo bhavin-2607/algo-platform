@@ -83,7 +83,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
         <span className="text-[11px] mt-1 tracking-tight">Watchlist</span>
       </button>
 
-      {/* Astro Trend Tab */}
+      {/* Astro / Moon Transit Tab - Hidden until actual system is finalized */}
+      {/*
       <button
         type="button"
         onClick={() => onChangeTab("astro")}
@@ -104,8 +105,9 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             }}
           />
         </div>
-        <span className="text-[11px] mt-1 tracking-tight">Astro Trend</span>
+        <span className="text-[11px] mt-1 tracking-tight">Moon Transit</span>
       </button>
+      */}
     </nav>
   );
 };

@@ -668,8 +668,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {/* Market Status (OPEN / CLOSED) */}
           <TopNavMarketStatus />
 
-          {/* Financial Astrology & Cyclical Timing Badge (Watch Only) */}
-          <AstroTelemetryBadge />
+          {/* Moon Transit Watch - Hidden until actual system is finalized */}
+          {/* <AstroTelemetryBadge /> */}
 
           <span style={{ color: "var(--border)", fontSize: 13, userSelect: "none" }}>|</span>
 
