@@ -4,6 +4,7 @@ Market Data Routes — serves OHLCV candles, quotes and instrument search.
 import asyncio
 import logging
 import random
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
