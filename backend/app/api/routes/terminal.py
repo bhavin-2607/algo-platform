@@ -1275,6 +1275,7 @@ async def list_algo_rows(
 
         # Compute live formula outputs
         from app.market.daily_ohlc import get_previous_day_ohlc, enqueue_daily_ohlc_fetch
+        seg = r.segment or ("NSE_FNO" if is_option else "NSE_EQ")
         sec_id_val = str(r.token or poller._watchlist.get(r.symbol, {}).get("security_id") or "")
         p_data = get_previous_day_ohlc(seg, sec_id_val) if sec_id_val and sec_id_val != "0" else None
         if not p_data and sec_id_val and sec_id_val != "0":
