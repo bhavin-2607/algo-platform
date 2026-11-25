@@ -32,7 +32,7 @@ LOT_SIZE_CACHE: Dict[str, int] = {}
 
 
 def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
-    """Resolve exchange contract lot size for F&O contracts."""
+    """Resolve exchange contract lot size for F&O and Commodity contracts."""
     sym = (symbol or "").upper().strip()
     if sym in LOT_SIZE_CACHE:
         return LOT_SIZE_CACHE[sym]
@@ -46,6 +46,35 @@ def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
         lot = 50
     elif "NIFTY" in sym:
         lot = 25
+    elif "SENSEX" in sym:
+        lot = 10
+    elif "BANKEX" in sym:
+        lot = 15
+    # MCX Commodity heuristics
+    elif "CRUDEOILM" in sym:
+        lot = 10
+    elif "CRUDEOIL" in sym or "CRUDE" in sym:
+        lot = 100
+    elif "NATGASMINI" in sym or "NATURALGASM" in sym:
+        lot = 250
+    elif "NATURALGAS" in sym or "NATGAS" in sym:
+        lot = 1250
+    elif "GOLDM" in sym:
+        lot = 100
+    elif "GOLDPETAL" in sym:
+        lot = 1
+    elif "GOLD" in sym:
+        lot = 1
+    elif "SILVERMIC" in sym:
+        lot = 1
+    elif "SILVERM" in sym:
+        lot = 5
+    elif "SILVER" in sym:
+        lot = 30
+    elif "COPPER" in sym:
+        lot = 2500
+    elif "ZINC" in sym or "LEAD" in sym or "ALUMINIUM" in sym:
+        lot = 5000
     else:
         lot = 1
         try:
@@ -59,8 +88,26 @@ def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
             if target_row and target_row.get("LOT_SIZE"):
                 lot = int(float(target_row["LOT_SIZE"]))
         except Exception as e:
-            logger.debug(f"Could not resolve lot size from instruments.csv for {sym}: {e}")
+            logger.debug(f"Could not resolve lot size from options rows for {sym}: {e}")
             lot = 1
+
+        if lot <= 1:
+            # Check general instruments.csv directly
+            try:
+                import os, csv
+                csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "market", "instruments.csv"))
+                if os.path.exists(csv_path):
+                    sec_id_str = str(security_id or "")
+                    with open(csv_path, mode="r", encoding="utf-8", errors="ignore") as f:
+                        reader = csv.DictReader(f)
+                        for r in reader:
+                            if (sec_id_str and r.get("SECURITY_ID") == sec_id_str) or r.get("SYMBOL_NAME") == sym:
+                                val = r.get("LOT_SIZE")
+                                if val:
+                                    lot = int(float(val))
+                                    break
+            except Exception as e:
+                logger.debug(f"Could not resolve lot size from instruments.csv for {sym}: {e}")
 
     LOT_SIZE_CACHE[sym] = max(1, lot)
     return LOT_SIZE_CACHE[sym]

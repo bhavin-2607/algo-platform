@@ -16,6 +16,7 @@ import { notifyOrder, notifyError } from "@/store/notifications";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
+import { resolveLotSize, formatQuantityWithLots } from "@/utils/lotSize";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TerminalRow {
@@ -2487,22 +2488,39 @@ function AlgoWindowTable({
 
                     {/* QTY */}
                     <td style={{ padding: "8px 4px", textAlign: "center" }}>
-                      <input
-                        type="number"
-                        min={1}
-                        value={r.quantity}
-                        onChange={(e) => onUpdateRow(r.id, { quantity: Number(e.target.value) })}
-                        style={{
-                          width: 48,
-                          padding: "3px 4px",
-                          fontSize: 11,
-                          background: "var(--surface2)",
-                          border: "1px solid var(--border)",
-                          color: "var(--text)",
-                          borderRadius: 3,
-                          textAlign: "center",
-                        }}
-                      />
+                      {(() => {
+                        const rowLot = r.lot_size || resolveLotSize(r.symbol, r.segment);
+                        const lotsCount = Math.max(1, Math.round((r.quantity || rowLot) / rowLot));
+                        return (
+                          <div>
+                            <input
+                              type="number"
+                              min={rowLot}
+                              step={rowLot}
+                              value={r.quantity}
+                              onChange={(e) => onUpdateRow(r.id, { quantity: Number(e.target.value) })}
+                              title={`Lot Size: ${rowLot} (${lotsCount} ${lotsCount === 1 ? 'Lot' : 'Lots'})`}
+                              style={{
+                                width: 52,
+                                padding: "3px 4px",
+                                fontSize: 11,
+                                background: "var(--surface2)",
+                                border: "1px solid var(--border)",
+                                color: "var(--text)",
+                                borderRadius: 3,
+                                textAlign: "center",
+                                fontFamily: "monospace",
+                                fontWeight: 700,
+                              }}
+                            />
+                            {rowLot > 1 && (
+                              <div style={{ fontSize: 9, color: "var(--green)", fontWeight: 700, marginTop: 1 }}>
+                                {lotsCount}L
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* NUMBER OF TRADE 1 to 5 */}
@@ -3057,13 +3075,45 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
   ltp: number | null; onClose: () => void;
   prefillSide?: string; prefillPrice?: number;
 }) {
-  const isDerivative = segment?.includes("MCX") || segment?.includes("FNO") || segment?.includes("BFO");
+  const detectedLot = useMemo(() => resolveLotSize(symbol, segment), [symbol, segment]);
+  const [lotSize, setLotSize] = useState<number>(detectedLot);
+  const isDerivative = segment?.includes("MCX") || segment?.includes("FNO") || segment?.includes("BFO") || lotSize > 1;
   const qc = useQueryClient();
-  const [side,     setSide]     = useState<"BUY"|"SELL">((prefillSide as any) || "BUY");
-  const [qty,      setQty]      = useState("1");
-  const [orderType,setOrderType]= useState<"MARKET"|"LIMIT">("MARKET");
-  const [product,  setProduct]  = useState<"INTRADAY"|"MARGIN"|"CNC">(isDerivative ? "MARGIN" : "INTRADAY");
-  const [price,    setPrice]    = useState(prefillPrice ? String(prefillPrice) : "");
+  const [side,      setSide]      = useState<"BUY"|"SELL">((prefillSide as any) || "BUY");
+  const [lots,      setLots]      = useState<number>(1);
+  const [qty,       setQty]       = useState<string>(String(detectedLot));
+  const [orderType, setOrderType] = useState<"MARKET"|"LIMIT">("MARKET");
+  const [product,   setProduct]   = useState<"INTRADAY"|"MARGIN"|"CNC">(isDerivative ? "MARGIN" : "INTRADAY");
+  const [price,     setPrice]     = useState(prefillPrice ? String(prefillPrice) : "");
+
+  // Fetch backend verified lot size
+  useEffect(() => {
+    api.get("/terminal/lot-size", { params: { symbol, security_id: securityId } })
+      .then(res => {
+        const remoteLot = Number(res.data?.lot_size || 0);
+        if (remoteLot > 0 && remoteLot !== lotSize) {
+          setLotSize(remoteLot);
+          setQty(String(remoteLot * lots));
+        }
+      })
+      .catch(() => {});
+  }, [symbol, securityId, lots, lotSize]);
+
+  const handleLotsChange = (newL: number) => {
+    const l = Math.max(1, newL);
+    setLots(l);
+    setQty(String(l * lotSize));
+  };
+
+  const handleQtyChange = (val: string) => {
+    setQty(val);
+    const num = parseInt(val || "0");
+    if (num > 0 && lotSize > 1) {
+      setLots(Math.max(1, Math.round(num / lotSize)));
+    } else if (num > 0) {
+      setLots(num);
+    }
+  };
 
   const orderMutation = useMutation({
     mutationFn: () => api.post("/terminal/order", {
@@ -3182,17 +3232,59 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
 
           {/* Quantity + Price */}
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16}}>
-            <div className="field">
-              <label className="field-label">QUANTITY</label>
-              <input className="field-input" type="number" min="1"
-                value={qty} onChange={e => setQty(e.target.value)} />
-            </div>
-            {orderType === "LIMIT" && (
+            {lotSize > 1 ? (
+              <div className="field">
+                <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                  <label className="field-label">LOTS (1L = {lotSize})</label>
+                  <span style={{fontSize:10, color:"var(--green)", fontWeight:700}}>{qty} UNITS</span>
+                </div>
+                <div style={{display:"flex", gap:4}}>
+                  <button
+                    type="button"
+                    onClick={() => handleLotsChange(lots - 1)}
+                    style={{
+                      width:32, background:"var(--surface2)", border:"1px solid var(--border)",
+                      color:"var(--text)", fontWeight:700, borderRadius:3, cursor:"pointer"
+                    }}
+                  >-</button>
+                  <input
+                    className="field-input"
+                    type="number"
+                    min="1"
+                    value={lots}
+                    onChange={e => handleLotsChange(parseInt(e.target.value || "1"))}
+                    style={{textAlign:"center", fontWeight:700, fontFamily:"monospace"}}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleLotsChange(lots + 1)}
+                    style={{
+                      width:32, background:"var(--surface2)", border:"1px solid var(--border)",
+                      color:"var(--text)", fontWeight:700, borderRadius:3, cursor:"pointer"
+                    }}
+                  >+</button>
+                </div>
+              </div>
+            ) : (
+              <div className="field">
+                <label className="field-label">QUANTITY (SHARES)</label>
+                <input className="field-input" type="number" min="1"
+                  value={qty} onChange={e => handleQtyChange(e.target.value)} />
+              </div>
+            )}
+            {orderType === "LIMIT" ? (
               <div className="field">
                 <label className="field-label">PRICE (₹)</label>
                 <input className="field-input" type="number" step="0.05"
                   value={price} onChange={e => setPrice(e.target.value)}
                   placeholder={ltp ? String(ltp) : "0.00"} />
+              </div>
+            ) : (
+              <div className="field">
+                <label className="field-label">EXECUTION</label>
+                <div style={{padding:"8px 10px", background:"var(--surface2)", border:"1px solid var(--border)", fontSize:11, color:"var(--muted)", borderRadius:3}}>
+                  Best Market Offer
+                </div>
               </div>
             )}
           </div>
@@ -3225,7 +3317,7 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
               color: "#000",
               opacity: !qty || parseInt(qty) < 1 || orderMutation.isPending ? 0.5 : 1,
             }}>
-            {orderMutation.isPending ? "PLACING ORDER..." : `${side} ${qty || 0} × ${symbol}`}
+            {orderMutation.isPending ? "PLACING ORDER..." : `${side} ${qty || 0} ${lotSize > 1 ? `(${lots}L)` : "Qty"} × ${symbol}`}
           </button>
         </div>
       </div>

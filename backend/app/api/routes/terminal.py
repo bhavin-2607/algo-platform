@@ -13,7 +13,7 @@ import logging
 from uuid import UUID
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -1349,6 +1349,9 @@ async def list_algo_rows(
         if r.status == "IN_POSITION" and r.buy_price and ltp > 0:
             live_pnl = round((ltp - r.buy_price) * r.quantity, 2)
 
+        from app.services.dhan_fanout_engine import resolve_lot_size
+        contract_lot = resolve_lot_size(r.symbol, r.token)
+
         out.append({
             "id":               str(r.id),
             "symbol":           r.symbol,
@@ -1357,6 +1360,7 @@ async def list_algo_rows(
             "token":            r.token,
             "is_algo_active":   r.is_algo_active,
             "quantity":         r.quantity,
+            "lot_size":         contract_lot,
             "number_of_trades": r.number_of_trades,
             "trades_completed": r.trades_completed,
             "status":           r.status,
@@ -1635,13 +1639,19 @@ async def add_algo_row(
     if sec_token:
         poller.add_symbol(sym, sec_token, target_seg)
 
+    from app.services.dhan_fanout_engine import resolve_lot_size
+    contract_lot = resolve_lot_size(sym, sec_token)
+    initial_qty = payload.quantity
+    if initial_qty <= 1 and contract_lot > 1:
+        initial_qty = contract_lot
+
     new_row = BsaAlgoRow(
         user_id           = current_user.id,
         symbol            = sym,
         exchange          = target_exch,
         segment           = target_seg,
         token             = sec_token,
-        quantity          = max(1, payload.quantity),
+        quantity          = max(1, initial_qty),
         number_of_trades  = max(1, min(5, payload.number_of_trades)),
         is_algo_active    = False,  # Default to ALGO OFF (manual mode)
         status            = payload.status or ("IN_POSITION" if payload.trade_mode == "SELL_ONLY" else "IDLE"),
@@ -1910,6 +1920,19 @@ async def manual_algo_order(
 
     order_qty = payload.quantity or row.quantity
     order_price = payload.price or 0.0
+
+    from app.services.dhan_fanout_engine import resolve_lot_size, is_fno_symbol
+    contract_lot = resolve_lot_size(row.symbol, row.token)
+    if is_fno_symbol(row.symbol, row.exchange, row.segment) and contract_lot > 1:
+        if order_qty < contract_lot:
+            order_qty = order_qty * contract_lot
+            row.quantity = order_qty
+            await db.commit()
+        elif order_qty % contract_lot != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order quantity {order_qty} is not a multiple of lot size ({contract_lot}) for {row.symbol}"
+            )
 
     from app.core.trading_mode import LiveTradingError
 
@@ -2203,12 +2226,24 @@ async def place_manual_order(
         if ("MCX" in str(exchange) or "FNO" in str(exchange)) and prod_type == "CNC":
             prod_type = "MARGIN"
 
+        from app.services.dhan_fanout_engine import resolve_lot_size, is_fno_symbol
+        contract_lot = resolve_lot_size(body.symbol, security_id)
+        final_qty = body.quantity
+        if is_fno_symbol(body.symbol, exchange, exchange) and contract_lot > 1:
+            if final_qty < contract_lot:
+                final_qty = final_qty * contract_lot
+            elif final_qty % contract_lot != 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Order quantity {final_qty} is not a multiple of lot size ({contract_lot}) for {body.symbol}"
+                )
+
         # Dhan adapter uses order.symbol as securityId
         order = OrderRequest(
             symbol        = security_id,
             exchange      = exchange,
             direction     = body.transaction_type.upper(),
-            quantity      = body.quantity,
+            quantity      = final_qty,
             order_type    = body.order_type.upper(),
             product       = prod_type,
             price         = body.price if body.order_type == "LIMIT" else 0,
@@ -2239,6 +2274,17 @@ async def place_manual_order(
         raise HTTPException(status_code=e.status_code, detail=e.message)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Order failed: {str(e)}")
+
+
+@router.get("/lot-size")
+async def get_lot_size(
+    symbol: str = Query(..., description="Trading symbol"),
+    security_id: Optional[str] = Query(None, description="Optional security token/ID"),
+):
+    """Resolve and return exchange contract lot size for any trading symbol."""
+    from app.services.dhan_fanout_engine import resolve_lot_size
+    lot = resolve_lot_size(symbol, security_id)
+    return {"symbol": symbol, "lot_size": lot}
 
 
 async def _dhan_get(path: str):

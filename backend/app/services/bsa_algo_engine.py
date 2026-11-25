@@ -344,11 +344,17 @@ class BsaAlgoEngine:
         is_derivative = any(k in str(exchange) for k in ("MCX", "FNO", "COMM")) or is_option_symbol(row.symbol)
         algo_prod = "MARGIN" if is_derivative else "INTRADAY"
 
+        from app.services.dhan_fanout_engine import resolve_lot_size
+        contract_lot = resolve_lot_size(row.symbol, security_id)
+        final_order_qty = max(1, row.quantity)
+        if is_derivative and contract_lot > 1 and final_order_qty < contract_lot:
+            final_order_qty = final_order_qty * contract_lot
+
         req = OrderRequest(
             symbol=security_id,
             exchange=exchange,
             direction=side.upper(),
-            quantity=max(1, row.quantity),
+            quantity=final_order_qty,
             order_type="MARKET",
             product=algo_prod,
             price=fill_price,

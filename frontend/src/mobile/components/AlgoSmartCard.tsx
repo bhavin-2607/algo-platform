@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Settings2, Power, AlertOctagon, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { RiskRewardLadder } from "./RiskRewardLadder";
+import { resolveLotSize, formatQuantityWithLots } from "@/utils/lotSize";
 
 export interface AlgoRowData {
   id: string;
@@ -8,6 +9,7 @@ export interface AlgoRowData {
   exchange: string;
   segment: string;
   quantity: number;
+  lot_size?: number;
   number_of_trades: number;
   trades_completed: number;
   is_algo_active: boolean;
@@ -252,7 +254,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
               }}
             >
               <TrendingUp size={14} />
-              <span>BUY</span>
+              <span>BUY ({formatQuantityWithLots(row.quantity, row.lot_size || resolveLotSize(row.symbol, row.segment))})</span>
             </button>
             <button
               type="button"
@@ -266,12 +268,12 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
               }}
             >
               <TrendingDown size={14} />
-              <span>SELL</span>
+              <span>SELL ({formatQuantityWithLots(row.quantity, row.lot_size || resolveLotSize(row.symbol, row.segment))})</span>
             </button>
           </div>
         ) : (
           <div className="flex-1 text-[11px] font-mono" style={{ color: "var(--muted)" }}>
-            {row.is_algo_active ? "⚡ Algo autonomous mode" : "Discretionary mode"}
+            {row.is_algo_active ? "Algo autonomous mode" : "Discretionary mode"}
           </div>
         )}
 

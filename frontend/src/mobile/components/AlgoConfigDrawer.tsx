@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { X, RotateCcw, Trash2, Check, AlertTriangle } from "lucide-react";
+import { resolveLotSize } from "@/utils/lotSize";
 
 interface AlgoRowData {
   id: string;
@@ -7,6 +8,7 @@ interface AlgoRowData {
   exchange: string;
   segment: string;
   quantity: number;
+  lot_size?: number;
   number_of_trades: number;
   trades_completed: number;
   is_algo_active: boolean;
@@ -61,7 +63,14 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const TARGET_OPTIONS = ["T1", "T2", "T3", "T4", "T5", "CUSTOM"];
-  const QTY_PRESETS = [15, 25, 50, 100, 250, 500];
+
+  const lotSize = useMemo(() => resolveLotSize(row.symbol, row.segment, row.lot_size), [row]);
+  const qtyPresets = useMemo(() => {
+    if (lotSize > 1) {
+      return [1, 2, 3, 4, 5, 10].map((m) => ({ qty: m * lotSize, label: `${m}L (${m * lotSize})` }));
+    }
+    return [1, 10, 25, 50, 100, 250].map((q) => ({ qty: q, label: String(q) }));
+  }, [lotSize]);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -127,10 +136,15 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
 
         {/* Quantity Controls */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>Order Quantity</label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>Order Quantity</label>
+            <span className="text-[11px] font-mono font-bold" style={{ color: "var(--green)" }}>
+              {lotSize > 1 ? `${Math.max(1, Math.round(qty / lotSize))} Lots = ${qty} Units` : `${qty} Shares`}
+            </span>
+          </div>
           <div className="flex items-center space-x-3">
             <button
-              onClick={() => setQty((prev) => Math.max(1, prev - 25))}
+              onClick={() => setQty((prev) => Math.max(lotSize, prev - lotSize))}
               className="h-10 w-12 rounded-xl font-bold text-lg active:scale-95 transition-all"
               style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)" }}
             >
@@ -138,8 +152,10 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
             </button>
             <input
               type="number"
+              min={lotSize}
+              step={lotSize}
               value={qty}
-              onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => setQty(Math.max(lotSize, parseInt(e.target.value) || lotSize))}
               className="flex-1 h-10 rounded-xl px-3 text-center font-mono font-bold text-base focus:outline-hidden"
               style={{
                 background: "var(--surface2)",
@@ -148,7 +164,7 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
               }}
             />
             <button
-              onClick={() => setQty((prev) => prev + 25)}
+              onClick={() => setQty((prev) => prev + lotSize)}
               className="h-10 w-12 rounded-xl font-bold text-lg active:scale-95 transition-all"
               style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)" }}
             >
@@ -156,18 +172,18 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
             </button>
           </div>
           <div className="flex flex-wrap gap-1.5 pt-1">
-            {QTY_PRESETS.map((p) => (
+            {qtyPresets.map((p) => (
               <button
-                key={p}
-                onClick={() => setQty(p)}
+                key={p.qty}
+                onClick={() => setQty(p.qty)}
                 className="text-[11px] px-2.5 py-1 rounded-lg font-mono font-semibold transition-all active:scale-95"
                 style={{
-                  background: qty === p ? "var(--green)" : "var(--surface2)",
-                  color: qty === p ? "var(--bg)" : "var(--muted)",
-                  border: qty === p ? "none" : "1px solid var(--border)",
+                  background: qty === p.qty ? "var(--green)" : "var(--surface2)",
+                  color: qty === p.qty ? "var(--bg)" : "var(--muted)",
+                  border: qty === p.qty ? "none" : "1px solid var(--border)",
                 }}
               >
-                {p}
+                {p.label}
               </button>
             ))}
           </div>
