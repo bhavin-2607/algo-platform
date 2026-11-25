@@ -20,6 +20,7 @@ async def token_status(current_user: User = Depends(get_current_user)):
 
     mgr   = get_auth_manager()
     valid = mgr.is_token_valid()
+    info  = mgr.get_token_expiry_info()
 
     # Check Redis for alert flag
     alert = None
@@ -31,11 +32,17 @@ async def token_status(current_user: User = Depends(get_current_user)):
         expires = None
 
     return {
-        "valid":            valid,
-        "alert":            alert,
-        "expires_at":       expires,
-        "client_id":        settings.DHAN_CLIENT_ID,
-        "totp_configured":  bool(
+        "valid":             valid,
+        "alert":             alert,
+        "expires_at":        info.get("expires_at_ist") or expires,
+        "expires_at_ist":    info.get("expires_at_ist"),
+        "issued_at_ist":     info.get("issued_at_ist"),
+        "hours_remaining":   info.get("hours_remaining"),
+        "seconds_remaining": info.get("seconds_remaining"),
+        "is_expired":        info.get("is_expired"),
+        "is_expiring_soon":  info.get("is_expiring_soon"),
+        "client_id":         mgr.client_id,
+        "totp_configured":   bool(
             getattr(settings, "DHAN_PIN", "") and
             getattr(settings, "DHAN_TOTP_SECRET", "")
         ),

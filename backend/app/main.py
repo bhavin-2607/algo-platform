@@ -36,19 +36,41 @@ from app.api.v1.astro import router as astro_router
 import app.models  # noqa
 
 
+async def _periodic_token_watcher():
+    """Background task to proactively check and renew Dhan token every 30 minutes."""
+    import asyncio
+    while True:
+        try:
+            await asyncio.sleep(1800)  # Check every 30 minutes
+            from app.broker.dhan_auth import get_auth_manager
+            from app.core.config import settings
+            settings.reload_from_disk()
+            mgr = get_auth_manager()
+            info = mgr.get_token_expiry_info()
+            if info.get("is_expiring_soon"):
+                logger.info(f"FastAPI background watcher: Dhan token expiring soon ({info.get('hours_remaining')}h remaining). Renewing...")
+                res = mgr.auto_renew(max_retries=2)
+                if res:
+                    logger.info(f"FastAPI background watcher: Renewed token successfully ({res.get('method')})")
+        except Exception as exc:
+            logger.warning(f"Periodic token watcher exception: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     try:
         from app.broker.dhan_auth import get_auth_manager
         mgr = get_auth_manager()
+        info = mgr.get_token_expiry_info()
         if not mgr.is_token_valid():
             logger.error(
                 "[ERROR] Dhan token EXPIRED — Go to web.dhan.co -> My Profile -> "
                 "Access DhanHQ APIs -> Generate Token -> Update DHAN_ACCESS_TOKEN in .env"
             )
         else:
-            logger.info("[OK] Dhan token valid on startup")
+            exp_msg = f" (expires at {info.get('expires_at_ist')}, {info.get('hours_remaining')}h remaining)" if info.get("expires_at_ist") else ""
+            logger.info(f"[OK] Dhan token valid on startup{exp_msg}")
     except Exception as e:
         logger.warning(f"Startup token check: {e}")
 
@@ -56,8 +78,9 @@ async def lifespan(app: FastAPI):
         from app.market.daily_ohlc import preload_daily_ohlc
         import asyncio
         asyncio.create_task(preload_daily_ohlc())
+        asyncio.create_task(_periodic_token_watcher())
     except Exception as e:
-        logger.warning(f"Daily OHLC preloader startup error: {e}")
+        logger.warning(f"Startup background tasks error: {e}")
     yield
 
 

@@ -78,50 +78,17 @@ function TopNavClock() {
   );
 }
 
-function getMarketSessionInfo() {
-  const now = new Date();
-  const istDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  const day = istDate.getDay();
-  const mins = istDate.getHours() * 60 + istDate.getMinutes();
-
-  if (day === 0 || day === 6) {
-    return { text: "MARKET CLOSED (WEEKEND)", isOpen: false, isPre: false };
-  }
-  if (mins >= 540 && mins < 555) {
-    return { text: "PRE-MARKET", isOpen: true, isPre: true };
-  }
-  if (mins >= 555 && mins <= 930) {
-    return { text: "MARKET OPEN", isOpen: true, isPre: false };
-  }
-  if (mins > 930 && mins <= 960) {
-    return { text: "POST-MARKET", isOpen: false, isPre: false };
-  }
-  return { text: "MARKET CLOSED", isOpen: false, isPre: false };
-}
+import { getIndianMarketStatus } from "../../utils/marketHours";
 
 function TopNavMarketStatus() {
-  const [session, setSession] = useState(() => getMarketSessionInfo());
+  const [session, setSession] = useState(() => getIndianMarketStatus());
 
   useEffect(() => {
     const id = window.setInterval(() => {
-      setSession(getMarketSessionInfo());
+      setSession(getIndianMarketStatus());
     }, 5000);
     return () => clearInterval(id);
   }, []);
-
-  const isOpen = session.isOpen;
-  const isPre = session.isPre;
-  const color = isOpen ? (isPre ? "var(--yellow)" : "var(--green)") : "var(--red)";
-  const bg = isOpen
-    ? isPre
-      ? "rgba(255,183,3,0.1)"
-      : "rgba(0,230,118,0.1)"
-    : "rgba(255,59,87,0.1)";
-  const border = isOpen
-    ? isPre
-      ? "rgba(255,183,3,0.35)"
-      : "rgba(0,230,118,0.35)"
-    : "rgba(255,59,87,0.35)";
 
   return (
     <div
@@ -130,26 +97,27 @@ function TopNavMarketStatus() {
         alignItems: "center",
         gap: 6,
         padding: "4px 8px",
-        background: bg,
-        border: `1px solid ${border}`,
+        background: session.bg,
+        border: `1px solid ${session.border}`,
         borderRadius: 4,
         fontSize: 10,
         fontWeight: 800,
-        color: color,
+        color: session.color,
         letterSpacing: 0.8,
+        cursor: "default",
       }}
-      title="Indian Exchange Market Hours (09:15 - 15:30 IST)"
+      title={session.tooltip}
     >
       <span
         style={{
           width: 6,
           height: 6,
           borderRadius: "50%",
-          background: color,
-          boxShadow: isOpen ? `0 0 6px ${color}` : "none",
+          background: session.color,
+          boxShadow: session.isOpen ? `0 0 6px ${session.color}` : "none",
         }}
       />
-      <span>{session.text}</span>
+      <span>{session.badgeText}</span>
     </div>
   );
 }
@@ -609,17 +577,29 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       const minutes = istDate.getMinutes();
       const seconds = istDate.getSeconds();
 
-      if (hours === 9 && minutes === 15 && seconds < 6) {
-        const key = `${dateStr}-open`;
+      if (hours === 9 && minutes === 0 && seconds < 6) {
+        const key = `${dateStr}-0900`;
         if (lastChecked !== key) {
           lastChecked = key;
-          notifyMarket("OPEN", "NSE/BSE/MCX market session is open (09:15 IST).");
+          notifyMarket("OPEN", "MCX Commodity trading & NSE Pre-Market are now active (09:00 IST).");
+        }
+      } else if (hours === 9 && minutes === 15 && seconds < 6) {
+        const key = `${dateStr}-0915`;
+        if (lastChecked !== key) {
+          lastChecked = key;
+          notifyMarket("OPEN", "NSE/BSE regular trading session is open (09:15 IST).");
         }
       } else if (hours === 15 && minutes === 30 && seconds < 6) {
-        const key = `${dateStr}-close`;
+        const key = `${dateStr}-1530`;
         if (lastChecked !== key) {
           lastChecked = key;
-          notifyMarket("CLOSED", "NSE/BSE equity & F&O market session has concluded (15:30 IST).");
+          notifyMarket("CLOSED", "NSE/BSE regular session closed (15:30 IST). MCX Commodity remains open until 23:55 IST.");
+        }
+      } else if (hours === 23 && minutes === 55 && seconds < 6) {
+        const key = `${dateStr}-2355`;
+        if (lastChecked !== key) {
+          lastChecked = key;
+          notifyMarket("CLOSED", "MCX Commodity market session has concluded (23:55 IST).");
         }
       }
     }, 2000);

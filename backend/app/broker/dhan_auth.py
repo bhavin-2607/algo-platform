@@ -34,6 +34,65 @@ DHAN_AUTH_URL = "https://auth.dhan.co"
 DHAN_API_URL  = "https://api.dhan.co/v2"
 
 
+def decode_jwt_token(token: str) -> dict:
+    """
+    Decode standard JWT payload without verifying signature (used for expiry inspection).
+    Returns dict with iat, exp, dhanClientId, etc.
+    """
+    if not token or not isinstance(token, str):
+        return {}
+    parts = token.strip().split(".")
+    if len(parts) < 2:
+        return {}
+    try:
+        import base64
+        import json
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload_b64.encode("utf-8")))
+    except Exception:
+        return {}
+
+
+def sync_dhan_token_to_database(new_token: str, client_id: str | None = None):
+    """Ensure the Dhan master account in PostgreSQL holds the active encrypted token."""
+    try:
+        import asyncio
+        from app.core.database import AsyncSessionLocal
+        from app.models.broker import BrokerAccount, BrokerName
+        from app.core.security import encrypt_broker_token
+        from sqlalchemy import select
+
+        async def _do_sync():
+            clean_tok = new_token.strip()
+            enc = encrypt_broker_token(clean_tok)
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(BrokerAccount).where(
+                        BrokerAccount.broker == BrokerName.dhan,
+                        BrokerAccount.is_active == True,
+                    )
+                )
+                accounts = res.scalars().all()
+                updated = False
+                for acc in accounts:
+                    if acc.account_role == "MASTER" or (client_id and acc.client_id == client_id) or not acc.client_id:
+                        acc.encrypted_access_token = enc
+                        if client_id and not acc.client_id:
+                            acc.client_id = client_id
+                        updated = True
+                if updated:
+                    await db.commit()
+                    logger.info("Synchronized renewed Dhan token to database BrokerAccount")
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_do_sync())
+        except RuntimeError:
+            asyncio.run(_do_sync())
+    except Exception as exc:
+        logger.warning(f"Could not sync token to database: {exc}")
+
+
 class DhanAuthManager:
 
     def __init__(self):
@@ -97,6 +156,7 @@ class DhanAuthManager:
 
             if new_token:
                 logger.info("Dhan token renewed via RenewToken")
+                self._apply_token(new_token, expires_at=data.get("expiryTime"))
                 return {
                     "access_token": new_token,
                     "method":       "renew",
@@ -146,8 +206,10 @@ class DhanAuthManager:
 
             if "accessToken" in data:
                 logger.info(f"Token generated via TOTP — expires: {data.get('expiryTime')}")
+                new_token = data["accessToken"]
+                self._apply_token(new_token, expires_at=data.get("expiryTime"))
                 return {
-                    "access_token": data["accessToken"],
+                    "access_token": new_token,
                     "client_id":    data.get("dhanClientId", self.client_id),
                     "method":       "totp",
                     "expires_at":   data.get("expiryTime"),
@@ -257,11 +319,14 @@ class DhanAuthManager:
             except Exception as e:
                 logger.warning(f"Email alert failed: {e}")
 
-    def _apply_token(self, new_token: str):
-        """Update token in runtime config and persist to .env."""
+    def _apply_token(self, new_token: str, expires_at: str = None):
+        """Update token in runtime config, database, Redis, and persist to .env."""
         # Update runtime
         settings.DHAN_ACCESS_TOKEN = new_token
         self.access_token          = new_token
+
+        # Synchronize to database
+        sync_dhan_token_to_database(new_token, self.client_id)
 
         from app.core.env_files import existing_env_files
 
@@ -269,25 +334,91 @@ class DhanAuthManager:
             paths = existing_env_files()
             if not paths:
                 logger.error("No .env file found to persist the Dhan token")
-                return
-            for env_path in paths:
-                lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
-                updated = []
-                found = False
-                for line in lines:
-                    if line.startswith("DHAN_ACCESS_TOKEN="):
-                        updated.append(f"DHAN_ACCESS_TOKEN={new_token}\n")
-                        found = True
-                    else:
-                        updated.append(line)
-                if not found:
-                    updated.append(f"\nDHAN_ACCESS_TOKEN={new_token}\n")
-                env_path.write_text("".join(updated), encoding="utf-8")
-                logger.info(f"Token persisted to {env_path}")
+            else:
+                for env_path in paths:
+                    lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                    updated = []
+                    found = False
+                    for line in lines:
+                        if line.startswith("DHAN_ACCESS_TOKEN="):
+                            updated.append(f"DHAN_ACCESS_TOKEN={new_token}\n")
+                            found = True
+                        else:
+                            updated.append(line)
+                    if not found:
+                        updated.append(f"\nDHAN_ACCESS_TOKEN={new_token}\n")
+                    env_path.write_text("".join(updated), encoding="utf-8")
+                    logger.info(f"Token persisted to {env_path}")
         except Exception as e:
             logger.error(f"Failed to persist token: {e}")
 
+        # Update Redis status & clear alerts
+        info = self.get_token_expiry_info()
+        exp_str = info.get("expires_at_ist") or expires_at
+        self._set_token_status("ok", exp_str)
+        try:
+            import redis
+            r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            r.delete("dhan:token:alert")
+        except Exception:
+            pass
+
     # ── Token health check ────────────────────────────────────────────────────
+
+    def get_token_expiry_info(self) -> dict:
+        """
+        Inspect current Dhan access token JWT payload to extract exact issue and expiry timestamps.
+        """
+        import time
+        from datetime import datetime, timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+
+        tok = self.access_token
+        if not tok:
+            settings.reload_from_disk()
+            tok = self.access_token
+
+        payload = decode_jwt_token(tok)
+        if not payload or "exp" not in payload:
+            return {
+                "has_token": bool(tok),
+                "is_jwt": False,
+                "is_valid_format": False,
+                "issued_at_ts": None,
+                "expires_at_ts": None,
+                "issued_at_ist": None,
+                "expires_at_ist": None,
+                "seconds_remaining": -1,
+                "hours_remaining": -1.0,
+                "is_expired": True,
+                "is_expiring_soon": False,
+            }
+
+        iat_ts = payload.get("iat")
+        exp_ts = payload.get("exp")
+        now_ts = int(time.time())
+        seconds_remaining = max(0, exp_ts - now_ts) if exp_ts else 0
+        hours_remaining = round(seconds_remaining / 3600.0, 2)
+        is_expired = (exp_ts <= now_ts) if exp_ts else True
+        is_expiring_soon = (not is_expired) and (hours_remaining <= 3.5)
+
+        iat_ist = datetime.fromtimestamp(iat_ts, ist).strftime("%Y-%m-%d %H:%M:%S IST") if iat_ts else None
+        exp_ist = datetime.fromtimestamp(exp_ts, ist).strftime("%Y-%m-%d %H:%M:%S IST") if exp_ts else None
+
+        return {
+            "has_token": True,
+            "is_jwt": True,
+            "is_valid_format": True,
+            "client_id": payload.get("dhanClientId", self.client_id),
+            "issued_at_ts": iat_ts,
+            "expires_at_ts": exp_ts,
+            "issued_at_ist": iat_ist,
+            "expires_at_ist": exp_ist,
+            "seconds_remaining": seconds_remaining,
+            "hours_remaining": hours_remaining,
+            "is_expired": is_expired,
+            "is_expiring_soon": is_expiring_soon,
+        }
 
     def is_token_valid(self) -> bool:
         """Quick check if current token is still valid. Auto-reloads from .env if disk changed."""
@@ -336,15 +467,39 @@ class DhanAuthManager:
             logger.warning(f"Dhan token validation request error: {e}")
             return False
 
-    def is_token_expiring_soon(self, hours: int = 2) -> bool:
+    def is_token_expiring_soon(self, hours: float = 3.5) -> bool:
+        """Check if active token expires within the given hours."""
+        info = self.get_token_expiry_info()
+        if not info["is_jwt"]:
+            return True
+        if info["is_expired"]:
+            return False
+        return 0 < info["hours_remaining"] <= hours
+
+    def check_and_proactively_renew(self) -> dict | None:
         """
-        RenewToken only works on ACTIVE tokens.
-        We should renew BEFORE expiry (e.g. at 7:45 AM when token expires at ~same time).
-        This checks if we should proactively renew.
+        Proactively renew token if within 3.5 hours of expiration or expired.
         """
-        # Since we can't check expiry time without storing it,
-        # always attempt renewal if called during scheduled window
-        return True
+        settings.reload_from_disk()
+        info = self.get_token_expiry_info()
+
+        if info.get("is_expiring_soon"):
+            logger.info(
+                f"Dhan token is expiring soon ({info['hours_remaining']}h remaining, exp: {info['expires_at_ist']}) — renewing..."
+            )
+            res = self.renew_token()
+            if not res:
+                res = self.auto_renew(max_retries=2)
+            return res
+
+        if info.get("is_expired"):
+            pin = getattr(settings, "DHAN_PIN", "")
+            totp_secret = getattr(settings, "DHAN_TOTP_SECRET", "")
+            if pin and totp_secret:
+                logger.warning("Dhan token has expired. Generating fresh token via TOTP...")
+                return self.generate_token_totp()
+
+        return None
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { LogOut, ShieldCheck, Sun, Moon } from "lucide-react";
+import { getIndianMarketStatus, MarketSessionState } from "../../utils/marketHours";
 
 interface MobileHeaderProps {
   userEmail: string;
@@ -27,6 +28,14 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
   onLogout,
 }) => {
   const isPnlPositive = totalPnl >= 0;
+  const [marketStatus, setMarketStatus] = useState<MarketSessionState>(() => getIndianMarketStatus());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setMarketStatus(getIndianMarketStatus());
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <header className="mobile-header-bar px-4 pt-3 pb-2.5 select-none">
@@ -91,6 +100,21 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
               {/* Dhan Status */}
               <span style={{ color: dhanActive ? "var(--green)" : "var(--yellow)", fontWeight: 600 }}>
                 {dhanActive ? "Dhan Active" : "Dhan Paper"}
+              </span>
+
+              <span>•</span>
+
+              {/* Market Status (NSE / MCX) */}
+              <span
+                className="flex items-center space-x-1 font-bold"
+                style={{ color: marketStatus.color }}
+                title={marketStatus.tooltip}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${marketStatus.pulse ? "animate-pulse" : ""}`}
+                  style={{ background: marketStatus.color }}
+                />
+                <span>{marketStatus.shortText}</span>
               </span>
             </div>
           </div>

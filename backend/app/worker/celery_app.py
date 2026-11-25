@@ -25,7 +25,7 @@ celery_app.conf.update(
         },
         "renew-dhan-token": {
             "task":     "tasks.renew_dhan_token",
-            "schedule": crontab(hour=7, minute=45),
+            "schedule": crontab(minute="*/30"),
         },
         "refresh-instrument-csv": {
             "task":     "tasks.refresh_instrument_csv",

@@ -169,10 +169,11 @@ def feed_watchdog():
             return
 
         now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        # Indian exchange trading hours: NSE (09:00-16:00) and MCX Commodities (09:00-23:55)
         market_open = (
             now.weekday() < 5
-            and (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
-            and (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
+            and (now.hour > 9 or (now.hour == 9 and now.minute >= 0))
+            and (now.hour < 23 or (now.hour == 23 and now.minute <= 55))
         )
         redis = get_redis()
         if not market_open:
@@ -251,52 +252,45 @@ def run_terminal(self, user_id: str):
 
 @celery_app.task(name="tasks.renew_dhan_token")
 def renew_dhan_token():
-    """Renew Dhan access token daily at 8 AM before market opens."""
-    async def _renew():
-        from app.core.database import AsyncSessionLocal
-        from app.core.config import settings
-        from app.models.broker import BrokerAccount, BrokerName
-        from sqlalchemy import select
+    """
+    Proactively checks and renews Dhan access token before expiration.
+    Runs periodically via Celery Beat (e.g. every 30 minutes).
+    """
+    from app.core.config import settings
+    from app.broker.dhan_auth import get_auth_manager
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-        if not settings.DHAN_ACCESS_TOKEN:
-            return
+    settings.reload_from_disk()
+    mgr = get_auth_manager()
+    info = mgr.get_token_expiry_info()
 
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(BrokerAccount).where(
-                    BrokerAccount.broker       == BrokerName.dhan,
-                    BrokerAccount.paper_trading == False,
-                    BrokerAccount.is_active     == True,
-                )
-            )
-            accounts = result.scalars().all()
-            for account in accounts:
-                from app.broker.dhan import DhanAdapter
-                from app.core.security import decrypt_broker_token, encrypt_broker_token
-                token = settings.DHAN_ACCESS_TOKEN
-                if account.encrypted_access_token:
-                    try:
-                        token = decrypt_broker_token(account.encrypted_access_token)
-                    except Exception:
-                        pass
-                client_id = account.client_id or settings.DHAN_CLIENT_ID
-                adapter = DhanAdapter(
-                    client_id=client_id,
-                    access_token=token,
-                )
-                success = await adapter.renew_token()
-                if success and adapter._access_token:
-                    account.encrypted_access_token = encrypt_broker_token(adapter._access_token)
-                    await db.commit()
-                    # Also persist renewed token to .env files and runtime settings
-                    try:
-                        from app.broker.dhan_auth import get_auth_manager
-                        get_auth_manager()._apply_token(adapter._access_token)
-                    except Exception as exc:
-                        logger.warning(f"Could not persist renewed token to .env: {exc}")
-                logger.info(f"Dhan token renewal for {client_id}: {'OK' if success else 'FAILED'}")
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Morning pre-market window: 07:30 - 08:30 IST
+    is_morning_window = (now.hour == 7 and now.minute >= 30) or (now.hour == 8 and now.minute <= 30)
 
-    _run(_renew)
+    if info.get("is_expiring_soon") or (is_morning_window and not info.get("is_expired")):
+        logger.info(
+            f"Celery renew_dhan_token: Token expires at {info.get('expires_at_ist')} "
+            f"({info.get('hours_remaining')}h remaining). Triggering renewal..."
+        )
+        res = mgr.auto_renew(max_retries=2)
+        if res:
+            logger.info(f"Celery Dhan token renewal succeeded via {res.get('method')}")
+        else:
+            logger.error("Celery Dhan token renewal failed")
+    elif info.get("is_expired"):
+        logger.warning("Celery renew_dhan_token: Token is expired! Attempting recovery via TOTP...")
+        res = mgr.auto_renew(max_retries=1)
+        if res:
+            logger.info("Celery Dhan token recovered successfully")
+        else:
+            logger.error("Celery Dhan token recovery failed — manual action required")
+    else:
+        logger.info(
+            f"Celery renew_dhan_token: Token is healthy ({info.get('hours_remaining')}h remaining, "
+            f"expires at {info.get('expires_at_ist')}) — no renewal required"
+        )
 
 
 @celery_app.task(name="tasks.refresh_instrument_csv")
