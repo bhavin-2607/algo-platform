@@ -97,6 +97,27 @@ class MarketPoller:
             sym_index[(seg, sid)] = sym
         return securities, sym_index
 
+    async def _has_active_algos(self) -> bool:
+        """Check if any active algo row is watching symbols."""
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.algo_row import BsaAlgoRow
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(BsaAlgoRow.id).where(BsaAlgoRow.is_algo_active == True).limit(1)
+                )
+                return res.scalar_one_or_none() is not None
+        except Exception as e:
+            logger.debug(f"Error checking active algos: {e}")
+            return False
+
+    def ensure_started(self):
+        """Ensure the background poller loop is running if not already started."""
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._poll_loop())
+            logger.info("MarketPoller started autonomously")
+
     async def subscribe(self, symbols: str = "") -> asyncio.Queue:
         """Register a new WebSocket client. Returns a queue to receive ticks."""
         q: asyncio.Queue = asyncio.Queue(maxsize=10)
@@ -110,8 +131,7 @@ class MarketPoller:
 
             # Start poller if this is the first subscriber
             if len(self._queues) == 1:
-                self._task = asyncio.create_task(self._poll_loop())
-                logger.info("MarketPoller started")
+                self.ensure_started()
 
         return q
 
@@ -121,11 +141,15 @@ class MarketPoller:
             if q in self._queues:
                 self._queues.remove(q)
 
-            # Stop poller when no subscribers left
+            # Stop poller only when no subscribers and no active algos remain
             if not self._queues and self._task:
-                self._task.cancel()
-                self._task = None
-                logger.info("MarketPoller stopped — no clients")
+                has_active = await self._has_active_algos()
+                if not has_active:
+                    self._task.cancel()
+                    self._task = None
+                    logger.info("MarketPoller stopped — no clients and no active algos")
+                else:
+                    logger.info("MarketPoller keeping background loop alive for active automated algo rows")
 
     async def _poll_loop(self):
         """Background task: poll Dhan and broadcast to all clients."""

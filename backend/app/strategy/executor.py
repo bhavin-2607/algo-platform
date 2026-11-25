@@ -209,13 +209,13 @@ class StrategyExecutor:
                 if book["last_bar"] is not None and bar_ts == book["last_bar"]:
                     continue
                 book["last_bar"] = bar_ts
-                logger.info(f"🕯 Closed bar {bar_ts} — evaluating signal")
+                logger.info(f"Closed bar {bar_ts} - evaluating signal")
 
                 signal = strategy.generate_signal(df)
                 if signal is None or signal.direction == "HOLD":
                     continue
 
-                logger.info(f"📡 Signal: {signal.direction} {signal.quantity} {signal.symbol}")
+                logger.info(f"[SIGNAL] {signal.direction} {signal.quantity} {signal.symbol}")
 
                 ltp = float(tick.get("ltp", df["close"].iloc[-1]))
                 self._last_ltp = ltp
@@ -223,7 +223,7 @@ class StrategyExecutor:
                     signal.symbol, signal.quantity, ltp, signal.direction
                 )
                 if not allowed:
-                    logger.warning(f"🚫 Risk blocked: {reason}")
+                    logger.warning(f"[RISK BLOCKED] {reason}")
                     await risk.save()
                     await self._publish_status(redis, f"blocked:{reason}", risk)
                     if risk.is_killed:
@@ -330,8 +330,8 @@ class StrategyExecutor:
                 strategy.on_order_filled(signal, fill_price)
                 await risk.save()
                 logger.info(
-                    f"✅ Trade open: {signal.direction} {signal.quantity} "
-                    f"{signal.symbol} @ ₹{fill_price}"
+                    f"[OPEN] Trade open: {signal.direction} {signal.quantity} "
+                    f"{signal.symbol} @ Rs {fill_price}"
                 )
 
                 await self._publish_status(redis, "running", risk)

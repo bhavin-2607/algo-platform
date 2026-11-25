@@ -399,7 +399,8 @@ async def get_live_quote(
         inst = DHAN_SECURITY_IDS.get(symbol)
         if inst:
             try:
-                data = _dhan_ohlc(
+                data = await asyncio.to_thread(
+                    _dhan_ohlc,
                     {inst["exchange_segment"]: [inst["security_id"]]},
                     settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN,
                 )
@@ -452,7 +453,7 @@ async def get_live_quotes(
                     securities.setdefault(inst["exchange_segment"], []).append(inst["security_id"])
 
             if securities:
-                data   = _dhan_ohlc(securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
+                data   = await asyncio.to_thread(_dhan_ohlc, securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
                 result = []
                 for sym in symbol_list:
                     inst = resolved.get(sym)
@@ -502,7 +503,8 @@ async def get_ticker(current_user: User = Depends(get_current_user)):
 
     if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
         try:
-            data = _dhan_ohlc(
+            data = await asyncio.to_thread(
+                _dhan_ohlc,
                 {"IDX_I": ["13", "25", "51"]},
                 settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN,
             )

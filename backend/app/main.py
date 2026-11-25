@@ -49,7 +49,7 @@ async def _periodic_token_watcher():
             info = mgr.get_token_expiry_info()
             if info.get("is_expiring_soon"):
                 logger.info(f"FastAPI background watcher: Dhan token expiring soon ({info.get('hours_remaining')}h remaining). Renewing...")
-                res = mgr.auto_renew(max_retries=2)
+                res = await asyncio.to_thread(mgr.auto_renew, max_retries=2)
                 if res:
                     logger.info(f"FastAPI background watcher: Renewed token successfully ({res.get('method')})")
         except Exception as exc:
@@ -76,9 +76,13 @@ async def lifespan(app: FastAPI):
 
     try:
         from app.market.daily_ohlc import preload_daily_ohlc
+        from app.market.market_poller import get_poller
         import asyncio
         asyncio.create_task(preload_daily_ohlc())
         asyncio.create_task(_periodic_token_watcher())
+        poller = get_poller()
+        if await poller._has_active_algos():
+            poller.ensure_started()
     except Exception as e:
         logger.warning(f"Startup background tasks error: {e}")
     yield

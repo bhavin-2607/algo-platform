@@ -99,7 +99,7 @@ class OrderManager:
         await self.db.refresh(pos)
 
         logger.info(
-            f"📌 Position opened: {direction} {quantity} {symbol} @ ₹{entry_price}"
+            f"Position opened: {direction} {quantity} {symbol} @ Rs {entry_price}"
             f" | T={target_price} SL={sl_price} Trail={trailing_sl}"
         )
         return pos
@@ -202,10 +202,10 @@ class OrderManager:
 
         await self.db.commit()
 
-        emoji = "✅" if pnl >= 0 else "❌"
+        tag = "[PROFIT]" if pnl >= 0 else "[LOSS]"
         logger.info(
-            f"{emoji} Position closed: {pos.symbol} @ ₹{exit_price} | "
-            f"Reason={reason} PnL=₹{pnl:.2f}"
+            f"{tag} Position closed: {pos.symbol} @ Rs {exit_price} | "
+            f"Reason={reason} PnL=Rs {pnl:.2f}"
         )
 
         # Publish to Redis for live UI update

@@ -1723,6 +1723,9 @@ async def update_algo_row(
 
     if payload.is_algo_active is not None:
         row.is_algo_active = payload.is_algo_active
+        if payload.is_algo_active:
+            from app.market.market_poller import get_poller
+            get_poller().ensure_started()
         if payload.is_algo_active and row.status in ("COMPLETED", "STOPPED_SL"):
             row.status = "IDLE"
             row.trades_completed = 0

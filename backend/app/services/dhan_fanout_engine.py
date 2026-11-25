@@ -31,6 +31,42 @@ logger = logging.getLogger(__name__)
 LOT_SIZE_CACHE: Dict[str, int] = {}
 
 
+FREEZE_QTY_CACHE: Dict[str, int] = {}
+
+
+def resolve_freeze_qty(symbol: str, security_id: Optional[str] = None) -> int:
+    """Resolve exchange freeze quantity limit for F&O and Commodity contracts."""
+    sym = (symbol or "").upper().strip()
+    if sym in FREEZE_QTY_CACHE:
+        return FREEZE_QTY_CACHE[sym]
+
+    if "BANKNIFTY" in sym:
+        limit = 900
+    elif "FINNIFTY" in sym:
+        limit = 1800
+    elif "MIDCPNIFTY" in sym:
+        limit = 4200
+    elif "NIFTY" in sym:
+        limit = 1800
+    elif "SENSEX" in sym:
+        limit = 1000
+    elif "BANKEX" in sym:
+        limit = 1000
+    elif "CRUDEOIL" in sym:
+        limit = 10000
+    elif "NATURALGAS" in sym:
+        limit = 25000
+    elif "GOLD" in sym:
+        limit = 1000
+    elif "SILVER" in sym:
+        limit = 1000
+    else:
+        limit = 50000
+
+    FREEZE_QTY_CACHE[sym] = limit
+    return limit
+
+
 def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
     """Resolve exchange contract lot size for F&O and Commodity contracts."""
     sym = (symbol or "").upper().strip()
@@ -314,6 +350,12 @@ class DhanFanoutEngine:
         order_id = None
         error_msg = None
 
+        freeze_limit = resolve_freeze_qty(order.symbol)
+        if order.quantity > freeze_limit:
+            logger.warning(
+                f"[{batch_id}] Order qty {order.quantity} for {order.symbol} exceeds exchange freeze limit {freeze_limit}."
+            )
+
         try:
             adapter = get_broker_adapter(account)
             resp: OrderResponse = await adapter.place_order(order)
@@ -399,6 +441,13 @@ class DhanFanoutEngine:
                         exch = pos.get("exchange") or "NSE"
                         seg = pos.get("segment") or ("NSE_FNO" if is_fno_symbol(sym) else "NSE_EQ")
 
+                        orig_prod = (
+                            pos.get("product_type")
+                            or pos.get("productType")
+                            or pos.get("product")
+                            or ("MARGIN" if (is_fno_symbol(sym) or "MCX" in str(exch)) else "INTRADAY")
+                        ).upper()
+
                         exit_req = OrderRequest(
                             symbol=sym,
                             exchange=exch,
@@ -406,7 +455,8 @@ class DhanFanoutEngine:
                             direction=exit_side,
                             order_type="MARKET",
                             quantity=exit_qty,
-                            product="INTRADAY",
+                            product=orig_prod,
+                            price=0.0,
                             client_order_id=f"KILL-{batch_id[:12]}-{str(acc.id)[:4]}",
                         )
 

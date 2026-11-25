@@ -11,6 +11,7 @@ Data APIs (quotes, positions, holdings) work without IP whitelisting.
 
 Auto-renewal: Call /v2/RenewToken before token expires.
 """
+import asyncio
 import logging
 import socket
 import requests
@@ -233,6 +234,10 @@ class DhanAdapter(BaseBrokerAdapter):
             order_type = ORDER_TYPE_MAP.get(order.order_type, "MARKET")
             txn_type   = "BUY" if order.direction == "BUY" else "SELL"
 
+            order_type = order.order_type.upper() if order.order_type else "LIMIT"
+            order_price = 0.0 if order_type == "MARKET" else float(order.price or 0)
+            order_trigger = 0.0 if order_type == "MARKET" else float(order.trigger_price or 0)
+
             payload = {
                 "dhanClientId":      self._client_id,
                 "transactionType":   txn_type,
@@ -243,15 +248,16 @@ class DhanAdapter(BaseBrokerAdapter):
                 "securityId":        str(order.symbol),
                 "quantity":          int(order.quantity),
                 "disclosedQuantity": 0,
-                "price":             float(order.price or 0),
-                "triggerPrice":      float(order.trigger_price or 0),
+                "price":             order_price,
+                "triggerPrice":      order_trigger,
                 "afterMarketOrder":  False,
                 "correlationId":     (order.client_order_id or "algo-platform")[:30],
             }
 
             logger.info(f"Dhan place_order request: {txn_type} {order.quantity}x {order.symbol} ({exchange}, {product}, {order_type}, price={payload['price']})")
 
-            resp_raw = _req.post(
+            resp_raw = await asyncio.to_thread(
+                _req.post,
                 "https://api.dhan.co/v2/orders",
                 headers={
                     "access-token": self._access_token,
@@ -310,37 +316,40 @@ class DhanAdapter(BaseBrokerAdapter):
     async def cancel_order(self, broker_order_id: str) -> bool:
         try:
             dhan = self._get_sdk()
-            resp = dhan.cancel_order(broker_order_id)
-            return resp and resp.get("status") == "success"
+            resp = await asyncio.to_thread(dhan.cancel_order, broker_order_id)
+            return bool(resp and resp.get("status") == "success")
         except Exception as e:
             logger.error(f"Dhan cancel_order error: {e}")
             return False
 
     # ── Account data ──────────────────────────────────────────────────────────
 
-    def _get_list(self, path: str) -> list:
+    async def _get_list(self, path: str) -> list:
         """Dhan v2 returns a raw JSON list for orders and positions."""
-        resp = requests.get(
-            f"{DHAN_BASE_URL}{path}",
-            headers={
-                "access-token": self._access_token,
-                "dhanClientId": self._client_id,
-                "Accept": "application/json",
-            },
-            timeout=10,
-        )
-        data = resp.json()
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict) and data.get("status") == "success":
-            inner = data.get("data") or []
-            return inner if isinstance(inner, list) else []
-        logger.error(f"Dhan {path} failed: {data if isinstance(data, dict) else resp.status_code}")
-        return []
+        def _fetch():
+            resp = requests.get(
+                f"{DHAN_BASE_URL}{path}",
+                headers={
+                    "access-token": self._access_token,
+                    "dhanClientId": self._client_id,
+                    "Accept": "application/json",
+                },
+                timeout=10,
+            )
+            data = resp.json()
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict) and data.get("status") == "success":
+                inner = data.get("data") or []
+                return inner if isinstance(inner, list) else []
+            logger.error(f"Dhan {path} failed: {data if isinstance(data, dict) else resp.status_code}")
+            return []
+
+        return await asyncio.to_thread(_fetch)
 
     async def get_positions(self) -> list:
         try:
-            return self._get_list("/positions")
+            return await self._get_list("/positions")
         except Exception as e:
             logger.error(f"Dhan get_positions error: {e}")
             return []
@@ -348,7 +357,7 @@ class DhanAdapter(BaseBrokerAdapter):
     async def get_holdings(self) -> list:
         try:
             dhan = self._get_sdk()
-            resp = dhan.get_holdings()
+            resp = await asyncio.to_thread(dhan.get_holdings)
             if resp and resp.get("status") == "success":
                 return resp.get("data", []) or []
             return []
@@ -359,7 +368,7 @@ class DhanAdapter(BaseBrokerAdapter):
     async def get_funds(self) -> dict:
         try:
             dhan = self._get_sdk()
-            resp = dhan.get_fund_limits()
+            resp = await asyncio.to_thread(dhan.get_fund_limits)
             if resp and resp.get("status") == "success":
                 return resp.get("data", {}) or {}
             return {}
@@ -369,7 +378,7 @@ class DhanAdapter(BaseBrokerAdapter):
 
     async def get_order_book(self) -> list:
         try:
-            return self._get_list("/orders")
+            return await self._get_list("/orders")
         except Exception as e:
             logger.error(f"Dhan get_order_book error: {e}")
             return []
@@ -377,7 +386,7 @@ class DhanAdapter(BaseBrokerAdapter):
     async def get_order_status(self, broker_order_id: str) -> dict:
         try:
             dhan = self._get_sdk()
-            resp = dhan.get_order_by_id(broker_order_id)
+            resp = await asyncio.to_thread(dhan.get_order_by_id, broker_order_id)
             if resp and resp.get("status") == "success":
                 return resp.get("data", {}) or {}
             return {}
@@ -390,9 +399,10 @@ class DhanAdapter(BaseBrokerAdapter):
     async def get_ltp(self, exchange: str, security_id: str) -> float | None:
         """Get last traded price for a single instrument."""
         try:
-            dhan         = self._get_sdk()
+            dhan = self._get_sdk()
             dhan_exchange = EXCHANGE_MAP.get(exchange, "NSE_EQ")
-            resp = dhan.get_market_quote(
+            resp = await asyncio.to_thread(
+                dhan.get_market_quote,
                 securities={dhan_exchange: [security_id]}
             )
             if resp and resp.get("status") == "success":

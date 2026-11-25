@@ -181,7 +181,7 @@ class FormulaStrategyExecutor:
             trailing_sl=strat.trailing_sl, trail_pct=strat.trail_pct,
             strategy_id=strat.id, is_paper=strat.paper_trading,
         )
-        logger.info(f"📡 {direction} entry: {strat.symbol} @ ₹{fill_price}")
+        logger.info(f"[ENTRY] {direction} entry: {strat.symbol} @ Rs {fill_price}")
         return position
 
     def stop(self):

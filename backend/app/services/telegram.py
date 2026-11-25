@@ -51,9 +51,9 @@ class TelegramNotifier:
     async def signal_alert(self, chat_id: str, symbol: str, direction: str,
                            quantity: Optional[int], price: Optional[float],
                            tag: str, auto_executed: bool):
-        icon  = "🟢" if direction == "BUY" else "🔴" if direction == "SELL" else "🟡"
-        mode  = "✅ Auto-executed" if auto_executed else "🔔 Notify only — manual action needed"
-        price_str = f"₹{price:,.2f}" if price else "Market"
+        icon  = f"[{direction}]"
+        mode  = "Auto-executed" if auto_executed else "Notify only - manual action needed"
+        price_str = f"Rs {price:,.2f}" if price else "Market"
         msg = (
             f"{icon} <b>TRADE SIGNAL</b>\n\n"
             f"<b>Symbol:</b>    {symbol}\n"
@@ -67,10 +67,10 @@ class TelegramNotifier:
 
     async def kill_switch_alert(self, chat_id: str, strategy_name: str, reason: str, daily_pnl: float):
         msg = (
-            f"⚠️ <b>KILL SWITCH TRIGGERED</b>\n\n"
+            f"<b>KILL SWITCH TRIGGERED</b>\n\n"
             f"<b>Strategy:</b> {strategy_name}\n"
             f"<b>Reason:</b>   {reason}\n"
-            f"<b>Daily P&L:</b> ₹{daily_pnl:,.2f}\n\n"
+            f"<b>Daily P&L:</b> Rs {daily_pnl:,.2f}\n\n"
             f"All trading has been halted. Login to reset."
         )
         await self.send(chat_id, msg)
@@ -78,17 +78,17 @@ class TelegramNotifier:
     async def risk_warning(self, chat_id: str, strategy_name: str,
                            daily_pnl: float, limit: float, pct: float):
         msg = (
-            f"⚠️ <b>RISK WARNING</b>\n\n"
+            f"<b>RISK WARNING</b>\n\n"
             f"<b>Strategy:</b> {strategy_name}\n"
-            f"<b>Daily Loss:</b> ₹{abs(daily_pnl):,.2f} / ₹{limit:,.2f} ({pct:.0f}%)\n\n"
+            f"<b>Daily Loss:</b> Rs {abs(daily_pnl):,.2f} / Rs {limit:,.2f} ({pct:.0f}%)\n\n"
             f"Approaching daily loss limit. Monitor closely."
         )
         await self.send(chat_id, msg)
 
     async def strategy_started(self, chat_id: str, strategy_name: str, symbol: str, paper: bool):
-        mode = "📄 Paper" if paper else "💰 Live"
+        mode = "Paper" if paper else "Live"
         msg = (
-            f"▶️ <b>STRATEGY STARTED</b>\n\n"
+            f"<b>STRATEGY STARTED</b>\n\n"
             f"<b>Strategy:</b> {strategy_name}\n"
             f"<b>Symbol:</b>   {symbol}\n"
             f"<b>Mode:</b>     {mode}"
@@ -97,14 +97,14 @@ class TelegramNotifier:
 
     async def order_filled(self, chat_id: str, symbol: str, direction: str,
                            quantity: int, fill_price: float, pnl: Optional[float] = None):
-        icon = "🟢" if direction == "BUY" else "🔴"
-        pnl_str = f"\n<b>P&L:</b> ₹{pnl:+,.2f}" if pnl is not None else ""
+        icon = f"[{direction}]"
+        pnl_str = f"\n<b>P&L:</b> Rs {pnl:+,.2f}" if pnl is not None else ""
         msg = (
             f"{icon} <b>ORDER FILLED</b>\n\n"
             f"<b>Symbol:</b>   {symbol}\n"
             f"<b>Direction:</b>{direction}\n"
             f"<b>Qty:</b>      {quantity}\n"
-            f"<b>Price:</b>    ₹{fill_price:,.2f}"
+            f"<b>Price:</b>    Rs {fill_price:,.2f}"
             f"{pnl_str}"
         )
         await self.send(chat_id, msg)

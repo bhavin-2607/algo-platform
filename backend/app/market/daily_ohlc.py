@@ -337,16 +337,24 @@ async def preload_daily_ohlc():
                     else:
                         enqueue_daily_ohlc_fetch(seg, sid, item.symbol)
 
+            from app.market.market_poller import get_poller
+            poller = get_poller()
             rows = (await db.execute(select(BsaAlgoRow))).scalars().all()
+            has_active_algo = False
             for row in rows:
                 if row.token and str(row.token) != "0":
                     seg = row.segment or "NSE_EQ"
                     sid = str(row.token)
+                    poller.add_symbol(row.symbol, sid, seg)
+                    if row.is_algo_active:
+                        has_active_algo = True
                     cached = await _get_from_redis(seg, sid)
                     if cached and cached.get("for_date") == today_ist:
                         set_cached_previous_day_ohlc(seg, sid, cached)
                     else:
                         enqueue_daily_ohlc_fetch(seg, sid, row.symbol)
+            if has_active_algo:
+                poller.ensure_started()
         logger.info(f"Preloaded daily OHLC items from database for {today_ist}")
     except Exception as e:
         logger.warning(f"preload_daily_ohlc failed: {e}")

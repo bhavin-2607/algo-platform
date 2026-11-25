@@ -59,6 +59,7 @@ class BsaAlgoEngine:
     def __init__(self):
         self._running = False
         self._db_lock = asyncio.Lock()
+        self._row_locks: dict[UUID, asyncio.Lock] = {}
 
     @classmethod
     def get_instance(cls) -> "BsaAlgoEngine":
@@ -140,6 +141,41 @@ class BsaAlgoEngine:
         t5: float = 0.0,
         db: AsyncSession = None,
     ):
+        row_lock = self._row_locks.setdefault(row.id, asyncio.Lock())
+        if row_lock.locked():
+            return
+
+        async with row_lock:
+            if not row.is_algo_active or row.status in ("ORDER_PENDING", "EXIT_PENDING"):
+                return
+            await self._process_row_guarded(
+                row=row,
+                ltp=ltp,
+                signal=signal,
+                entry_calc=entry_calc,
+                sl_calc=sl_calc,
+                t1=t1,
+                t2=t2,
+                t3=t3,
+                t4=t4,
+                t5=t5,
+                db=db,
+            )
+
+    async def _process_row_guarded(
+        self,
+        row: BsaAlgoRow,
+        ltp: float,
+        signal: str,
+        entry_calc: float,
+        sl_calc: float,
+        t1: float = 0.0,
+        t2: float = 0.0,
+        t3: float = 0.0,
+        t4: float = 0.0,
+        t5: float = 0.0,
+        db: AsyncSession = None,
+    ):
         target_map = {
             "T1":     t1,
             "TGT1":   t1,
@@ -200,6 +236,9 @@ class BsaAlgoEngine:
                     entry_triggered = True
 
             if entry_triggered:
+                row.status = "ORDER_PENDING"
+                await db.commit()
+
                 # Execute Market BUY
                 try:
                     fill_price = await self._execute_order(row, side="BUY", price=ltp, db=db)
@@ -230,6 +269,9 @@ class BsaAlgoEngine:
                             f"(TGT: {row.sell_tgt:.2f}, SL: {row.stop_loss:.2f}) [Trade {row.trades_completed + 1}/{row.number_of_trades}]"
                         )
                     await db.commit()
+                else:
+                    row.status = "IDLE"
+                    await db.commit()
                 return
 
         # ── 2. Check Exit (State: IN_POSITION) ────────────────────────────────
@@ -245,9 +287,13 @@ class BsaAlgoEngine:
 
                 if hit_target or hit_sl:
                     reason = "TARGET HIT" if hit_target else "STOP LOSS HIT"
+                    row.status = "EXIT_PENDING"
+                    await db.commit()
+
                     try:
                         exit_fill = await self._execute_order(row, side="SELL", price=ltp, db=db)
                     except Exception as e:
+                        row.status = "IN_POSITION"
                         row.last_signal = f"ERR: {str(e)[:40]}"
                         row.is_algo_active = False
                         await db.commit()
@@ -269,7 +315,9 @@ class BsaAlgoEngine:
                         else:
                             # Waiting for price to return to entry price before repeating
                             row.status = "WAITING_RETURN"
-
+                        await db.commit()
+                    else:
+                        row.status = "IN_POSITION"
                         await db.commit()
                     return
 
@@ -357,7 +405,7 @@ class BsaAlgoEngine:
             quantity=final_order_qty,
             order_type="MARKET",
             product=algo_prod,
-            price=fill_price,
+            price=0.0,
         )
 
         try:

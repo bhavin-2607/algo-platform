@@ -107,6 +107,9 @@ async def market_live(ws: WebSocket, token: str = Query(...),
     finally:
         await poller.unsubscribe(queue)
         logger.info(f"WS market disconnected: user={user_id} clients={poller.client_count}")
+
+
+@router.websocket("/strategy/{map_id}")
 async def strategy_status(ws: WebSocket, map_id: str, token: str = Query(...)):
     """
     Stream live status updates for a single running strategy.

@@ -173,14 +173,18 @@ export default function TerminalPage() {
   // ── WebSocket live feed ────────────────────────────────────────────────────
   useEffect(() => {
     if (!accessToken) return;
-    const url    = `${wsBase()}/api/ws/market?token=${accessToken}&symbols=ALL`;
+    const url = `${wsBase()}/api/ws/market?token=${accessToken}&symbols=ALL`;
+    let isMounted = true;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
 
     function connect() {
+      if (!isMounted) return;
       setWsStatus("connecting");
       const ws = new WebSocket(url);
       wsRef.current = ws;
-      ws.onopen    = () => setWsStatus("live");
+      ws.onopen    = () => { if (isMounted) setWsStatus("live"); };
       ws.onmessage = (e) => {
+        if (!isMounted) return;
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === "ticks") {
@@ -192,11 +196,19 @@ export default function TerminalPage() {
           }
         } catch {}
       };
-      ws.onerror = () => setWsStatus("polling");
-      ws.onclose = () => { setWsStatus("polling"); setTimeout(connect, 8000); };
+      ws.onerror = () => { if (isMounted) setWsStatus("polling"); };
+      ws.onclose = () => {
+        if (!isMounted) return;
+        setWsStatus("polling");
+        timerId = setTimeout(connect, 8000);
+      };
     }
     connect();
-    return () => wsRef.current?.close();
+    return () => {
+      isMounted = false;
+      if (timerId) clearTimeout(timerId);
+      wsRef.current?.close();
+    };
   }, [accessToken]);
 
   // ── REST fallback ──────────────────────────────────────────────────────────

@@ -312,7 +312,7 @@ def refresh_instrument_csv():
             with open(csv_path, "w", encoding="utf-8") as f:
                 f.write(resp.text)
             lines = resp.text.count("\n")
-            logger.info(f"✅ Instrument CSV refreshed: {lines} rows → {csv_path}")
+            logger.info(f"[OK] Instrument CSV refreshed: {lines} rows -> {csv_path}")
 
             # Clear in-memory cache so next search reloads from new file
             import app.api.routes.market as mkt

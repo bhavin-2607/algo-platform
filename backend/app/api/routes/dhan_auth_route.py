@@ -1,6 +1,7 @@
 """
 Dhan Token Management API
 """
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,7 +63,7 @@ async def renew_token(
     from app.api.routes.settings import _sync_dhan_token_to_db
 
     mgr    = get_auth_manager()
-    result = mgr.auto_renew(max_retries=1)
+    result = await asyncio.to_thread(mgr.auto_renew, max_retries=1)
 
     if not result:
         raise HTTPException(
