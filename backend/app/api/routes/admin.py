@@ -674,3 +674,56 @@ async def all_trades(
         }
         for t in trades
     ]
+
+
+# ── Real-time Platform Logs ───────────────────────────────────────────────────
+
+@router.get("/logs")
+async def get_logs(
+    category: str = "app",
+    lines: int = 100,
+    admin: User = Depends(require_admin),
+):
+    """
+    Retrieve real-time platform logs by category.
+    Available categories:
+      - 'trades':   Order executions, broker responses, copy trading fan-outs, square-off
+      - 'algo':     BSA formula triggers, target hits, stop-loss triggers, trade cycles
+      - 'market':   Market feed ticks, symbol subscriptions, daily OHLC sync
+      - 'error':    Dedicated error and critical exceptions with stack traces
+      - 'app':      Consolidated FastAPI application logs
+      - 'platform': Universal supervisor log (Backend, Celery Worker, Celery Beat)
+    """
+    from app.core.logging_config import read_log_tail
+    return read_log_tail(log_name=category, lines=lines)
+
+
+@router.get("/logs/summary")
+async def get_logs_summary(
+    admin: User = Depends(require_admin),
+):
+    """Get metadata and file sizes for all platform log categories."""
+    import os
+    import time
+    from app.core.logging_config import get_log_dir
+    log_dir = get_log_dir()
+    categories = ["trades.log", "algo.log", "market.log", "error.log", "app.log", "platform.log"]
+    summary = []
+    for cat in categories:
+        p = os.path.join(log_dir, cat)
+        if os.path.exists(p):
+            stat = os.stat(p)
+            summary.append({
+                "category": cat.replace(".log", ""),
+                "file": cat,
+                "size_kb": round(stat.st_size / 1024, 1),
+                "last_modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
+            })
+        else:
+            summary.append({
+                "category": cat.replace(".log", ""),
+                "file": cat,
+                "size_kb": 0.0,
+                "last_modified": None,
+            })
+    return {"log_directory": log_dir, "categories": summary}

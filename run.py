@@ -147,6 +147,12 @@ def ensure_frontend_built():
             log_launcher("Warning: npm build failed. Standalone frontend may not be available.", Colors.RED)
 
 # ── Process Stream Logger ──────────────────────────────────────────────────────
+LOGS_DIR = os.path.join(ROOT_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+PLATFORM_LOG_PATH = os.path.join(LOGS_DIR, "platform.log")
+_log_lock = threading.Lock()
+
+
 class ProcessLogger(threading.Thread):
     def __init__(self, stream, tag: str, color: str):
         super().__init__(daemon=True)
@@ -162,6 +168,13 @@ class ProcessLogger(threading.Thread):
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text:
                     print(f"{self.color}{Colors.BOLD}[{self.tag}]{Colors.RESET} {text}")
+                    try:
+                        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                        with _log_lock:
+                            with open(PLATFORM_LOG_PATH, "a", encoding="utf-8") as f:
+                                f.write(f"{timestamp} [{self.tag.strip()}] {text}\n")
+                    except Exception:
+                        pass
         except Exception:
             pass
 
