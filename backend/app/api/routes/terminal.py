@@ -1217,9 +1217,27 @@ async def list_algo_rows(
     rows = result.scalars().all()
 
     poller = get_poller()
+    from app.api.routes.market import resolve_dhan_instrument
+    healed_any = False
     for r in rows:
+        if not r.token or str(r.token).strip() in ("0", "None", ""):
+            resolved = resolve_dhan_instrument(r.symbol, r.exchange, r.segment)
+            if resolved and resolved.get("security_id"):
+                r.token = resolved["security_id"]
+                if resolved.get("segment"):
+                    r.segment = resolved["segment"]
+                if resolved.get("exchange"):
+                    r.exchange = resolved["exchange"]
+                healed_any = True
         seg = r.segment or ("NSE_FNO" if is_option_symbol(r.symbol) else "NSE_EQ")
-        poller.add_symbol(r.symbol, r.token or "0", seg)
+        if r.token and str(r.token).strip() not in ("0", "None", ""):
+            poller.add_symbol(r.symbol, r.token, seg)
+
+    if healed_any:
+        try:
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"Failed to persist healed algo row tokens: {e}")
 
     cached_quotes = {t["symbol"]: t for t in (poller._last_data or [])}
 
@@ -1234,7 +1252,7 @@ async def list_algo_rows(
                 for r in missing:
                     sec_id = r.token or poller._watchlist.get(r.symbol, {}).get("security_id")
                     seg = r.segment or "NSE_EQ"
-                    if sec_id and str(sec_id) != "0":
+                    if sec_id and str(sec_id) not in ("0", "None", ""):
                         securities.setdefault(seg, []).append(int(sec_id))
                 if securities:
                     raw_dhan = _dhan_ohlc(securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
@@ -1288,28 +1306,29 @@ async def list_algo_rows(
         tick_data = {
             "symbol":  r.symbol,
             "ltp":     ltp,
-            "open":    live.get("open"),
-            "high":    live.get("high"),
-            "low":     live.get("low"),
-            "close":   live.get("close"),
-            "volume":  live.get("volume"),
-            "vwap":    live.get("vwap") or live.get("atp"),
+            "open":    live.get("open", ltp),
+            "high":    live.get("high", ltp),
+            "low":     live.get("low", ltp),
+            "close":   live.get("close", ltp),
+            "volume":  live.get("volume", 0),
+            "vwap":    live.get("vwap") or live.get("atp") or ltp,
             "p_close": p_close_val,
             "p_high":  p_high_val,
             "p_low":   p_low_val,
         }
-        open_val = float(tick_data["open"] or ltp or 100.0)
+        open_candidate = float(tick_data["open"] or ltp or p_close_val or r.buy_price or 0.0)
+        open_val = open_candidate if open_candidate > 0 else 0.0
 
         formula_cols = [
             {**c, "formula": formula_for_book(c["name"], c["formula"], "option" if is_option else "equity")}
             for c in STANDARD_FORMULA_COLUMNS
         ]
 
-        vals = evaluate_columns_in_order(formula_cols, tick_data)
-        sig = str(vals.get("intrasignal") or vals.get("supersignal") or vals.get("ohlsignal") or vals.get("signal") or "BUY").upper()
+        vals = evaluate_columns_in_order(formula_cols, tick_data) if open_val > 0 else {}
+        sig = str(vals.get("intrasignal") or vals.get("supersignal") or vals.get("ohlsignal") or vals.get("signal") or ("BUY" if open_val > 0 else "IDLE")).upper()
         is_buy = (sig == "BUY")
-        ent = vals.get("entry") or round((math.sqrt(open_val) + (0.025 if is_buy else -0.025))**2, 0)
-        sl_val = vals.get("sl") or round(ent * (0.995 if is_buy else 1.005), 2)
+        ent = vals.get("entry") or (round((math.sqrt(open_val) + (0.025 if is_buy else -0.025))**2, 0) if open_val > 0 else None)
+        sl_val = vals.get("sl") or (round(ent * (0.995 if is_buy else 1.005), 2) if ent else None)
         t1 = vals.get("tgt1") or vals.get("bt1" if is_buy else "st1")
         t2 = vals.get("tgt2") or vals.get("bt2" if is_buy else "st2")
         t3 = vals.get("tgt3") or vals.get("bt3" if is_buy else "st3")
@@ -1618,10 +1637,15 @@ async def add_algo_row(
         target_exch = payload.exchange or "NSE"
 
     sec_token = payload.token
-    if not sec_token or sec_token == "0":
-        dhan_inst = DHAN_SECURITY_IDS.get(sym)
-        if dhan_inst:
-            sec_token = str(dhan_inst.get("security_id"))
+    if not sec_token or str(sec_token).strip() in ("0", "None", ""):
+        from app.api.routes.market import resolve_dhan_instrument
+        resolved = resolve_dhan_instrument(sym, target_exch, target_seg)
+        if resolved and resolved.get("security_id"):
+            sec_token = resolved["security_id"]
+            if resolved.get("segment"):
+                target_seg = resolved["segment"]
+            if resolved.get("exchange"):
+                target_exch = resolved["exchange"]
 
     # Check existing row
     res = await db.execute(
@@ -2092,6 +2116,17 @@ async def import_dhan_position_to_algo(
         target_seg = payload.segment or "NSE_EQ"
         target_exch = payload.exchange or "NSE"
 
+    sec_token = payload.security_id
+    if not sec_token or str(sec_token).strip() in ("0", "None", ""):
+        from app.api.routes.market import resolve_dhan_instrument
+        resolved = resolve_dhan_instrument(sym, target_exch, target_seg)
+        if resolved and resolved.get("security_id"):
+            sec_token = resolved["security_id"]
+            if resolved.get("segment"):
+                target_seg = resolved["segment"]
+            if resolved.get("exchange"):
+                target_exch = resolved["exchange"]
+
     res = await db.execute(
         select(BsaAlgoRow).where(
             BsaAlgoRow.user_id == current_user.id,
@@ -2105,9 +2140,12 @@ async def import_dhan_position_to_algo(
             symbol=sym,
             exchange=target_exch,
             segment=target_seg,
-            token=payload.security_id,
+            token=sec_token,
         )
         db.add(row)
+    else:
+        if not row.token or str(row.token).strip() in ("0", "None", ""):
+            row.token = sec_token
 
     row.quantity = max(1, payload.quantity)
     row.buy_price = payload.buy_price

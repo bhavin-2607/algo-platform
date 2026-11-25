@@ -826,6 +826,125 @@ def _search_instruments_sync(q: str, limit: int = 30) -> list[dict]:
         return []
 
 
+_RESOLVED_INSTRUMENT_CACHE: dict[tuple[str, str, str], dict] = {}
+
+
+def resolve_dhan_instrument(symbol: str, exchange: Optional[str] = None, segment: Optional[str] = None) -> Optional[dict]:
+    """
+    Robust resolver that maps any symbol (equity, option, futures, MCX commodity, index)
+    to its Dhan security ID, exchange segment, exchange, and contract lot size.
+    Uses in-memory cache, static fast maps, and instruments.csv scrip frame.
+    """
+    sym_u = (symbol or "").strip().upper()
+    if not sym_u:
+        return None
+
+    ex_key = (exchange or "").upper().strip()
+    seg_key = (segment or "").upper().strip()
+    cache_key = (sym_u, ex_key, seg_key)
+    if cache_key in _RESOLVED_INSTRUMENT_CACHE:
+        return _RESOLVED_INSTRUMENT_CACHE[cache_key]
+
+    from app.services.dhan_fanout_engine import resolve_lot_size
+
+    # 1. Fast path: static high-speed dictionary
+    if sym_u in DHAN_SECURITY_IDS:
+        val = DHAN_SECURITY_IDS[sym_u]
+        seg = val.get("exchange_segment") or val.get("segment") or "NSE_EQ"
+        exch = "MCX" if "MCX" in seg else ("BSE" if "BSE" in seg or seg in ("BSE_EQ", "BSE_FNO") else "NSE")
+        sec_id = str(val["security_id"])
+        lot = resolve_lot_size(sym_u, sec_id)
+        res = {
+            "symbol": sym_u,
+            "security_id": sec_id,
+            "segment": seg,
+            "exchange": exch,
+            "lot_size": lot,
+        }
+        _RESOLVED_INSTRUMENT_CACHE[cache_key] = res
+        return res
+
+    # 2. Scrip master search
+    try:
+        df = _scrip_frame()
+        # Direct column matches
+        match = df[df["DISPLAY_NAME"].str.upper() == sym_u]
+        if match.empty:
+            match = df[df["SYMBOL_NAME"].str.upper() == sym_u]
+        if match.empty:
+            match = df[(df["UNDERLYING_SYMBOL"].str.upper() == sym_u) & (df["SERIES"] == "EQ")]
+
+        # Normalized option naming: CE <-> CALL, PE <-> PUT
+        if match.empty and any(k in sym_u for k in (" CE", " PE", " CALL", " PUT")):
+            alt = sym_u.replace(" CE", " CALL").replace(" PE", " PUT")
+            if alt != sym_u:
+                match = df[df["DISPLAY_NAME"].str.upper() == alt]
+                if match.empty:
+                    match = df[df["SYMBOL_NAME"].str.upper() == alt]
+            if match.empty:
+                alt2 = sym_u.replace(" CALL", " CE").replace(" PUT", " PE")
+                if alt2 != sym_u:
+                    match = df[df["DISPLAY_NAME"].str.upper() == alt2]
+                    if match.empty:
+                        match = df[df["SYMBOL_NAME"].str.upper() == alt2]
+
+        # Prioritize matching exchange / segment if provided
+        if not match.empty:
+            if exchange:
+                ex_match = match[match["EXCH_ID"].str.upper() == ex_key]
+                if not ex_match.empty:
+                    match = ex_match
+            if segment:
+                seg_char = {"MCX_COMM": "M", "NSE_FNO": "D", "BSE_FNO": "D", "NSE_EQ": "E", "BSE_EQ": "E", "IDX_I": "I"}.get(seg_key)
+                if seg_char:
+                    seg_match = match[match["SEGMENT"].str.upper() == seg_char]
+                    if not seg_match.empty:
+                        match = seg_match
+
+        if not match.empty:
+            row = match.iloc[0]
+            seg_id, exch_id, _ = resolve_exchange_segment(row)
+            sec_id = str(int(float(row["SECURITY_ID"])))
+            lot_val = row.get("LOT_SIZE")
+            try:
+                lot = int(float(lot_val)) if lot_val and str(lot_val) != "nan" else 1
+            except Exception:
+                lot = 1
+            if lot <= 1:
+                lot = resolve_lot_size(sym_u, sec_id)
+            res = {
+                "symbol": sym_u,
+                "security_id": sec_id,
+                "segment": seg_id,
+                "exchange": exch_id,
+                "lot_size": max(1, lot),
+            }
+            _RESOLVED_INSTRUMENT_CACHE[cache_key] = res
+            return res
+
+        # 3. Fallback to token search if exact name didn't match (e.g. symbol without expiry)
+        search_res = _search_instruments_sync(sym_u, limit=1)
+        if search_res:
+            first = search_res[0]
+            sec_id = str(first["security_id"])
+            seg_id = str(first["exchange_segment"])
+            exch_id = str(first["exchange"])
+            lot = resolve_lot_size(sym_u, sec_id)
+            res = {
+                "symbol": sym_u,
+                "security_id": sec_id,
+                "segment": seg_id,
+                "exchange": exch_id,
+                "lot_size": max(1, lot),
+            }
+            _RESOLVED_INSTRUMENT_CACHE[cache_key] = res
+            return res
+    except Exception as e:
+        logger.warning(f"resolve_dhan_instrument failed for {symbol}: {e}")
+
+    return None
+
+
 @router.get("/instruments/search")
 async def search_instruments_csv(
     q:    str = Query(..., min_length=1),

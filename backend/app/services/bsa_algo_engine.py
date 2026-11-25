@@ -321,15 +321,15 @@ class BsaAlgoEngine:
 
         if not row.token or str(row.token).strip() in ("0", "None", ""):
             try:
-                import os
-                import pandas as _pd
-                csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "market", "instruments.csv"))
-                if os.path.exists(csv_path):
-                    _df = _pd.read_csv(csv_path, usecols=["SYMBOL_NAME", "SECURITY_ID", "EXCH_ID"], dtype=str)
-                    target_exch_id = "MCX" if "MCX" in exchange else ("BSE" if "BSE" in exchange else "NSE")
-                    _match = _df[(_df["SYMBOL_NAME"] == row.symbol) & (_df["EXCH_ID"] == target_exch_id)]
-                    if not _match.empty:
-                        security_id = str(_match.iloc[0]["SECURITY_ID"]).strip()
+                from app.api.routes.market import resolve_dhan_instrument
+                resolved = resolve_dhan_instrument(row.symbol, exchange, row.segment)
+                if resolved and resolved.get("security_id"):
+                    security_id = resolved["security_id"]
+                    row.token = security_id
+                    if resolved.get("segment"):
+                        row.segment = resolved["segment"]
+                    if resolved.get("exchange"):
+                        row.exchange = resolved["exchange"]
             except Exception as e:
                 logger.warning(f"Dhan security lookup failed for {row.symbol}: {e}")
 
@@ -337,7 +337,7 @@ class BsaAlgoEngine:
         from app.market.market_poller import get_poller
         poller = get_poller()
         live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
-        fill_price = float(price or live.get("ltp") or row.buy_price or 100.0)
+        fill_price = float(price or live.get("ltp") or row.buy_price or 0.0)
 
         # Options and commodity derivatives default to MARGIN (Normal / Carryforward)
         # to ensure compatibility with Dhan RMS policies which restrict Intraday on certain derivative scrips.

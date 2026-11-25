@@ -783,7 +783,12 @@ export default function TerminalPage() {
             title="EQUITY"
             book="equity"
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_EQ", exchange: exch || "NSE", token: tok })}
+            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({
+              symbol: sym,
+              segment: seg || instrMap[sym]?.segment || "NSE_EQ",
+              exchange: exch || "NSE",
+              token: tok || instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id),
+            })}
             onMoveCol={handleMoveCol}
             instrMap={instrMap}
             watchlist={equitySymbols}
@@ -812,7 +817,12 @@ export default function TerminalPage() {
             title="OPTIONS"
             book="option"
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "NSE_FNO", exchange: exch || "NFO", token: tok })}
+            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({
+              symbol: sym,
+              segment: seg || instrMap[sym]?.segment || "NSE_FNO",
+              exchange: exch || "NFO",
+              token: tok || instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id),
+            })}
             onMoveCol={handleMoveCol}
             instrMap={instrMap}
             watchlist={optionSymbols}
@@ -841,7 +851,12 @@ export default function TerminalPage() {
             title="MCX COMMODITIES"
             book="mcx"
             onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({ symbol: sym, segment: seg || instrMap[sym]?.segment || "MCX_COMM", exchange: exch || "MCX", token: tok })}
+            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({
+              symbol: sym,
+              segment: seg || instrMap[sym]?.segment || "MCX_COMM",
+              exchange: exch || "MCX",
+              token: tok || instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id),
+            })}
             onMoveCol={handleMoveCol}
             instrMap={instrMap}
             watchlist={mcxSymbols}
@@ -3016,7 +3031,8 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                         e.stopPropagation();
                         const seg = instrMap[sym]?.segment || (book === "option" ? "NSE_FNO" : (book === "mcx" ? "MCX_COMM" : "NSE_EQ"));
                         const exch = (instrMap[sym] as any)?.exchange || (seg.startsWith("BSE") ? "BSE" : (seg === "MCX_COMM" ? "MCX" : (book === "option" ? "NFO" : "NSE")));
-                        onAddToAlgo(sym, seg, exch);
+                        const tok = instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id);
+                        onAddToAlgo(sym, seg, exch, tok);
                       }}
                       style={{
                         padding:"2px 7px", fontSize:10, fontWeight:700, cursor:"pointer",
