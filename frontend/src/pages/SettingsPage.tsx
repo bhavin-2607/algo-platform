@@ -922,6 +922,7 @@ function BrokerSettingsSection() {
       toast.success("Removed");
       qc.invalidateQueries({queryKey:["brokers"]});
       qc.invalidateQueries({queryKey:["broker-accounts"]});
+      qc.invalidateQueries({queryKey:["copy-trading-accounts"]});
       qc.invalidateQueries({queryKey:["dhan-auth-token-status"]});
     },
   });

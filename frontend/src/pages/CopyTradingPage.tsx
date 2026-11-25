@@ -94,6 +94,8 @@ export default function CopyTradingPage() {
     onSuccess: () => {
       toast.success("Account disconnected");
       qc.invalidateQueries({ queryKey: ["copy-trading-accounts"] });
+      qc.invalidateQueries({ queryKey: ["brokers"] });
+      qc.invalidateQueries({ queryKey: ["broker-accounts"] });
     },
     onError: (err: any) => {
       toast.error(err.response?.data?.detail || "Failed to remove account");
@@ -208,6 +210,47 @@ export default function CopyTradingPage() {
                 }}
               >
                 TEST CONNECTION
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingAccount(master);
+                  setShowAddModal(true);
+                }}
+                style={{
+                  padding: "4px 10px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  background: "var(--surface2)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text)",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                }}
+                title="Edit Master account configuration"
+              >
+                EDIT
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Disconnect and remove Master account ${master.client_id}?`)) {
+                    deleteAccountMutation.mutate(master.id);
+                  }
+                }}
+                style={{
+                  padding: "4px 10px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  background: "transparent",
+                  border: "1px solid rgba(255, 68, 102, 0.4)",
+                  color: "var(--red)",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                }}
+                title="Disconnect Master account"
+              >
+                REMOVE
               </button>
             </div>
           )}

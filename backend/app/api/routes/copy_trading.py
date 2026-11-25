@@ -300,13 +300,14 @@ async def delete_dhan_account(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Disconnect and remove a Dhan account."""
+    """Disconnect and remove a Dhan account safely."""
+    from app.services.broker_service import purge_broker_account
+
     account = await db.get(BrokerAccount, account_id)
     if not account or account.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    await db.delete(account)
-    await db.commit()
+    await purge_broker_account(db, account)
 
 
 @router.post("/test-connection/{account_id}")

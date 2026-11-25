@@ -130,22 +130,11 @@ async def disconnect_broker(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove a broker account — also removes linked strategy assignments."""
-    from sqlalchemy import select as sel
-    from app.models.strategy import UserStrategyMap
+    """Remove a broker account safely, unlinking trades and removing child dependencies."""
+    from app.services.broker_service import purge_broker_account
 
     account = await _get_account(account_id, current_user.id, db)
-
-    # Remove linked strategy maps first to avoid FK violation
-    result = await db.execute(
-        sel(UserStrategyMap).where(UserStrategyMap.broker_account_id == account_id)
-    )
-    maps = result.scalars().all()
-    for m in maps:
-        await db.delete(m)
-
-    await db.delete(account)
-    await db.commit()
+    await purge_broker_account(db, account)
 
 
 @router.get("/{account_id}/positions")
