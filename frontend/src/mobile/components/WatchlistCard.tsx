@@ -34,14 +34,14 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
       onClick={() => onOpenDetail(item)}
       className="mobile-card p-3.5 space-y-2.5 transition-all cursor-pointer active:scale-[0.99]"
     >
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center space-x-2">
-            <span className="font-extrabold text-sm tracking-tight" style={{ color: "var(--text)" }}>
+            <span className="font-extrabold text-sm tracking-tight truncate block" style={{ color: "var(--text)" }}>
               {item.symbol}
             </span>
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
+              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium shrink-0"
               style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
             >
               {(item.segment?.includes("MCX") || item.exchange === "MCX") ? "MCX" : item.exchange}
@@ -51,7 +51,7 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
           <div className="flex items-center space-x-2 mt-1">
             {signal && (
               <span
-                className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center space-x-0.5"
+                className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center space-x-0.5 shrink-0"
                 style={{
                   background: isBuy ? "var(--green-dim)" : "var(--red-dim)",
                   color: isBuy ? "var(--green)" : "var(--red)",
@@ -62,17 +62,17 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
                 <span>{signal}</span>
               </span>
             )}
-            <span className="text-[10px] font-mono" style={{ color: "var(--muted)" }}>
-              H: ₹{high.toFixed(1)} / L: ₹{low.toFixed(1)}
+            <span className="text-[10px] font-mono truncate" style={{ color: "var(--muted)" }}>
+              H: {high.toFixed(1)} / L: {low.toFixed(1)}
             </span>
           </div>
         </div>
 
         {/* Price & Change Column */}
-        <div className="text-right flex items-center space-x-3">
+        <div className="text-right flex items-center space-x-3 shrink-0">
           <div>
             <span className="text-sm font-extrabold font-mono block" style={{ color: "var(--text)" }}>
-              ₹{ltp.toFixed(2)}
+              {ltp.toFixed(2)}
             </span>
             <span
               className="text-[11px] font-mono font-bold block"
@@ -107,7 +107,7 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
 
       {/* Mini Day Range Bar */}
       <div className="flex items-center space-x-2 text-[9px] font-mono" style={{ color: "var(--muted)" }}>
-        <span>L: ₹{low.toFixed(1)}</span>
+        <span>L: {low.toFixed(1)}</span>
         <div
           className="flex-1 h-1.5 rounded-full overflow-hidden relative"
           style={{ background: "rgba(128, 128, 128, 0.2)" }}
@@ -120,7 +120,7 @@ export const WatchlistCard: React.FC<WatchlistCardProps> = ({
             }}
           />
         </div>
-        <span>H: ₹{high.toFixed(1)}</span>
+        <span>H: {high.toFixed(1)}</span>
       </div>
     </div>
   );

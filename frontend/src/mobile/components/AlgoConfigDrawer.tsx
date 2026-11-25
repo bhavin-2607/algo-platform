@@ -240,7 +240,7 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
         {targetType === "CUSTOM" && (
           <div className="space-y-1.5 animate-in fade-in">
             <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>
-              Custom Target Price (₹)
+              Custom Target Price
             </label>
             <input
               type="number"
@@ -261,7 +261,7 @@ export const AlgoConfigDrawer: React.FC<AlgoConfigDrawerProps> = ({
         {/* Custom Entry Input */}
         <div className="space-y-1.5">
           <label className="text-xs font-semibold" style={{ color: "var(--text)" }}>
-            Custom Entry Price (₹, optional override)
+            Custom Entry Price (optional override)
           </label>
           <input
             type="number"

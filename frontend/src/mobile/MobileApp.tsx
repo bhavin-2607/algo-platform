@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Capacitor } from "@capacitor/core";
 import { StatusBar, Style } from "@capacitor/status-bar";
 import { useAuthStore } from "@/store/auth";
@@ -10,6 +11,7 @@ import { MobileAlgoPage } from "./pages/MobileAlgoPage";
 import { MobileWatchlistPage } from "./pages/MobileWatchlistPage";
 import { MobileAstroPage } from "./pages/MobileAstroPage";
 import { MobileLoginPage } from "./pages/MobileLoginPage";
+import { MobileOrderDrawer } from "./components/MobileOrderDrawer";
 import { AlgoRowData } from "./components/AlgoSmartCard";
 import { WatchlistRowData } from "./components/SymbolDetailDrawer";
 import toast from "react-hot-toast";
@@ -53,6 +55,51 @@ export default function MobileApp() {
   const [wsStatus, setWsStatus] = useState<"live" | "connecting" | "polling">("connecting");
   const [wsLatencyMs, setWsLatencyMs] = useState<number | null>(null);
   const [dhanActive, setDhanActive] = useState(true);
+
+  // Available Funds Query
+  const { data: fundsData } = useQuery({
+    queryKey: ["dhan-funds"],
+    queryFn: async () => {
+      const res = await api.get("/market/funds");
+      return res.data;
+    },
+    refetchInterval: 15000,
+    enabled: !!accessToken,
+  });
+
+  const availBalance = typeof fundsData?.availabelBalance === "number"
+    ? fundsData.availabelBalance
+    : (typeof fundsData?.availMargin === "number" ? fundsData.availMargin : null);
+
+  // Manual Order Drawer State
+  const [orderDrawer, setOrderDrawer] = useState<{
+    isOpen: boolean;
+    symbol: string;
+    securityId?: string;
+    exchangeSegment?: string;
+    exchange?: string;
+    ltp?: number;
+    side?: "BUY" | "SELL";
+  }>({
+    isOpen: false,
+    symbol: "",
+    side: "BUY",
+  });
+
+  const handleOpenOrder = (
+    item: WatchlistRowData,
+    side: "BUY" | "SELL" = "BUY"
+  ) => {
+    setOrderDrawer({
+      isOpen: true,
+      symbol: item.symbol,
+      securityId: item.token || item.id,
+      exchangeSegment: item.segment,
+      exchange: item.exchange,
+      ltp: item.ltp || 0,
+      side,
+    });
+  };
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingStartRef = useRef<number>(Date.now());
@@ -374,6 +421,7 @@ export default function MobileApp() {
         isAdmin={userIsAdmin}
         totalPnl={totalPnl}
         activeAlgoCount={activeAlgoCount}
+        availBalance={availBalance}
         wsLatencyMs={wsLatencyMs}
         wsStatus={wsStatus}
         dhanActive={dhanActive}
@@ -392,6 +440,7 @@ export default function MobileApp() {
             onAddToAlgo={handleAddToAlgo}
             onAddToWatchlist={handleAddToWatchlist}
             onRemoveFromWatchlist={handleRemoveFromWatchlist}
+            onOpenOrder={handleOpenOrder}
           />
         ) : (
           <MobileAlgoPage
@@ -408,6 +457,22 @@ export default function MobileApp() {
           />
         )}
       </main>
+
+      {/* Manual Order Placement Drawer */}
+      <MobileOrderDrawer
+        isOpen={orderDrawer.isOpen}
+        onClose={() => setOrderDrawer((prev) => ({ ...prev, isOpen: false }))}
+        symbol={orderDrawer.symbol}
+        securityId={orderDrawer.securityId}
+        exchangeSegment={orderDrawer.exchangeSegment}
+        exchange={orderDrawer.exchange}
+        ltp={orderDrawer.ltp}
+        initialSide={orderDrawer.side}
+        onOrderSuccess={() => {
+          fetchAlgoRows();
+          fetchWatchlist();
+        }}
+      />
 
       {/* Docked Bottom Navigation */}
       <MobileBottomNav

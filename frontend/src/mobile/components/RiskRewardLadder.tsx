@@ -18,16 +18,16 @@ export const RiskRewardLadder: React.FC<RiskRewardLadderProps> = ({
   if (!entry || !sl || !target || target <= sl) {
     return (
       <div
-        className="flex items-center justify-between text-[11px] py-1.5 px-3 rounded-lg"
+        className="flex items-center justify-between text-[11px] py-1.5 px-3 rounded-lg font-mono"
         style={{
           background: "var(--surface2)",
           border: "1px solid var(--border)",
           color: "var(--muted)",
         }}
       >
-        <span>SL: <strong style={{ color: "var(--red)" }}>{sl ? `₹${sl.toFixed(1)}` : "—"}</strong></span>
-        <span>Entry: <strong style={{ color: "var(--text)" }}>{entry ? `₹${entry.toFixed(1)}` : "—"}</strong></span>
-        <span>Tgt ({targetLabel}): <strong style={{ color: "var(--green)" }}>{target ? `₹${target.toFixed(1)}` : "—"}</strong></span>
+        <span>SL: <strong style={{ color: "var(--red)" }}>{sl ? sl.toFixed(1) : "—"}</strong></span>
+        <span>Entry: <strong style={{ color: "var(--text)" }}>{entry ? entry.toFixed(1) : "—"}</strong></span>
+        <span>Tgt ({targetLabel}): <strong style={{ color: "var(--green)" }}>{target ? target.toFixed(1) : "—"}</strong></span>
       </div>
     );
   }
@@ -48,9 +48,9 @@ export const RiskRewardLadder: React.FC<RiskRewardLadderProps> = ({
       }}
     >
       <div className="flex items-center justify-between text-[10px] uppercase font-mono tracking-wider">
-        <span style={{ color: "var(--red)", fontWeight: 700 }}>SL ₹{sl.toFixed(1)}</span>
-        <span style={{ color: "var(--muted)", fontWeight: 600 }}>Entry ₹{entry.toFixed(1)}</span>
-        <span style={{ color: "var(--green)", fontWeight: 700 }}>{targetLabel} ₹{target.toFixed(1)}</span>
+        <span style={{ color: "var(--red)", fontWeight: 700 }}>SL {sl.toFixed(1)}</span>
+        <span style={{ color: "var(--muted)", fontWeight: 600 }}>Entry {entry.toFixed(1)}</span>
+        <span style={{ color: "var(--green)", fontWeight: 700 }}>{targetLabel} {target.toFixed(1)}</span>
       </div>
 
       {/* Progress Track */}
@@ -73,15 +73,21 @@ export const RiskRewardLadder: React.FC<RiskRewardLadderProps> = ({
         />
       </div>
 
-      <div className="flex items-center justify-between text-[10px]" style={{ color: "var(--muted)" }}>
-        <span>Risk: ₹{Math.max(0, entry - sl).toFixed(1)}</span>
-        <span
-          className="font-mono font-bold"
-          style={{ color: isProfitable ? "var(--green)" : "var(--red)" }}
-        >
-          LTP: ₹{ltp.toFixed(2)} ({ltpProgress.toFixed(0)}% to {targetLabel})
-        </span>
-        <span>Reward: ₹{Math.max(0, target - entry).toFixed(1)}</span>
+      <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-center" style={{ color: "var(--muted)" }}>
+        <div className="text-left">
+          <span>Risk: <strong>{Math.max(0, entry - sl).toFixed(1)}</strong></span>
+        </div>
+        <div>
+          <span
+            className="font-bold truncate block"
+            style={{ color: isProfitable ? "var(--green)" : "var(--red)" }}
+          >
+            {ltp.toFixed(2)} ({ltpProgress.toFixed(0)}%)
+          </span>
+        </div>
+        <div className="text-right">
+          <span>Reward: <strong>{Math.max(0, target - entry).toFixed(1)}</strong></span>
+        </div>
       </div>
     </div>
   );

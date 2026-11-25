@@ -48,6 +48,7 @@ interface SymbolDetailDrawerProps {
   onClose: () => void;
   onAddToAlgo: (item: WatchlistRowData) => Promise<void>;
   onRemoveFromWatchlist: (id: string) => Promise<void>;
+  onOpenOrder?: (item: WatchlistRowData, side: "BUY" | "SELL") => void;
 }
 
 export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
@@ -57,6 +58,7 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
   onClose,
   onAddToAlgo,
   onRemoveFromWatchlist,
+  onOpenOrder,
 }) => {
   if (!isOpen || !item) return null;
 
@@ -91,24 +93,26 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
         style={{ background: "var(--surface)", borderTop: "1px solid var(--border)" }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
-          <div>
+        <div className="flex items-center justify-between pb-3 gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center space-x-2">
-              <span className="text-lg font-extrabold tracking-tight" style={{ color: "var(--text)" }}>{item.symbol}</span>
+              <span className="text-base sm:text-lg font-extrabold tracking-tight truncate max-w-[200px] sm:max-w-none" style={{ color: "var(--text)" }}>
+                {item.symbol}
+              </span>
               <span
-                className="text-[10px] px-2 py-0.5 rounded font-mono font-medium"
+                className="text-[10px] px-2 py-0.5 rounded font-mono font-medium shrink-0"
                 style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
               >
                 {(item.segment?.includes("MCX") || item.exchange === "MCX") ? "MCX" : item.exchange}
               </span>
             </div>
             <div className="flex items-center space-x-2 mt-1">
-              <span className="text-xl font-extrabold font-mono" style={{ color: "var(--text)" }}>₹{ltp.toFixed(2)}</span>
+              <span className="text-xl font-extrabold font-mono" style={{ color: "var(--text)" }}>{ltp.toFixed(2)}</span>
               <span
                 className="text-xs font-mono font-bold flex items-center"
                 style={{ color: isPositive ? "var(--green)" : "var(--red)" }}
               >
-                {isPositive ? "+" : ""}₹{change.toFixed(2)} ({isPositive ? "+" : ""}
+                {isPositive ? "+" : ""}{change.toFixed(2)} ({isPositive ? "+" : ""}
                 {changePct.toFixed(2)}%)
               </span>
             </div>
@@ -116,7 +120,7 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-full transition-all active:scale-95 bg-transparent"
+            className="p-2 rounded-full transition-all active:scale-95 bg-transparent shrink-0"
             style={{ background: "var(--surface2)", color: "var(--muted)" }}
           >
             <X size={18} />
@@ -183,34 +187,34 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
           <div className="grid grid-cols-4 gap-2 text-xs font-mono">
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Open</span>
-              <span style={{ color: "var(--text)" }}>₹{item.open?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--text)" }}>{item.open != null ? item.open.toFixed(1) : "—"}</span>
             </div>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>High</span>
-              <span style={{ color: "var(--green)", fontWeight: 700 }}>₹{item.high?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--green)", fontWeight: 700 }}>{item.high != null ? item.high.toFixed(1) : "—"}</span>
             </div>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Low</span>
-              <span style={{ color: "var(--red)", fontWeight: 700 }}>₹{item.low?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--red)", fontWeight: 700 }}>{item.low != null ? item.low.toFixed(1) : "—"}</span>
             </div>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>VWAP</span>
-              <span style={{ color: "var(--text)" }}>₹{item.vwap?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--text)" }}>{item.vwap != null ? item.vwap.toFixed(1) : "—"}</span>
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-xs font-mono pt-2" style={{ borderTop: "1px solid var(--border)" }}>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Entry Level</span>
-              <span style={{ color: "var(--green)", fontWeight: 700 }}>₹{item.entry?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--green)", fontWeight: 700 }}>{item.entry != null ? item.entry.toFixed(1) : "—"}</span>
             </div>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Stop Loss (SL)</span>
-              <span style={{ color: "var(--red)", fontWeight: 700 }}>₹{item.sl?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--red)", fontWeight: 700 }}>{item.sl != null ? item.sl.toFixed(1) : "—"}</span>
             </div>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>GANN</span>
-              <span style={{ color: "var(--blue)", fontWeight: 700 }}>₹{item.gann?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--blue)", fontWeight: 700 }}>{item.gann != null ? item.gann.toFixed(1) : "—"}</span>
             </div>
           </div>
         </div>
@@ -233,7 +237,7 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
                   style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
                 >
                   <span className="text-[9px] block" style={{ color: "var(--muted)" }}>{tLabel}</span>
-                  <span style={{ color: "var(--green)", fontWeight: 700 }}>{val ? `₹${val.toFixed(1)}` : "—"}</span>
+                  <span style={{ color: "var(--green)", fontWeight: 700 }}>{val != null ? val.toFixed(1) : "—"}</span>
                 </div>
               );
             })}
@@ -243,21 +247,57 @@ export const SymbolDetailDrawer: React.FC<SymbolDetailDrawerProps> = ({
           <div className="pt-2 grid grid-cols-3 gap-2 text-xs font-mono" style={{ borderTop: "1px solid var(--border)" }}>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Pivot (PP)</span>
-              <span style={{ color: "var(--text)" }}>₹{item.pp?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--text)" }}>{item.pp != null ? item.pp.toFixed(1) : "—"}</span>
             </div>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Resistance R1</span>
-              <span style={{ color: "var(--blue)", fontWeight: 700 }}>₹{item.r1?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--blue)", fontWeight: 700 }}>{item.r1 != null ? item.r1.toFixed(1) : "—"}</span>
             </div>
             <div>
               <span className="text-[9px] block" style={{ color: "var(--muted)" }}>Support S1</span>
-              <span style={{ color: "var(--red)", fontWeight: 700 }}>₹{item.s1?.toFixed(1) || "—"}</span>
+              <span style={{ color: "var(--red)", fontWeight: 700 }}>{item.s1 != null ? item.s1.toFixed(1) : "—"}</span>
             </div>
           </div>
         </div>
 
         {/* Action Controls */}
         <div className="pt-2 space-y-2">
+          {/* Manual Trade Order Option */}
+          {onOpenOrder && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenOrder(item, "BUY");
+                  onClose();
+                }}
+                className="h-11 rounded-xl font-extrabold text-xs uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-sm active:scale-98"
+                style={{
+                  background: "var(--green)",
+                  color: "var(--bg)",
+                }}
+              >
+                <TrendingUp size={16} />
+                <span>Buy / Long</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenOrder(item, "SELL");
+                  onClose();
+                }}
+                className="h-11 rounded-xl font-extrabold text-xs uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-sm active:scale-98"
+                style={{
+                  background: "var(--red)",
+                  color: "#ffffff",
+                }}
+              >
+                <TrendingDown size={16} />
+                <span>Sell / Short</span>
+              </button>
+            </div>
+          )}
+
           {isAdmin && (
             <button
               type="button"

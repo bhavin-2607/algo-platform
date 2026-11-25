@@ -671,6 +671,8 @@ select option {
 .mobile-app-shell {
   min-height: 100vh;
   min-height: 100dvh;
+  max-width: 100vw;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -741,6 +743,7 @@ select option {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  align-items: center;
 }
 
 .mobile-drawer-content {
@@ -749,6 +752,9 @@ select option {
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.25);
   max-height: 85vh;
+  max-height: 85dvh;
   overflow-y: auto;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  width: 100%;
 }
 

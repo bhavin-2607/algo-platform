@@ -10,7 +10,7 @@ import CopyTradingPage from "@/pages/CopyTradingPage";
 import TerminalPage    from "@/pages/TerminalPage";
 import AdminPage       from "@/pages/AdminPage";
 import MobileApp       from "@/mobile/MobileApp";
-import { isNativeMobile } from "@/utils/device";
+import { isNativeMobile, isMobileViewport } from "@/utils/device";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -24,15 +24,32 @@ function AdminOnly({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const isMobile = isNativeMobile() || isMobileViewport();
+
   return (
     <QueryClientProvider client={qc}>
       <BrowserRouter>
-        <Toaster position="top-right" toastOptions={{
-          style: { background:"var(--surface)", color:"var(--text)",
-            border:"1px solid var(--border)",
-            boxShadow:"0 8px 24px rgba(0,0,0,0.2)",
-            fontFamily:"var(--font)", fontSize:12 },
-        }} />
+        <Toaster
+          position={isMobile ? "bottom-center" : "top-right"}
+          containerStyle={
+            isMobile
+              ? {
+                  bottom: "calc(env(safe-area-inset-bottom, 0px) + 76px)",
+                }
+              : undefined
+          }
+          toastOptions={{
+            style: {
+              background: "var(--surface)",
+              color: "var(--text)",
+              border: "1px solid var(--border)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+              fontFamily: "var(--font)",
+              fontSize: 12,
+              maxWidth: 360,
+            },
+          }}
+        />
         <Routes>
           <Route path="/"             element={<Navigate to={isNativeMobile() ? "/mobile" : "/terminal"} replace />} />
           <Route path="/mobile"       element={<MobileApp />} />

@@ -113,30 +113,30 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
   return (
     <div className="mobile-card p-4 space-y-3 relative overflow-hidden transition-all">
       {/* Top Bar: Symbol, Tags, Algo Switch */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center space-x-2">
-            <h3 className="font-extrabold text-base tracking-tight" style={{ color: "var(--text)" }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="space-y-1 min-w-0 flex-1">
+          <div className="flex items-center space-x-1.5 flex-wrap">
+            <h3 className="font-extrabold text-sm tracking-tight truncate max-w-[150px] sm:max-w-none" style={{ color: "var(--text)" }}>
               {row.symbol}
             </h3>
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
+              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium shrink-0"
               style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
             >
               {(row.segment?.includes("MCX") || row.exchange === "MCX") ? "MCX" : row.exchange}
             </span>
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold"
+              className="text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold shrink-0"
               style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}
             >
               {row.trade_mode || "FULL"}
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
             {/* Status Pill */}
             <span
-              className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+              className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold shrink-0"
               style={{ background: statusStyle.bg, color: statusStyle.color, border: statusStyle.border }}
             >
               <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: statusStyle.dot }} />
@@ -144,13 +144,13 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
             </span>
 
             {/* Cycle Count */}
-            <span className="text-[10px] font-mono" style={{ color: "var(--muted)" }}>
+            <span className="text-[10px] font-mono shrink-0" style={{ color: "var(--muted)" }}>
               Cycle: <strong>{row.trades_completed}/{row.number_of_trades}</strong>
             </span>
 
             {/* Signal Badge */}
             <span
-              className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center space-x-0.5"
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center space-x-0.5 shrink-0"
               style={{
                 background: isBuySignal ? "var(--green-dim)" : "var(--red-dim)",
                 color: isBuySignal ? "var(--green)" : "var(--red)",
@@ -164,7 +164,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
         </div>
 
         {/* Algo ON / OFF Switch (Touch Target >= 48px) */}
-        <div className="flex items-center">
+        <div className="flex items-center shrink-0">
           {isAdmin ? (
             <button
               type="button"
@@ -205,7 +205,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
             Live LTP
           </span>
           <span className="text-base font-extrabold font-mono" style={{ color: "var(--text)" }}>
-            ₹{ltp.toFixed(2)}
+            {ltp.toFixed(2)}
           </span>
         </div>
         <div>
@@ -213,7 +213,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
             Entry / Cost
           </span>
           <span className="text-sm font-semibold font-mono" style={{ color: "var(--text)" }}>
-            {row.buy_price ? `₹${row.buy_price.toFixed(2)}` : (row.entry ? `₹${row.entry.toFixed(1)}` : "—")}
+            {row.buy_price ? row.buy_price.toFixed(2) : (row.entry ? row.entry.toFixed(1) : "—")}
           </span>
         </div>
         <div className="text-right">
@@ -224,7 +224,7 @@ export const AlgoSmartCard: React.FC<AlgoSmartCardProps> = ({
             className="text-base font-extrabold font-mono"
             style={{ color: isPnlPositive ? "var(--green)" : "var(--red)" }}
           >
-            {isPnlPositive ? "+" : ""}₹{pnl.toFixed(2)}
+            {isPnlPositive ? "+" : ""}{pnl.toFixed(2)}
           </span>
         </div>
       </div>

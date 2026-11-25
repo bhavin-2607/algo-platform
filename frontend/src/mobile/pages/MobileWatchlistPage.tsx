@@ -21,6 +21,7 @@ interface MobileWatchlistPageProps {
   onAddToAlgo: (item: WatchlistRowData) => Promise<void>;
   onAddToWatchlist: (instrument: InstrumentResult) => Promise<void>;
   onRemoveFromWatchlist: (id: string) => Promise<void>;
+  onOpenOrder?: (item: WatchlistRowData, side: "BUY" | "SELL") => void;
 }
 
 export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
@@ -30,6 +31,7 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
   onAddToAlgo,
   onAddToWatchlist,
   onRemoveFromWatchlist,
+  onOpenOrder,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<InstrumentResult[]>([]);
@@ -217,6 +219,7 @@ export const MobileWatchlistPage: React.FC<MobileWatchlistPageProps> = ({
         onClose={() => setSelectedItem(null)}
         onAddToAlgo={onAddToAlgo}
         onRemoveFromWatchlist={onRemoveFromWatchlist}
+        onOpenOrder={onOpenOrder}
       />
     </div>
   );

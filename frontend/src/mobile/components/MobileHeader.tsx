@@ -7,6 +7,7 @@ interface MobileHeaderProps {
   isAdmin: boolean;
   totalPnl: number;
   activeAlgoCount: number;
+  availBalance?: number | null;
   wsLatencyMs: number | null;
   wsStatus: "live" | "connecting" | "polling";
   dhanActive: boolean;
@@ -20,6 +21,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
   isAdmin,
   totalPnl,
   activeAlgoCount,
+  availBalance,
   wsLatencyMs,
   wsStatus,
   dhanActive,
@@ -68,9 +70,9 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
               )}
             </div>
 
-            <div className="flex items-center space-x-2 text-[10px]" style={{ color: "var(--muted)" }}>
+            <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[10px]" style={{ color: "var(--muted)" }}>
               {/* Latency & WS Status */}
-              <span className="flex items-center space-x-1">
+              <span className="flex items-center space-x-1 shrink-0">
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
                     wsStatus === "live"
@@ -98,7 +100,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
               <span>•</span>
 
               {/* Dhan Status */}
-              <span style={{ color: dhanActive ? "var(--green)" : "var(--yellow)", fontWeight: 600 }}>
+              <span className="shrink-0" style={{ color: dhanActive ? "var(--green)" : "var(--yellow)", fontWeight: 600 }}>
                 {dhanActive ? "Dhan Active" : "Dhan Paper"}
               </span>
 
@@ -106,7 +108,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
 
               {/* Market Status (NSE / MCX) */}
               <span
-                className="flex items-center space-x-1 font-bold"
+                className="flex items-center space-x-1 font-bold shrink-0"
                 style={{ color: marketStatus.color }}
                 title={marketStatus.tooltip}
               >
@@ -121,7 +123,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
         </div>
 
         {/* Theme switcher & Logout */}
-        <div className="flex items-center space-x-1.5">
+        <div className="flex items-center space-x-1.5 shrink-0">
           <button
             type="button"
             onClick={onToggleTheme}
@@ -152,9 +154,9 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
         </div>
       </div>
 
-      {/* Summary Vitals Banner */}
+      {/* Summary Vitals Banner (3 columns: Net MTM P&L, Avail Balance, Running Algos) */}
       <div
-        className="mt-2.5 pt-2 flex items-center justify-between text-xs font-mono"
+        className="mt-2.5 pt-2 grid grid-cols-3 gap-2 text-xs font-mono"
         style={{ borderTop: "1px solid var(--border)" }}
       >
         <div>
@@ -162,17 +164,29 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
             Net MTM P&L
           </span>
           <span
-            className="text-sm font-bold"
+            className="text-sm font-bold block truncate"
             style={{ color: isPnlPositive ? "var(--green)" : "var(--red)" }}
           >
-            {isPnlPositive ? "+" : ""}₹{totalPnl.toFixed(2)}
+            {isPnlPositive ? "+" : ""}{totalPnl.toFixed(2)}
           </span>
         </div>
+
+        <div className="text-center">
+          <span className="text-[10px] uppercase tracking-wider block" style={{ color: "var(--muted)" }}>
+            Avail Balance
+          </span>
+          <span className="text-sm font-bold block truncate" style={{ color: "var(--text)" }}>
+            {availBalance != null
+              ? availBalance.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 2 })
+              : "—"}
+          </span>
+        </div>
+
         <div className="text-right">
           <span className="text-[10px] uppercase tracking-wider block" style={{ color: "var(--muted)" }}>
             Running Algos
           </span>
-          <span className="text-sm font-bold" style={{ color: "var(--text)" }}>
+          <span className="text-sm font-bold block truncate" style={{ color: "var(--text)" }}>
             <span style={{ color: "var(--green)" }}>{activeAlgoCount}</span> Active
           </span>
         </div>
