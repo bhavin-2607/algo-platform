@@ -9,6 +9,52 @@ class WeekCategory(str, Enum):
     NEXT_WEEK = "NEXT_WEEK"
 
 
+class MoonTransitCurrent(BaseModel):
+    rashi: str = Field(..., description="English Rashi name (e.g. Taurus)")
+    rashi_sanskrit: str = Field(..., description="Sanskrit Rashi name (e.g. Vrishabha)")
+    rashi_lord: str = Field(..., description="Ruling planet of Rashi (e.g. Venus)")
+    degree: float = Field(..., description="Exact degree in sign (0.00 to 29.99)")
+    degree_dms: str = Field(..., description="Formatted DMS string (e.g. 21° 35' 08\")")
+    total_longitude: float = Field(..., description="Total sidereal longitude (0° to 360°)")
+    nakshatra: str = Field(..., description="Nakshatra name (e.g. Rohini)")
+    nakshatra_number: int = Field(..., ge=1, le=27, description="Nakshatra index (1 to 27)")
+    nakshatra_lord: str = Field(..., description="Nakshatra ruler (e.g. Moon)")
+    pada: int = Field(..., ge=1, le=4, description="Nakshatra Pada (1 to 4)")
+    kp_sub_lord: str = Field(..., description="KP Sub-Lord (e.g. Saturn)")
+    daily_speed_deg: float = Field(..., description="Moon speed in deg/day")
+    daily_speed_dms: str = Field(..., description="Formatted DMS speed per day")
+    rashi_progress_pct: float = Field(..., description="Progression through sign (0% to 100%)")
+    rashi_ingress_ist: str = Field(..., description="IST timestamp when Moon entered this Rashi")
+    rashi_egress_ist: str = Field(..., description="IST timestamp when Moon exits to next Rashi")
+    rashi_remaining_hours: float = Field(..., description="Hours remaining in current Rashi")
+    rashi_remaining_str: str = Field(..., description="Remaining time formatted (e.g. 13h 21m)")
+    next_rashi: str = Field(..., description="Next Rashi to be transited")
+    next_rashi_sanskrit: str = Field(..., description="Sanskrit name of next Rashi")
+    next_rashi_lord: str = Field(..., description="Lord of next Rashi")
+    nakshatra_progress_pct: float = Field(..., description="Progression through Nakshatra (0% to 100%)")
+    nakshatra_ingress_ist: str = Field(..., description="IST timestamp when Moon entered this Nakshatra")
+    nakshatra_egress_ist: str = Field(..., description="IST timestamp when Moon exits to next Nakshatra")
+    nakshatra_remaining_hours: float = Field(..., description="Hours remaining in current Nakshatra")
+    nakshatra_remaining_str: str = Field(..., description="Remaining time formatted in Nakshatra")
+    next_nakshatra: str = Field(..., description="Next Nakshatra to be transited")
+    next_nakshatra_lord: str = Field(..., description="Lord of next Nakshatra")
+
+
+class MoonTransitScheduleItem(BaseModel):
+    rashi: str = Field(..., description="English Rashi name")
+    rashi_sanskrit: str = Field(..., description="Sanskrit Rashi name")
+    rashi_lord: str = Field(..., description="Rashi Lord")
+    ingress_ist: str = Field(..., description="Ingress timestamp in IST")
+    egress_ist: str = Field(..., description="Egress timestamp in IST")
+    duration_hours: float = Field(..., description="Total transit duration in hours")
+
+
+class MoonTransitSnapshot(BaseModel):
+    calculated_at_ist: str = Field(..., description="Calculation timestamp in IST")
+    current: MoonTransitCurrent = Field(..., description="Current Moon transit telemetry")
+    upcoming_schedule: List[MoonTransitScheduleItem] = Field(default_factory=list, description="Upcoming Moon sign transits")
+
+
 class PlanetTelemetry(BaseModel):
     name: str = Field(..., description="Planetary body name (e.g. Sun, Moon, Mars, Saturn)")
     longitude: float = Field(..., description="Sidereal longitude (0° to 360°)")
@@ -56,6 +102,7 @@ class AstroMarketSignal(BaseModel):
     planets: List[PlanetTelemetry] = Field(..., description="Telemetry for all tracked celestial bodies")
     active_aspects: List[AspectDetail] = Field(default_factory=list, description="Currently active geometric aspects")
     risk_multiplier: float = Field(1.0, description="Observational risk gauge (0.5 for volatility alert, 1.0 normal)")
+    moon_transit: Optional[MoonTransitCurrent] = Field(None, description="Detailed Moon Transit telemetry")
 
 
 class IntradayAstroWindow(BaseModel):

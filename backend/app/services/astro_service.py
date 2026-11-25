@@ -52,6 +52,9 @@ from app.schemas.astro import (
     IntradayAstroWindow,
     MarketDayOutlookItem,
     MarketWeekOutlookResponse,
+    MoonTransitCurrent,
+    MoonTransitScheduleItem,
+    MoonTransitSnapshot,
     PlanetTelemetry,
     WeekCategory,
 )
@@ -70,12 +73,25 @@ DEFAULT_CITY = "Ahmedabad"
 DEFAULT_LAT = 23.0225
 DEFAULT_LON = 72.5714
 
-# ── Zodiac Signs (12 Sidereal Signs, 30° each) ────────────────────────────────
-SIGNS = [
-    "Aries", "Taurus", "Gemini", "Cancer",
-    "Leo", "Virgo", "Libra", "Scorpio",
-    "Sagittarius", "Capricorn", "Aquarius", "Pisces",
+# ── Zodiac Signs (12 Sidereal Signs, 30° each) & Classical Ruling Lords ─────────
+RASHI_CONFIGS = [
+    {"index": 0, "name_en": "Aries", "name_sa": "Mesha", "lord": "Mars", "element": "Fire"},
+    {"index": 1, "name_en": "Taurus", "name_sa": "Vrishabha", "lord": "Venus", "element": "Earth"},
+    {"index": 2, "name_en": "Gemini", "name_sa": "Mithuna", "lord": "Mercury", "element": "Air"},
+    {"index": 3, "name_en": "Cancer", "name_sa": "Karka", "lord": "Moon", "element": "Water"},
+    {"index": 4, "name_en": "Leo", "name_sa": "Simha", "lord": "Sun", "element": "Fire"},
+    {"index": 5, "name_en": "Virgo", "name_sa": "Kanya", "lord": "Mercury", "element": "Earth"},
+    {"index": 6, "name_en": "Libra", "name_sa": "Tula", "lord": "Venus", "element": "Air"},
+    {"index": 7, "name_en": "Scorpio", "name_sa": "Vrishchika", "lord": "Mars", "element": "Water"},
+    {"index": 8, "name_en": "Sagittarius", "name_sa": "Dhanu", "lord": "Jupiter", "element": "Fire"},
+    {"index": 9, "name_en": "Capricorn", "name_sa": "Makara", "lord": "Saturn", "element": "Earth"},
+    {"index": 10, "name_en": "Aquarius", "name_sa": "Kumbha", "lord": "Saturn", "element": "Air"},
+    {"index": 11, "name_en": "Pisces", "name_sa": "Meena", "lord": "Jupiter", "element": "Water"},
 ]
+
+SIGNS = [r["name_en"] for r in RASHI_CONFIGS]
+SIGN_LORDS = {r["name_en"]: r["lord"] for r in RASHI_CONFIGS}
+RASHI_SANSKRIT = {r["name_en"]: r["name_sa"] for r in RASHI_CONFIGS}
 
 # ── 27 Vedic Nakshatras (13° 20' = 13.333333333333334° each) ─────────────────
 SPAN_NAKSHATRA = 360.0 / 27.0  # 13.333333333333334° (800 arcminutes)
@@ -283,6 +299,241 @@ def compute_kp_sub_lord(lon: float) -> Tuple[str, str, int, str]:
         cum_arc += sub_arc
 
     return nak_name, nak_lord, pada, kp_sub_lord
+
+
+def get_moon_sidereal_position(dt: datetime) -> Tuple[float, float]:
+    """Calculate Moon sidereal longitude (0° to 360°) and daily speed (deg/day) via Swiss Ephemeris."""
+    if swe is None:
+        return 0.0, 13.176
+    jd = _to_julian_day(dt)
+    calc_res = swe.calc_ut(jd, SWE_MOON, SWE_FLG_SIDEREAL | SWE_FLG_SPEED | SWE_FLG_MOSEPH)
+    res = calc_res[0]
+    return res[0] % 360.0, res[3]
+
+
+def find_moon_crossing(t_start: datetime, t_end: datetime, target_deg: float) -> datetime:
+    """Find exact crossing timestamp using bisection search."""
+    t1 = t_start
+    t2 = t_end
+    for _ in range(25):
+        tm = t1 + (t2 - t1) / 2
+        lon_m, _ = get_moon_sidereal_position(tm)
+        diff = (lon_m - target_deg + 180.0) % 360.0 - 180.0
+        if abs(diff) < 1e-5:
+            return tm
+        lon_1, _ = get_moon_sidereal_position(t1)
+        diff_1 = (lon_1 - target_deg + 180.0) % 360.0 - 180.0
+        if diff_1 * diff <= 0:
+            t2 = tm
+        else:
+            t1 = tm
+    return tm
+
+
+def find_moon_rashi_ingress_egress(dt: datetime) -> Tuple[datetime, datetime]:
+    """Find exact ingress and egress times for current Rashi."""
+    lon, _ = get_moon_sidereal_position(dt)
+    sign_idx = int(lon // 30.0) % 12
+    boundary_start = sign_idx * 30.0
+    boundary_end = (sign_idx + 1) * 30.0 % 360.0
+
+    # Ingress (crossed boundary_start)
+    t_curr = dt
+    ingress = dt - timedelta(days=1)
+    for _ in range(20):
+        t_prev = t_curr - timedelta(hours=6)
+        lon_prev, _ = get_moon_sidereal_position(t_prev)
+        if int(lon_prev // 30.0) % 12 != sign_idx:
+            ingress = find_moon_crossing(t_prev, t_curr, boundary_start)
+            break
+        t_curr = t_prev
+
+    # Egress (crosses boundary_end)
+    t_curr = dt
+    egress = dt + timedelta(days=1)
+    for _ in range(20):
+        t_next = t_curr + timedelta(hours=6)
+        lon_next, _ = get_moon_sidereal_position(t_next)
+        if int(lon_next // 30.0) % 12 != sign_idx:
+            egress = find_moon_crossing(t_curr, t_next, boundary_end)
+            break
+        t_curr = t_next
+
+    return ingress, egress
+
+
+def find_moon_nakshatra_ingress_egress(dt: datetime) -> Tuple[datetime, datetime]:
+    """Find exact ingress and egress times for current Nakshatra."""
+    lon, _ = get_moon_sidereal_position(dt)
+    nak_idx = int(lon // SPAN_NAKSHATRA) % 27
+    boundary_start = nak_idx * SPAN_NAKSHATRA
+    boundary_end = (nak_idx + 1) * SPAN_NAKSHATRA % 360.0
+
+    # Ingress
+    t_curr = dt
+    ingress = dt - timedelta(hours=12)
+    for _ in range(20):
+        t_prev = t_curr - timedelta(hours=3)
+        lon_prev, _ = get_moon_sidereal_position(t_prev)
+        if int(lon_prev // SPAN_NAKSHATRA) % 27 != nak_idx:
+            ingress = find_moon_crossing(t_prev, t_curr, boundary_start)
+            break
+        t_curr = t_prev
+
+    # Egress
+    t_curr = dt
+    egress = dt + timedelta(hours=12)
+    for _ in range(20):
+        t_next = t_curr + timedelta(hours=3)
+        lon_next, _ = get_moon_sidereal_position(t_next)
+        if int(lon_next // SPAN_NAKSHATRA) % 27 != nak_idx:
+            egress = find_moon_crossing(t_curr, t_next, boundary_end)
+            break
+        t_curr = t_next
+
+    return ingress, egress
+
+
+def compute_moon_transit_current(dt: datetime) -> MoonTransitCurrent:
+    """Compute detailed real-time Moon transit telemetry."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=IST)
+    dt_ist = dt.astimezone(IST)
+
+    lon, speed = get_moon_sidereal_position(dt_ist)
+    sign_idx = int(lon // 30.0) % 12
+    deg_in_sign = lon % 30.0
+    rashi_cfg = RASHI_CONFIGS[sign_idx]
+
+    nak_idx = int(lon // SPAN_NAKSHATRA) % 27
+    nak_name, nak_lord = NAKSHATRAS[nak_idx]
+    pada = min(4, int((lon % SPAN_NAKSHATRA) // SPAN_PADA) + 1)
+    _, _, _, kp_sub = compute_kp_sub_lord(lon)
+
+    # Ingress & Egress for Rashi
+    r_ingress, r_egress = find_moon_rashi_ingress_egress(dt_ist)
+    r_rem_sec = max(0.0, (r_egress - dt_ist).total_seconds())
+    r_rem_h = r_rem_sec / 3600.0
+    r_rem_str = f"{int(r_rem_h)}h {int((r_rem_h - int(r_rem_h)) * 60)}m"
+    r_prog_pct = round(min(100.0, max(0.0, (deg_in_sign / 30.0) * 100.0)), 2)
+
+    next_sign_idx = (sign_idx + 1) % 12
+    next_rashi_cfg = RASHI_CONFIGS[next_sign_idx]
+
+    # Ingress & Egress for Nakshatra
+    n_ingress, n_egress = find_moon_nakshatra_ingress_egress(dt_ist)
+    n_rem_sec = max(0.0, (n_egress - dt_ist).total_seconds())
+    n_rem_h = n_rem_sec / 3600.0
+    n_rem_str = f"{int(n_rem_h)}h {int((n_rem_h - int(n_rem_h)) * 60)}m"
+    deg_in_nak = lon % SPAN_NAKSHATRA
+    n_prog_pct = round(min(100.0, max(0.0, (deg_in_nak / SPAN_NAKSHATRA) * 100.0)), 2)
+
+    next_nak_idx = (nak_idx + 1) % 27
+    next_nak_name, next_nak_lord = NAKSHATRAS[next_nak_idx]
+
+    return MoonTransitCurrent(
+        rashi=rashi_cfg["name_en"],
+        rashi_sanskrit=rashi_cfg["name_sa"],
+        rashi_lord=rashi_cfg["lord"],
+        degree=round(deg_in_sign, 4),
+        degree_dms=_format_dms(deg_in_sign),
+        total_longitude=round(lon, 4),
+        nakshatra=nak_name,
+        nakshatra_number=nak_idx + 1,
+        nakshatra_lord=nak_lord,
+        pada=pada,
+        kp_sub_lord=kp_sub,
+        daily_speed_deg=round(speed, 4),
+        daily_speed_dms=_format_speed_dms(speed),
+        rashi_progress_pct=r_prog_pct,
+        rashi_ingress_ist=r_ingress.strftime("%Y-%m-%d %H:%M:%S IST"),
+        rashi_egress_ist=r_egress.strftime("%Y-%m-%d %H:%M:%S IST"),
+        rashi_remaining_hours=round(r_rem_h, 2),
+        rashi_remaining_str=r_rem_str,
+        next_rashi=next_rashi_cfg["name_en"],
+        next_rashi_sanskrit=next_rashi_cfg["name_sa"],
+        next_rashi_lord=next_rashi_cfg["lord"],
+        nakshatra_progress_pct=n_prog_pct,
+        nakshatra_ingress_ist=n_ingress.strftime("%Y-%m-%d %H:%M:%S IST"),
+        nakshatra_egress_ist=n_egress.strftime("%Y-%m-%d %H:%M:%S IST"),
+        nakshatra_remaining_hours=round(n_rem_h, 2),
+        nakshatra_remaining_str=n_rem_str,
+        next_nakshatra=next_nak_name,
+        next_nakshatra_lord=next_nak_lord,
+    )
+
+
+def get_upcoming_moon_transits(dt: datetime, count: int = 7) -> List[MoonTransitScheduleItem]:
+    """Calculate upcoming Moon sign transits for the next N signs."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=IST)
+    dt_ist = dt.astimezone(IST)
+
+    schedule: List[MoonTransitScheduleItem] = []
+    _, egress = find_moon_rashi_ingress_egress(dt_ist)
+
+    curr_ingress = egress
+    for _ in range(count):
+        sample_time = curr_ingress + timedelta(minutes=15)
+        lon, _ = get_moon_sidereal_position(sample_time)
+        sign_idx = int(lon // 30.0) % 12
+        rashi_cfg = RASHI_CONFIGS[sign_idx]
+        boundary_end = (sign_idx + 1) * 30.0 % 360.0
+
+        t_search = sample_time
+        curr_egress = sample_time + timedelta(days=2.5)
+        for _ in range(20):
+            t_next = t_search + timedelta(hours=6)
+            lon_next, _ = get_moon_sidereal_position(t_next)
+            if int(lon_next // 30.0) % 12 != sign_idx:
+                curr_egress = find_moon_crossing(t_search, t_next, boundary_end)
+                break
+            t_search = t_next
+
+        duration = (curr_egress - curr_ingress).total_seconds() / 3600.0
+        schedule.append(
+            MoonTransitScheduleItem(
+                rashi=rashi_cfg["name_en"],
+                rashi_sanskrit=rashi_cfg["name_sa"],
+                rashi_lord=rashi_cfg["lord"],
+                ingress_ist=curr_ingress.strftime("%Y-%m-%d %H:%M:%S IST"),
+                egress_ist=curr_egress.strftime("%Y-%m-%d %H:%M:%S IST"),
+                duration_hours=round(duration, 2),
+            )
+        )
+        curr_ingress = curr_egress
+
+    return schedule
+
+
+_MOON_SNAPSHOT_CACHE: dict = {}
+
+def get_moon_transit_snapshot(dt: Optional[datetime] = None) -> MoonTransitSnapshot:
+    """Returns cached Moon transit snapshot (recalculated at 60s intervals)."""
+    global _MOON_SNAPSHOT_CACHE
+    if dt is None:
+        dt = datetime.now(IST)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=IST)
+    else:
+        dt = dt.astimezone(IST)
+
+    cache_key = dt.strftime("%Y-%m-%d %H:%M")
+    if cache_key in _MOON_SNAPSHOT_CACHE:
+        return _MOON_SNAPSHOT_CACHE[cache_key]
+
+    current = compute_moon_transit_current(dt)
+    upcoming = get_upcoming_moon_transits(dt, count=7)
+    snapshot = MoonTransitSnapshot(
+        calculated_at_ist=dt.strftime("%Y-%m-%d %H:%M:%S IST"),
+        current=current,
+        upcoming_schedule=upcoming,
+    )
+
+    if len(_MOON_SNAPSHOT_CACHE) > 5:
+        _MOON_SNAPSHOT_CACHE.clear()
+    _MOON_SNAPSHOT_CACHE[cache_key] = snapshot
+    return snapshot
 
 
 def _get_fallback_telemetry() -> List[PlanetTelemetry]:
@@ -520,6 +771,7 @@ def get_astro_snapshot(
     moon = next((p for p in planets if p.name == "Moon"), None)
     moon_nak = moon.nakshatra if moon else "Unknown"
     moon_sub = moon.kp_sub_lord if moon else "Unknown"
+    moon_transit = compute_moon_transit_current(eval_dt)
 
     dt_ist = eval_dt.astimezone(IST)
     dt_utc = eval_dt.astimezone(UTC)
@@ -546,6 +798,7 @@ def get_astro_snapshot(
         planets=planets,
         active_aspects=aspects,
         risk_multiplier=risk_mult,
+        moon_transit=moon_transit,
     )
 
 

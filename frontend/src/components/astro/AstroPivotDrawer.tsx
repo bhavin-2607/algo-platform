@@ -1,31 +1,67 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/utils/api";
 import {
   X,
   Clock,
-  AlertTriangle,
   Compass,
-  ShieldAlert,
-  Sparkles,
-  Activity,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  ChevronUp,
+  Moon,
   Calendar,
   Layers,
-  Sun,
+  ChevronRight,
   Info,
-  MapPin,
-  HelpCircle,
+  Sparkles,
+  ArrowRight,
+  BookOpen,
 } from "lucide-react";
-import {
-  getAstroSettings,
-  saveAstroSettings,
-  AstroTimingSettings,
-} from "@/utils/astroSettings";
 
+export interface MoonTransitCurrent {
+  rashi: string;
+  rashi_sanskrit: string;
+  rashi_lord: string;
+  degree: number;
+  degree_dms: string;
+  total_longitude: number;
+  nakshatra: string;
+  nakshatra_number: number;
+  nakshatra_lord: string;
+  pada: number;
+  kp_sub_lord: string;
+  daily_speed_deg: number;
+  daily_speed_dms: string;
+  rashi_progress_pct: number;
+  rashi_ingress_ist: string;
+  rashi_egress_ist: string;
+  rashi_remaining_hours: number;
+  rashi_remaining_str: string;
+  next_rashi: string;
+  next_rashi_sanskrit: string;
+  next_rashi_lord: string;
+  nakshatra_progress_pct: number;
+  nakshatra_ingress_ist: string;
+  nakshatra_egress_ist: string;
+  nakshatra_remaining_hours: number;
+  nakshatra_remaining_str: string;
+  next_nakshatra: string;
+  next_nakshatra_lord: string;
+}
+
+export interface MoonTransitScheduleItem {
+  rashi: string;
+  rashi_sanskrit: string;
+  rashi_lord: string;
+  ingress_ist: string;
+  egress_ist: string;
+  duration_hours: number;
+}
+
+export interface MoonTransitSnapshot {
+  calculated_at_ist: string;
+  current: MoonTransitCurrent;
+  upcoming_schedule: MoonTransitScheduleItem[];
+}
+
+// Backwards compatibility types for legacy consumers
 export interface PlanetTelemetry {
   name: string;
   longitude: number;
@@ -59,7 +95,10 @@ export interface AstroMarketSignal {
   timestamp_utc: string;
   reference_time_label?: string;
   sunrise_time_iso?: string;
-  regime_bias: "BULLISH_TAILWIND" | "HIGH_VOLATILITY_CAUTION" | "NEUTRAL_RANGE" | string;
+  city_name?: string;
+  latitude?: number;
+  longitude?: number;
+  regime_bias: string;
   volatility_alert: boolean;
   hard_aspect_score: number;
   soft_aspect_score: number;
@@ -70,15 +109,16 @@ export interface AstroMarketSignal {
   planets: PlanetTelemetry[];
   active_aspects: AspectDetail[];
   risk_multiplier: number;
+  moon_transit?: MoonTransitCurrent;
 }
 
 export interface IntradayAstroWindow {
   timestamp: string;
   time_str: string;
-  event_type: "MOON_NAKSHATRA_SHIFT" | "KP_SUB_LORD_SHIFT" | string;
+  event_type: string;
   from_entity: string;
   to_entity: string;
-  weight: "HIGH" | "MEDIUM" | "LOW" | string;
+  weight: string;
   description: string;
 }
 
@@ -119,157 +159,31 @@ export interface MarketWeekOutlookResponse {
   days: MarketDayOutlookItem[];
 }
 
-interface AstroPivotDrawerProps {
+export interface AstroPivotDrawerProps {
   open: boolean;
   onClose: () => void;
-  signal: AstroMarketSignal | null;
+  signal?: AstroMarketSignal | null;
 }
 
 export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClose, signal }) => {
-  const [activeTab, setActiveTab] = useState<"TIMELINE" | "ASPECTS" | "EPHEMERIS">("TIMELINE");
+  const [activeTab, setActiveTab] = useState<"TRANSIT" | "SCHEDULE" | "RULES">("TRANSIT");
 
-  // Load persistent user settings
-  const [settings, setSettings] = useState<AstroTimingSettings>(getAstroSettings);
-
-  // Time benchmark mode: SUNRISE (default Kundli benchmark), 09:00 (Pre-Market), or LIVE (today only)
-  const [timeMode, setTimeMode] = useState<"SUNRISE" | "09:00" | "LIVE">("SUNRISE");
-
-  // Sync settings across components
-  useEffect(() => {
-    const handleSettingsUpdate = (e: Event) => {
-      const customEvent = e as CustomEvent<AstroTimingSettings>;
-      if (customEvent.detail) {
-        setSettings(customEvent.detail);
-      }
-    };
-    window.addEventListener("astro_settings_updated", handleSettingsUpdate);
-    return () => window.removeEventListener("astro_settings_updated", handleSettingsUpdate);
-  }, []);
-
-  const todayDate = useMemo(() => {
-    if (signal?.timestamp_iso) {
-      return signal.timestamp_iso.slice(0, 10);
-    }
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }, [signal]);
-
-  const [selectedDate, setSelectedDate] = useState<string>(todayDate);
-
-  // Sync selectedDate when drawer opens or todayDate updates
-  useEffect(() => {
-    if (open) {
-      setSelectedDate(todayDate);
-    }
-  }, [open, todayDate]);
-
-  const isSelectedToday = selectedDate === todayDate;
-
-  // Query multi-week Monday-to-Friday market outlook
-  const outlookTimeMode = timeMode === "09:00" ? "09:00" : "SUNRISE";
-  const { data: weekData, isLoading: weekLoading } = useQuery<MarketWeekOutlookResponse>({
-    queryKey: [
-      "astro-market-week-outlook",
-      settings.includePreviousWeek,
-      settings.includeNextWeek,
-      todayDate,
-      outlookTimeMode,
-      settings.latitude,
-      settings.longitude,
-      settings.city,
-    ],
+  const { data: moonSnapshot, isLoading, refetch } = useQuery<MoonTransitSnapshot>({
+    queryKey: ["moon-transit-telemetry"],
     queryFn: async () => {
-      const res = await api.get(
-        `/v1/astro/market-week-outlook?include_prev=${settings.includePreviousWeek}&include_next=${settings.includeNextWeek}&ref_date_str=${todayDate}&time_mode=${outlookTimeMode}&lat=${settings.latitude}&lon=${settings.longitude}&city=${encodeURIComponent(settings.city)}`
-      );
+      const res = await api.get("/v1/astro/moon-transit");
       return res.data;
     },
     enabled: open,
-    staleTime: 60000,
+    refetchInterval: open ? 30000 : false,
+    staleTime: 15000,
   });
-
-  // Query intraday shift windows for the selected trading day (09:15-15:30 IST)
-  const { data: windowsData, isLoading: windowsLoading } = useQuery<IntradayAstroResponse>({
-    queryKey: ["astro-intraday-windows", selectedDate],
-    queryFn: async () => {
-      const res = await api.get(`/v1/astro/intraday-windows?date_str=${selectedDate}`);
-      return res.data;
-    },
-    enabled: open && !!selectedDate,
-    staleTime: 60000,
-  });
-
-  // Query snapshot telemetry for selected trading day at the requested benchmark time
-  const { data: selectedDaySnapshot, isLoading: snapshotLoading } = useQuery<AstroMarketSignal>({
-    queryKey: ["astro-snapshot-day", selectedDate, timeMode, settings.latitude, settings.longitude, settings.city],
-    queryFn: async () => {
-      const res = await api.get(
-        `/v1/astro/snapshot?date_str=${selectedDate}&time_mode=${timeMode}&lat=${settings.latitude}&lon=${settings.longitude}&city=${encodeURIComponent(settings.city)}`
-      );
-      return res.data;
-    },
-    enabled: open && !!selectedDate,
-    staleTime: 60000,
-  });
-
-  const activeSignal: AstroMarketSignal | null = selectedDaySnapshot ?? (isSelectedToday && timeMode === "LIVE" ? signal : null);
-
-  const [isDaysCollapsed, setIsDaysCollapsed] = useState<boolean>(() => {
-    return settings.marketDaysCollapsed ?? false;
-  });
-  const [showTrendGuide, setShowTrendGuide] = useState<boolean>(false);
-
-  const toggleDaysCollapse = () => {
-    const nextVal = !isDaysCollapsed;
-    setIsDaysCollapsed(nextVal);
-    const nextSettings = { ...settings, marketDaysCollapsed: nextVal };
-    setSettings(nextSettings);
-    saveAstroSettings(nextSettings);
-  };
-
-  const togglePreviousWeek = () => {
-    const next = { ...settings, includePreviousWeek: !settings.includePreviousWeek };
-    setSettings(next);
-    saveAstroSettings(next);
-  };
-
-  const toggleNextWeek = () => {
-    const next = { ...settings, includeNextWeek: !settings.includeNextWeek };
-    setSettings(next);
-    saveAstroSettings(next);
-  };
-
-  // Steppers logic through available trading days
-  const tradingDays = weekData?.days ?? [];
-  const currentDayIndex = tradingDays.findIndex((d) => d.date === selectedDate);
-
-  const handlePrevDay = () => {
-    if (currentDayIndex > 0) {
-      setSelectedDate(tradingDays[currentDayIndex - 1].date);
-    }
-  };
-
-  const handleNextDay = () => {
-    if (currentDayIndex >= 0 && currentDayIndex < tradingDays.length - 1) {
-      setSelectedDate(tradingDays[currentDayIndex + 1].date);
-    }
-  };
 
   if (!open) return null;
 
-  const isVol = activeSignal?.volatility_alert;
-  const isBullish = activeSignal?.regime_bias === "BULLISH_TAILWIND";
-  const isBearish = activeSignal?.regime_bias === "BEARISH_HEADWIND";
-
-  // Group market days by week category
-  const prevWeekDays = tradingDays.filter((d) => d.week_category === "PREVIOUS_WEEK");
-  const currWeekDays = tradingDays.filter((d) => d.week_category === "CURRENT_WEEK");
-  const nextWeekDays = tradingDays.filter((d) => d.week_category === "NEXT_WEEK");
-
-  // Format active sunrise time preview
-  const activeSunriseDisplay = activeSignal?.sunrise_time_iso
-    ? `${activeSignal.sunrise_time_iso.slice(11, 16)} IST`
-    : "~06:48 IST";
+  const current = moonSnapshot?.current || signal?.moon_transit;
+  const schedule = moonSnapshot?.upcoming_schedule || [];
+  const calculatedAt = moonSnapshot?.calculated_at_ist || (signal ? signal.timestamp_iso : "Live");
 
   return (
     <div
@@ -277,740 +191,102 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
         position: "fixed",
         inset: 0,
         zIndex: 9999,
-        background: "rgba(0, 0, 0, 0.7)",
-        backdropFilter: "blur(4px)",
         display: "flex",
         justifyContent: "flex-end",
+        backgroundColor: "rgba(0, 0, 0, 0.65)",
+        backdropFilter: "blur(3px)",
       }}
       onClick={onClose}
     >
       <div
         style={{
           width: "100%",
-          maxWidth: 700,
+          maxWidth: 620,
           height: "100%",
-          background: "var(--surface)",
+          backgroundColor: "var(--surface)",
           borderLeft: "1px solid var(--border)",
-          boxShadow: "-12px 0 32px rgba(0, 0, 0, 0.6)",
+          boxShadow: "-8px 0 24px rgba(0, 0, 0, 0.45)",
           display: "flex",
           flexDirection: "column",
           color: "var(--text)",
-          fontFamily: "var(--font)",
+          overflowY: "auto",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header Strip */}
+        {/* Drawer Header */}
         <div
           style={{
-            padding: "14px 20px",
+            padding: "16px 20px",
             borderBottom: "1px solid var(--border)",
-            background: "var(--surface2)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            background: "var(--surface2)",
+            position: "sticky",
+            top: 0,
+            zIndex: 10,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 6,
-                background: isVol
-                  ? "rgba(255,59,87,0.15)"
-                  : isBullish
-                  ? "rgba(0,230,118,0.15)"
-                  : "rgba(8,182,222,0.15)",
+                width: 34,
+                height: 34,
+                borderRadius: 8,
+                background: "rgba(0, 229, 255, 0.12)",
+                border: "1px solid rgba(0, 229, 255, 0.3)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: isVol ? "var(--red)" : isBullish ? "var(--green)" : "var(--ba-cyan)",
+                color: "var(--ba-cyan)",
               }}
             >
-              <Compass size={18} />
+              <Moon size={18} />
             </div>
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: 0.5 }}>
-                  FINANCIAL ASTROLOGY & CYCLICAL TIMING
-                </span>
+              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.3, display: "flex", alignItems: "center", gap: 8 }}>
+                <span>Moon Transit Watch</span>
                 <span
                   style={{
                     fontSize: 9,
                     fontWeight: 700,
+                    textTransform: "uppercase",
                     padding: "2px 6px",
-                    borderRadius: 3,
-                    background: "rgba(255, 255, 255, 0.08)",
-                    color: "var(--muted)",
+                    borderRadius: 4,
+                    background: "rgba(0, 230, 118, 0.15)",
+                    color: "var(--green)",
+                    border: "1px solid rgba(0, 230, 118, 0.3)",
                   }}
                 >
-                  WATCH ONLY
+                  LIVE
                 </span>
               </div>
               <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-                Lahiri Sidereal • KP Sub-Lord Vimshottari • Mon–Fri Indian Market Cycles
+                Vedic Lunar Telemetry & Sidereal Ingress Tracker • Swiss Ephemeris
               </div>
             </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
-              type="button"
-              onClick={() => setShowTrendGuide((prev) => !prev)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                fontSize: 10,
-                fontWeight: 800,
-                padding: "4px 8px",
-                borderRadius: 4,
-                background: showTrendGuide ? "rgba(8, 182, 222, 0.2)" : "rgba(255, 255, 255, 0.06)",
-                color: showTrendGuide ? "var(--ba-cyan)" : "var(--muted)",
-                border: `1px solid ${showTrendGuide ? "rgba(8, 182, 222, 0.4)" : "var(--border)"}`,
-                cursor: "pointer",
-              }}
-              title="How to identify market trend using cyclical timing & price action"
-            >
-              <HelpCircle size={13} />
-              <span>TREND GUIDE</span>
-            </button>
-
-            <button
-              type="button"
               onClick={onClose}
               style={{
-                padding: 6,
                 background: "transparent",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
+                border: "none",
                 color: "var(--muted)",
+                cursor: "pointer",
+                padding: 6,
+                borderRadius: 4,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                cursor: "pointer",
               }}
+              title="Close drawer"
             >
-              <X size={16} />
+              <X size={18} />
             </button>
           </div>
         </div>
-
-        {/* Collapsible Trend Identification Guide Panel */}
-        {showTrendGuide && (
-          <div
-            style={{
-              padding: "12px 20px",
-              background: "var(--surface)",
-              borderBottom: "1px solid var(--border)",
-              fontSize: 11,
-              lineHeight: 1.6,
-              color: "var(--text)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800, color: "var(--ba-cyan)", fontSize: 11 }}>
-                <Compass size={14} />
-                <span>MARKET TREND IDENTIFICATION FRAMEWORK</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowTrendGuide(false)}
-                style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", padding: 2 }}
-              >
-                <X size={13} />
-              </button>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div style={{ padding: "8px 10px", background: "var(--surface2)", borderRadius: 4, border: "1px solid var(--border)" }}>
-                <div style={{ fontWeight: 800, color: "var(--ba-cyan)", marginBottom: 4, fontSize: 11 }}>
-                  1. Cyclical Regime Bias (The Tide)
-                </div>
-                <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", flexDirection: "column", gap: 3 }}>
-                  <div>
-                    <strong style={{ color: "var(--green)" }}>BULLISH TAILWIND (Score &ge; +0.8):</strong> Harmonic trines/sextiles dominate. Momentum supports buying dips.
-                  </div>
-                  <div>
-                    <strong style={{ color: "var(--yellow)" }}>BEARISH HEADWIND (Score &le; -0.8):</strong> Resistance aspects dominate. Rallies face selling pressure.
-                  </div>
-                  <div>
-                    <strong style={{ color: "var(--red)" }}>HIGH VOLATILITY:</strong> Hard aspects &ge; 1.8 or stationary turning planets. Expect sharp two-way whipsaws.
-                  </div>
-                  <div>
-                    <strong style={{ color: "var(--muted)" }}>NEUTRAL RANGE:</strong> Balanced forces. Range-bound, mean-reverting rotational action.
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ padding: "8px 10px", background: "var(--surface2)", borderRadius: 4, border: "1px solid var(--border)" }}>
-                <div style={{ fontWeight: 800, color: "var(--green)", marginBottom: 4, fontSize: 11 }}>
-                  2. Price Confirmation (The Trigger)
-                </div>
-                <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", flexDirection: "column", gap: 3 }}>
-                  <div>
-                    <strong>Uptrend:</strong> Price &gt; VWAP + EMA 20 &gt; EMA 50 + Higher Highs structure.
-                  </div>
-                  <div>
-                    <strong>Downtrend:</strong> Price &lt; VWAP + EMA 20 &lt; EMA 50 + Lower Lows structure.
-                  </div>
-                  <div>
-                    <strong>Intraday Windows:</strong> Exact timestamps (09:15-15:30) where Moon changes KP Sub-Lords. Benefics (Jupiter, Venus) support continuation; malefics (Saturn, Mars) trigger pullbacks.
-                  </div>
-                  <div>
-                    <strong style={{ color: "var(--text)" }}>Watch Only:</strong> Astro timing provides cyclical direction; enter trades only on confirmed BSA triggers!
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Multi-Week Market Days Strip Header Controls */}
-        <div
-          style={{
-            padding: isDaysCollapsed ? "8px 20px" : "10px 20px",
-            background: "var(--bg)",
-            borderBottom: "1px solid var(--border)",
-            display: "flex",
-            flexDirection: "column",
-            gap: isDaysCollapsed ? 0 : 10,
-            transition: "all 0.2s ease",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: "var(--text)" }}>
-                MARKET TRADING DAYS
-              </span>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "1px 6px",
-                  borderRadius: 3,
-                  background:
-                    selectedDate === todayDate
-                      ? "rgba(0, 230, 118, 0.15)"
-                      : selectedDate < todayDate
-                      ? "rgba(255, 183, 3, 0.15)"
-                      : "rgba(8, 182, 222, 0.15)",
-                  color:
-                    selectedDate === todayDate
-                      ? "var(--green)"
-                      : selectedDate < todayDate
-                      ? "var(--yellow)"
-                      : "var(--ba-cyan)",
-                  border: `1px solid ${
-                    selectedDate === todayDate
-                      ? "rgba(0, 230, 118, 0.3)"
-                      : selectedDate < todayDate
-                      ? "rgba(255, 183, 3, 0.3)"
-                      : "rgba(8, 182, 222, 0.3)"
-                  }`,
-                }}
-              >
-                {selectedDate === todayDate
-                  ? "LIVE SESSION TODAY"
-                  : selectedDate < todayDate
-                  ? "HISTORICAL AUDIT"
-                  : "CYCLICAL PROJECTION"}
-              </span>
-              {isDaysCollapsed && (
-                <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "monospace" }}>
-                  ({selectedDate})
-                </span>
-              )}
-            </div>
-
-            {/* Quick Toggle Buttons for Previous & Next Week */}
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {!isDaysCollapsed && (
-                <>
-                  <button
-                    type="button"
-                    onClick={togglePreviousWeek}
-                    title="Toggle Previous Week (Testing / Audit)"
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: "3px 8px",
-                      borderRadius: 3,
-                      background: settings.includePreviousWeek ? "rgba(255, 183, 3, 0.15)" : "transparent",
-                      color: settings.includePreviousWeek ? "var(--yellow)" : "var(--muted)",
-                      border: `1px solid ${settings.includePreviousWeek ? "rgba(255, 183, 3, 0.4)" : "var(--border)"}`,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {settings.includePreviousWeek ? "AUDIT: ON" : "AUDIT: OFF"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={toggleNextWeek}
-                    title="Toggle Next Week (Forward Projections)"
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: "3px 8px",
-                      borderRadius: 3,
-                      background: settings.includeNextWeek ? "rgba(8, 182, 222, 0.15)" : "transparent",
-                      color: settings.includeNextWeek ? "var(--ba-cyan)" : "var(--muted)",
-                      border: `1px solid ${settings.includeNextWeek ? "rgba(8, 182, 222, 0.4)" : "var(--border)"}`,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {settings.includeNextWeek ? "PROJ: ON" : "PROJ: OFF"}
-                  </button>
-
-                  <div style={{ height: 16, width: 1, background: "var(--border)", margin: "0 2px" }} />
-                </>
-              )}
-
-              {/* Stepper Navigation */}
-              <button
-                type="button"
-                onClick={handlePrevDay}
-                disabled={currentDayIndex <= 0}
-                style={{
-                  padding: "3px 6px",
-                  background: "transparent",
-                  border: "1px solid var(--border)",
-                  borderRadius: 3,
-                  color: currentDayIndex > 0 ? "var(--text)" : "var(--muted)",
-                  cursor: currentDayIndex > 0 ? "pointer" : "default",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-                title="Previous Market Day"
-              >
-                <ChevronLeft size={13} />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedDate(todayDate)}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 800,
-                  padding: "3px 8px",
-                  borderRadius: 3,
-                  background: selectedDate === todayDate ? "var(--ba-cyan)" : "var(--surface2)",
-                  color: selectedDate === todayDate ? "#000" : "var(--text)",
-                  border: `1px solid ${selectedDate === todayDate ? "var(--ba-cyan)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-              >
-                TODAY
-              </button>
-
-              <button
-                type="button"
-                onClick={handleNextDay}
-                disabled={currentDayIndex < 0 || currentDayIndex >= tradingDays.length - 1}
-                style={{
-                  padding: "3px 6px",
-                  background: "transparent",
-                  border: "1px solid var(--border)",
-                  borderRadius: 3,
-                  color:
-                    currentDayIndex >= 0 && currentDayIndex < tradingDays.length - 1
-                      ? "var(--text)"
-                      : "var(--muted)",
-                  cursor:
-                    currentDayIndex >= 0 && currentDayIndex < tradingDays.length - 1
-                      ? "pointer"
-                      : "default",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-                title="Next Market Day"
-              >
-                <ChevronRight size={13} />
-              </button>
-
-              {/* Date Input for arbitrary jump */}
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-                style={{
-                  background: "var(--surface2)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 3,
-                  padding: "2px 6px",
-                  color: "var(--text)",
-                  fontSize: 10,
-                  cursor: "pointer",
-                  height: 22,
-                }}
-              />
-
-              <div style={{ height: 16, width: 1, background: "var(--border)", margin: "0 2px" }} />
-
-              {/* Collapsible Strip Toggle Button */}
-              <button
-                type="button"
-                onClick={toggleDaysCollapse}
-                title={isDaysCollapsed ? "Expand Market Trading Days Strip" : "Collapse Market Trading Days Strip to expand Grid area"}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  fontSize: 10,
-                  fontWeight: 800,
-                  padding: "3px 8px",
-                  borderRadius: 3,
-                  background: isDaysCollapsed ? "rgba(8, 182, 222, 0.15)" : "var(--surface2)",
-                  color: isDaysCollapsed ? "var(--ba-cyan)" : "var(--muted)",
-                  border: `1px solid ${isDaysCollapsed ? "rgba(8, 182, 222, 0.4)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-              >
-                {isDaysCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                <span>{isDaysCollapsed ? "EXPAND" : "COLLAPSE"}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Horizontal Scrollable Monday-to-Friday Days Strip (Collapsible) */}
-          {!isDaysCollapsed && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "stretch",
-                gap: 8,
-                overflowX: "auto",
-                paddingBottom: 4,
-              }}
-            >
-              {weekLoading && (
-                <div style={{ fontSize: 11, color: "var(--muted)", padding: "10px 0" }}>
-                  Calculating market-days astrological cycles...
-                </div>
-              )}
-
-              {/* Render Section: Previous Week (Audit) */}
-              {settings.includePreviousWeek && prevWeekDays.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                    padding: "6px 8px",
-                    background: "rgba(255, 183, 3, 0.04)",
-                    borderRadius: 4,
-                    border: "1px dashed rgba(255, 183, 3, 0.25)",
-                  }}
-                >
-                  <div style={{ fontSize: 9, fontWeight: 800, color: "var(--yellow)", letterSpacing: 0.5 }}>
-                    PREVIOUS WEEK (TESTING / AUDIT)
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {prevWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
-                  </div>
-                </div>
-              )}
-
-              {/* Render Section: Current Week */}
-              {currWeekDays.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                    padding: "6px 8px",
-                    background: "rgba(8, 182, 222, 0.04)",
-                    borderRadius: 4,
-                    border: "1px solid rgba(8, 182, 222, 0.25)",
-                  }}
-                >
-                  <div style={{ fontSize: 9, fontWeight: 800, color: "var(--ba-cyan)", letterSpacing: 0.5 }}>
-                    CURRENT WEEK (ACTIVE)
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {currWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
-                  </div>
-                </div>
-              )}
-
-              {/* Render Section: Next Week (Projected) */}
-              {settings.includeNextWeek && nextWeekDays.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                    padding: "6px 8px",
-                    background: "rgba(168, 85, 247, 0.04)",
-                    borderRadius: 4,
-                    border: "1px dashed rgba(168, 85, 247, 0.25)",
-                  }}
-                >
-                  <div style={{ fontSize: 9, fontWeight: 800, color: "#c084fc", letterSpacing: 0.5 }}>
-                    NEXT WEEK (PROJECTED TIMING)
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {nextWeekDays.map((day) => renderMarketDayChip(day, selectedDate, setSelectedDate))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Benchmark Time Selector Strip (Sunrise vs 09:00 AM vs Live) */}
-        <div
-          style={{
-            padding: "8px 20px",
-            background: "var(--surface2)",
-            borderBottom: "1px solid var(--border)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase" }}>
-              TIME BENCHMARK:
-            </span>
-            <div style={{ display: "flex", gap: 4 }}>
-              <button
-                type="button"
-                onClick={() => setTimeMode("SUNRISE")}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 800,
-                  padding: "3px 9px",
-                  borderRadius: 3,
-                  background: timeMode === "SUNRISE" ? "var(--ba-cyan)" : "var(--surface)",
-                  color: timeMode === "SUNRISE" ? "#000" : "var(--muted)",
-                  border: `1px solid ${timeMode === "SUNRISE" ? "var(--ba-cyan)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-                title={`Astronomical sunrise for ${settings.city} (${settings.latitude.toFixed(2)}°N, ${settings.longitude.toFixed(2)}°E)`}
-              >
-                SUNRISE ({activeSunriseDisplay})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setTimeMode("09:00")}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 800,
-                  padding: "3px 9px",
-                  borderRadius: 3,
-                  background: timeMode === "09:00" ? "var(--ba-cyan)" : "var(--surface)",
-                  color: timeMode === "09:00" ? "#000" : "var(--muted)",
-                  border: `1px solid ${timeMode === "09:00" ? "var(--ba-cyan)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-                title="Indian market pre-open setup benchmark (09:00 AM IST)"
-              >
-                09:00 AM IST (PRE-MARKET)
-              </button>
-
-              {isSelectedToday && (
-                <button
-                  type="button"
-                  onClick={() => setTimeMode("LIVE")}
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 800,
-                    padding: "3px 9px",
-                    borderRadius: 3,
-                    background: timeMode === "LIVE" ? "var(--green)" : "var(--surface)",
-                    color: timeMode === "LIVE" ? "#000" : "var(--muted)",
-                    border: `1px solid ${timeMode === "LIVE" ? "var(--green)" : "var(--border)"}`,
-                    cursor: "pointer",
-                  }}
-                  title="Current live clock time"
-                >
-                  LIVE NOW
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                fontSize: 10,
-                color: "var(--ba-cyan)",
-                background: "rgba(8, 182, 222, 0.08)",
-                padding: "2px 8px",
-                borderRadius: 3,
-                border: "1px solid rgba(8, 182, 222, 0.2)",
-              }}
-              title={`Observer coordinates: ${settings.latitude}°N, ${settings.longitude}°E (Configurable in Settings)`}
-            >
-              <MapPin size={11} />
-              <span style={{ fontWeight: 700 }}>{settings.city}</span>
-              <span style={{ color: "var(--muted)", fontSize: 9 }}>
-                ({settings.latitude.toFixed(2)}°N, {settings.longitude.toFixed(2)}°E)
-              </span>
-            </div>
-            <div style={{ fontSize: 10, color: "var(--ba-cyan)", fontWeight: 700, fontFamily: "monospace" }}>
-              {activeSignal?.reference_time_label || timeMode}
-            </div>
-          </div>
-        </div>
-
-        {/* Aspect Score Explanation Banner */}
-        <div
-          style={{
-            padding: "6px 20px",
-            background: "rgba(255, 255, 255, 0.02)",
-            borderBottom: "1px solid var(--border)",
-            fontSize: 10,
-            color: "var(--muted)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <Info size={12} style={{ color: "var(--ba-cyan)", flexShrink: 0 }} />
-          <span>
-            <strong style={{ color: "var(--text)" }}>Aspect Score:</strong> Net planetary aspect sentiment (Soft
-            Harmonies like 120° Trine minus Hard Stress Aspects like 90° Square). Positive (<span style={{ color: "var(--green)" }}>+</span>) = Harmonic tailwind, Negative (<span style={{ color: "var(--red)" }}>-</span>) = Hard aspect volatility & tension.
-          </span>
-        </div>
-
-        {/* Real-time Summary Cards Strip for Selected Trading Day */}
-        {activeSignal && (
-          <div
-            style={{
-              padding: "12px 20px",
-              display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
-              gap: 10,
-              borderBottom: "1px solid var(--border)",
-              background: "var(--surface2)",
-            }}
-          >
-            {/* Regime Bias */}
-            <div
-              style={{
-                padding: "8px 12px",
-                borderRadius: 4,
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>
-                Regime Bias ({selectedDate})
-              </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 800,
-                  marginTop: 4,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  color: isVol
-                    ? "var(--red)"
-                    : isBullish
-                    ? "var(--green)"
-                    : isBearish
-                    ? "var(--yellow)"
-                    : "var(--text)",
-                }}
-              >
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: isVol
-                      ? "var(--red)"
-                      : isBullish
-                      ? "var(--green)"
-                      : isBearish
-                      ? "var(--yellow)"
-                      : "var(--muted)",
-                    boxShadow: isVol
-                      ? "0 0 6px var(--red)"
-                      : isBullish
-                      ? "0 0 6px var(--green)"
-                      : isBearish
-                      ? "0 0 6px var(--yellow)"
-                      : "none",
-                  }}
-                />
-                <span>
-                  {activeSignal.regime_bias === "HIGH_VOLATILITY_CAUTION"
-                    ? "HIGH VOLATILITY"
-                    : activeSignal.regime_bias === "BULLISH_TAILWIND"
-                    ? "BULLISH TAILWIND"
-                    : activeSignal.regime_bias === "BEARISH_HEADWIND"
-                    ? "BEARISH HEADWIND"
-                    : "NEUTRAL RANGE"}
-                </span>
-              </div>
-            </div>
-
-            {/* Net Sentiment Score */}
-            <div
-              style={{
-                padding: "8px 12px",
-                borderRadius: 4,
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>
-                Net Aspect Stress / Sentiment
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 800,
-                  marginTop: 4,
-                  fontFamily: "monospace",
-                  color:
-                    activeSignal.net_sentiment_score > 0
-                      ? "var(--green)"
-                      : activeSignal.net_sentiment_score < 0
-                      ? "var(--red)"
-                      : "var(--text)",
-                }}
-              >
-                {activeSignal.net_sentiment_score > 0
-                  ? `+${activeSignal.net_sentiment_score}`
-                  : activeSignal.net_sentiment_score}
-                <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 6, fontWeight: 500 }}>
-                  (H: {activeSignal.hard_aspect_score} / S: {activeSignal.soft_aspect_score})
-                </span>
-              </div>
-            </div>
-
-            {/* Moon Nakshatra & KP Sub */}
-            <div
-              style={{
-                padding: "8px 12px",
-                borderRadius: 4,
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>
-                Moon Transit ({timeMode})
-              </div>
-              <div style={{ fontSize: 12, fontWeight: 800, marginTop: 4, color: "var(--text)" }}>
-                {activeSignal.moon_nakshatra}{" "}
-                <span style={{ fontSize: 11, color: "var(--ba-cyan)", fontWeight: 700 }}>
-                  / {activeSignal.moon_kp_sub_lord} Sub
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Tab Navigation */}
         <div
@@ -1018,569 +294,609 @@ export const AstroPivotDrawer: React.FC<AstroPivotDrawerProps> = ({ open, onClos
             display: "flex",
             borderBottom: "1px solid var(--border)",
             background: "var(--surface)",
-            padding: "0 20px",
+            padding: "0 16px",
           }}
         >
           <button
-            type="button"
-            onClick={() => setActiveTab("TIMELINE")}
+            onClick={() => setActiveTab("TRANSIT")}
             style={{
-              padding: "10px 14px",
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: 0.5,
-              color: activeTab === "TIMELINE" ? "var(--ba-cyan)" : "var(--muted)",
-              borderBottom: `2px solid ${activeTab === "TIMELINE" ? "var(--ba-cyan)" : "transparent"}`,
+              flex: 1,
+              padding: "10px 12px",
+              fontSize: 12,
+              fontWeight: 600,
               background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "TRANSIT" ? "2px solid var(--ba-cyan)" : "2px solid transparent",
+              color: activeTab === "TRANSIT" ? "var(--ba-cyan)" : "var(--muted)",
               cursor: "pointer",
+              transition: "all 0.15s ease",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
             }}
           >
-            NSE SESSION TIMELINE (09:15 - 15:30)
+            <Compass size={14} />
+            <span>Live Telemetry</span>
           </button>
           <button
-            type="button"
-            onClick={() => setActiveTab("ASPECTS")}
+            onClick={() => setActiveTab("SCHEDULE")}
             style={{
-              padding: "10px 14px",
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: 0.5,
-              color: activeTab === "ASPECTS" ? "var(--ba-cyan)" : "var(--muted)",
-              borderBottom: `2px solid ${activeTab === "ASPECTS" ? "var(--ba-cyan)" : "transparent"}`,
+              flex: 1,
+              padding: "10px 12px",
+              fontSize: 12,
+              fontWeight: 600,
               background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "SCHEDULE" ? "2px solid var(--ba-cyan)" : "2px solid transparent",
+              color: activeTab === "SCHEDULE" ? "var(--ba-cyan)" : "var(--muted)",
               cursor: "pointer",
+              transition: "all 0.15s ease",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
             }}
           >
-            ASPECT RADAR & STRESS ({activeSignal?.active_aspects.length || 0})
+            <Calendar size={14} />
+            <span>Transit Schedule (7-Day)</span>
           </button>
           <button
-            type="button"
-            onClick={() => setActiveTab("EPHEMERIS")}
+            onClick={() => setActiveTab("RULES")}
             style={{
-              padding: "10px 14px",
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: 0.5,
-              color: activeTab === "EPHEMERIS" ? "var(--ba-cyan)" : "var(--muted)",
-              borderBottom: `2px solid ${activeTab === "EPHEMERIS" ? "var(--ba-cyan)" : "transparent"}`,
+              flex: 1,
+              padding: "10px 12px",
+              fontSize: 12,
+              fontWeight: 600,
               background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "RULES" ? "2px solid var(--ba-cyan)" : "2px solid transparent",
+              color: activeTab === "RULES" ? "var(--ba-cyan)" : "var(--muted)",
               cursor: "pointer",
+              transition: "all 0.15s ease",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
             }}
           >
-            EPHEMERIS GRID ({activeSignal?.planets.length || 0})
+            <BookOpen size={14} />
+            <span>Custom Rules</span>
           </button>
         </div>
 
-        {/* Tab Body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
-          {/* TAB 1: NSE SESSION TIMELINE */}
-          {activeTab === "TIMELINE" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* Content Body */}
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+          {isLoading && !current && (
+            <div style={{ textAlign: "center", padding: "40px 0", color: "var(--muted)", fontSize: 13 }}>
+              Calculating high-precision Swiss Ephemeris lunar telemetry...
+            </div>
+          )}
+
+          {current && activeTab === "TRANSIT" && (
+            <>
+              {/* Hero Status Card */}
               <div
                 style={{
-                  padding: "10px 14px",
-                  background: "var(--surface2)",
-                  borderRadius: 4,
-                  border: "1px solid var(--border)",
-                  fontSize: 11,
-                  color: "var(--muted)",
-                  lineHeight: 1.5,
+                  background: "linear-gradient(135deg, rgba(0, 229, 255, 0.08) 0%, rgba(124, 77, 255, 0.08) 100%)",
+                  border: "1px solid rgba(0, 229, 255, 0.25)",
+                  borderRadius: 10,
+                  padding: 16,
                   display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                  flexDirection: "column",
+                  gap: 12,
                 }}
               >
-                <span>
-                  Tracking exact timestamps during NSE hours for{" "}
-                  <strong style={{ color: "var(--text)" }}>{selectedDate}</strong> where the Moon changes Vedic
-                  Nakshatra (<strong style={{ color: "var(--red)" }}>HIGH</strong> cyclical impact) or KP Sub-Lord (
-                  <strong style={{ color: "var(--ba-cyan)" }}>MEDIUM</strong> benefic/malefic shift).
-                </span>
-                <span
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, color: "var(--muted)" }}>
+                      Active Moon Sidereal Position
+                    </div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: "var(--text)", marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span>{current.rashi}</span>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: "var(--ba-cyan)" }}>({current.rashi_sanskrit})</span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      Exact Degree in Sign
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "monospace", color: "var(--green)" }}>
+                      {current.degree_dms}
+                    </div>
+                  </div>
+                </div>
+
+                <div
                   style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: "var(--ba-cyan)",
-                    whiteSpace: "nowrap",
-                    marginLeft: 12,
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: 8,
+                    marginTop: 4,
                   }}
                 >
-                  {windowsData?.total_windows ?? 0} SHIFTS
-                </span>
-              </div>
-
-              {windowsLoading ? (
-                <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-                  Scanning session (09:15 to 15:30 IST) for {selectedDate}...
-                </div>
-              ) : !windowsData || windowsData.windows.length === 0 ? (
-                <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-                  No Moon Nakshatra or KP Sub-Lord boundary shifts detected during {selectedDate} market hours. The Moon
-                  remains stable in its current zone throughout 09:15–15:30 IST.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {windowsData.windows.map((win, idx) => {
-                    const isHigh = win.weight === "HIGH";
-                    const isMed = win.weight === "MEDIUM";
-
-                    const badgeColor = isHigh ? "var(--red)" : isMed ? "var(--yellow)" : "var(--muted)";
-                    const badgeBg = isHigh
-                      ? "rgba(255,59,87,0.12)"
-                      : isMed
-                      ? "rgba(255,183,3,0.12)"
-                      : "rgba(255,255,255,0.06)";
-
-                    return (
-                      <div
-                        key={idx}
-                        style={{
-                          padding: "12px 14px",
-                          borderRadius: 4,
-                          background: "var(--surface2)",
-                          border: `1px solid ${isHigh ? "rgba(255,59,87,0.35)" : "var(--border)"}`,
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 6,
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span
-                              style={{
-                                fontFamily: "monospace",
-                                fontSize: 13,
-                                fontWeight: 800,
-                                color: "var(--text)",
-                              }}
-                            >
-                              {win.time_str}
-                            </span>
-                            <span
-                              style={{
-                                fontSize: 9,
-                                fontWeight: 800,
-                                padding: "2px 6px",
-                                borderRadius: 3,
-                                background: badgeBg,
-                                color: badgeColor,
-                                border: `1px solid ${badgeColor}`,
-                              }}
-                            >
-                              {win.weight} IMPACT
-                            </span>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>
-                              {win.event_type === "MOON_NAKSHATRA_SHIFT" ? "Nakshatra Shift" : "KP Sub-Lord Shift"}
-                            </span>
-                          </div>
-
-                          <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--muted)" }}>
-                            {win.from_entity} → <strong style={{ color: "var(--text)" }}>{win.to_entity}</strong>
-                          </div>
-                        </div>
-
-                        <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.4 }}>
-                          {win.description}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: ASPECT RADAR & STRESS */}
-          {activeTab === "ASPECTS" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {snapshotLoading ? (
-                <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-                  Calculating planetary aspects for {selectedDate} ({timeMode})...
-                </div>
-              ) : activeSignal ? (
-                <>
-                  {/* Stress vs Harmony Visual Bar */}
                   <div
                     style={{
-                      padding: "12px 16px",
-                      borderRadius: 4,
-                      background: "var(--surface2)",
+                      background: "rgba(0, 0, 0, 0.25)",
+                      padding: "8px 10px",
+                      borderRadius: 6,
                       border: "1px solid var(--border)",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700 }}>
-                      <span style={{ color: "var(--red)" }}>
-                        Hard Aspects Stress: {activeSignal.hard_aspect_score}
-                      </span>
-                      <span style={{ color: "var(--green)" }}>
-                        Soft Aspects Harmony: {activeSignal.soft_aspect_score}
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        height: 8,
-                        background: "rgba(255, 255, 255, 0.08)",
-                        borderRadius: 4,
-                        overflow: "hidden",
-                        display: "flex",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (activeSignal.hard_aspect_score /
-                              (activeSignal.hard_aspect_score + activeSignal.soft_aspect_score || 1)) *
-                              100
-                          )}%`,
-                          background: "var(--red)",
-                        }}
-                      />
-                      <div
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (activeSignal.soft_aspect_score /
-                              (activeSignal.hard_aspect_score + activeSignal.soft_aspect_score || 1)) *
-                              100
-                          )}%`,
-                          background: "var(--green)",
-                        }}
-                      />
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>Rashi Lord</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>
+                      {current.rashi_lord}
                     </div>
                   </div>
 
-                  {/* Aspects List */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {activeSignal.active_aspects.length === 0 ? (
-                      <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-                        No major geometric aspects active within strict orbs on {selectedDate} ({timeMode}).
-                      </div>
-                    ) : (
-                      activeSignal.active_aspects.map((asp, idx) => {
-                        const isHard = asp.is_hard;
-                        const aspectColor = isHard ? "var(--red)" : "var(--green)";
-
-                        return (
-                          <div
-                            key={idx}
-                            style={{
-                              padding: "10px 14px",
-                              borderRadius: 4,
-                              background: "var(--surface2)",
-                              border: "1px solid var(--border)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                            }}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              <span
-                                style={{
-                                  width: 8,
-                                  height: 8,
-                                  borderRadius: "50%",
-                                  background: aspectColor,
-                                }}
-                              />
-                              <div>
-                                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text)" }}>
-                                  {asp.body_a}{" "}
-                                  <span style={{ color: aspectColor, margin: "0 4px" }}>{asp.aspect_type}</span>{" "}
-                                  {asp.body_b}
-                                </div>
-                                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                                  {asp.description}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div style={{ textAlign: "right", fontFamily: "monospace" }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>
-                                Orb: {asp.orb_deg}°
-                              </div>
-                              <div style={{ fontSize: 10, color: aspectColor }}>
-                                Weight: {asp.weight.toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </>
-              ) : null}
-            </div>
-          )}
-
-          {/* TAB 3: PLANETARY EPHEMERIS GRID */}
-          {activeTab === "EPHEMERIS" && (
-            <div>
-              {snapshotLoading ? (
-                <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-                  Scanning ephemeris positions and daily motion for {selectedDate} ({timeMode})...
-                </div>
-              ) : activeSignal ? (
-                <div style={{ overflowX: "auto" }}>
                   <div
                     style={{
-                      padding: "8px 12px",
-                      background: "rgba(255, 255, 255, 0.02)",
+                      background: "rgba(0, 0, 0, 0.25)",
+                      padding: "8px 10px",
+                      borderRadius: 6,
                       border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>Nakshatra</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>
+                      {current.nakshatra} (P{current.pada})
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      background: "rgba(0, 0, 0, 0.25)",
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>Nakshatra Lord</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>
+                      {current.nakshatra_lord}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      background: "rgba(0, 0, 0, 0.25)",
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>KP Sub-Lord</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>
+                      {current.kp_sub_lord}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      background: "rgba(0, 0, 0, 0.25)",
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>Daily Speed</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginTop: 2 }}>
+                      {current.daily_speed_dms}/d
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      background: "rgba(0, 0, 0, 0.25)",
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>Total Longitude</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, fontFamily: "monospace", color: "var(--text)", marginTop: 2 }}>
+                      {current.total_longitude}°
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rashi Transit Progress Card */}
+              <div
+                style={{
+                  background: "var(--surface2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 10,
+                  padding: 16,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Clock size={14} style={{ color: "var(--ba-cyan)" }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      Sign Transit Progress ({current.rashi})
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "var(--ba-cyan)", fontFamily: "monospace" }}>
+                    {current.rashi_progress_pct}%
+                  </span>
+                </div>
+
+                {/* Progress Bar */}
+                <div
+                  style={{
+                    width: "100%",
+                    height: 8,
+                    borderRadius: 4,
+                    background: "rgba(255, 255, 255, 0.08)",
+                    overflow: "hidden",
+                    position: "relative",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.min(100, Math.max(0, current.rashi_progress_pct))}%`,
+                      height: "100%",
+                      background: "linear-gradient(90deg, var(--ba-cyan) 0%, var(--green) 100%)",
                       borderRadius: 4,
-                      marginBottom: 10,
-                      display: "flex",
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)" }}>
+                  <div>
+                    <span style={{ color: "var(--text)", fontWeight: 600 }}>Ingress: </span>
+                    {current.rashi_ingress_ist}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span style={{ color: "var(--text)", fontWeight: 600 }}>Egress: </span>
+                    {current.rashi_egress_ist}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingTop: 8,
+                    borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ color: "var(--muted)" }}>Remaining in {current.rashi}:</span>
+                  <span
+                    style={{
+                      fontWeight: 800,
+                      color: "var(--ba-yellow, #ffb300)",
+                      fontFamily: "monospace",
+                      background: "rgba(255, 179, 0, 0.1)",
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      border: "1px solid rgba(255, 179, 0, 0.25)",
+                    }}
+                  >
+                    {current.rashi_remaining_str}
+                  </span>
+                </div>
+              </div>
+
+              {/* Nakshatra Transit Progress Card */}
+              <div
+                style={{
+                  background: "var(--surface2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 10,
+                  padding: 16,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Layers size={14} style={{ color: "var(--purple, #b388ff)" }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      Nakshatra Progress ({current.nakshatra} #{current.nakshatra_number})
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "var(--purple, #b388ff)", fontFamily: "monospace" }}>
+                    {current.nakshatra_progress_pct}%
+                  </span>
+                </div>
+
+                {/* Progress Bar */}
+                <div
+                  style={{
+                    width: "100%",
+                    height: 8,
+                    borderRadius: 4,
+                    background: "rgba(255, 255, 255, 0.08)",
+                    overflow: "hidden",
+                    position: "relative",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.min(100, Math.max(0, current.nakshatra_progress_pct))}%`,
+                      height: "100%",
+                      background: "linear-gradient(90deg, #7c4dff 0%, #b388ff 100%)",
+                      borderRadius: 4,
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)" }}>
+                  <div>
+                    <span style={{ color: "var(--text)", fontWeight: 600 }}>Entered: </span>
+                    {current.nakshatra_ingress_ist}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span style={{ color: "var(--text)", fontWeight: 600 }}>Exits: </span>
+                    {current.nakshatra_egress_ist}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingTop: 8,
+                    borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ color: "var(--muted)" }}>Remaining in {current.nakshatra}:</span>
+                  <span
+                    style={{
+                      fontWeight: 800,
+                      color: "var(--purple, #b388ff)",
+                      fontFamily: "monospace",
+                      background: "rgba(179, 136, 255, 0.1)",
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      border: "1px solid rgba(179, 136, 255, 0.25)",
+                    }}
+                  >
+                    {current.nakshatra_remaining_str}
+                  </span>
+                </div>
+              </div>
+
+              {/* Next Ingress Highlight Card */}
+              <div
+                style={{
+                  background: "rgba(0, 229, 255, 0.04)",
+                  border: "1px solid rgba(0, 229, 255, 0.2)",
+                  borderRadius: 10,
+                  padding: 14,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Next Ingress Target
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span>{current.next_rashi} ({current.next_rashi_sanskrit})</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500 }}>• Lord: {current.next_rashi_lord}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                    Next Nakshatra: <strong style={{ color: "var(--text)" }}>{current.next_nakshatra}</strong> (Lord: {current.next_nakshatra_lord})
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>Ingress IST</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, fontFamily: "monospace", color: "var(--ba-cyan)", marginTop: 2 }}>
+                    {current.rashi_egress_ist}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Upcoming Schedule Tab */}
+          {activeTab === "SCHEDULE" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+                Chronological timeline of the Moon's upcoming sign transits calculated via high-precision Swiss Ephemeris root finding.
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  background: "var(--surface2)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1.2fr 1fr 1.6fr 1.6fr 0.8fr",
+                    padding: "8px 12px",
+                    background: "rgba(0, 0, 0, 0.35)",
+                    borderBottom: "1px solid var(--border)",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "var(--muted)",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  <div>Rashi (Sign)</div>
+                  <div>Lord</div>
+                  <div>Ingress (IST)</div>
+                  <div>Egress (IST)</div>
+                  <div style={{ textAlign: "right" }}>Duration</div>
+                </div>
+
+                {schedule.map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1.2fr 1fr 1.6fr 1.6fr 0.8fr",
+                      padding: "10px 12px",
+                      borderBottom: idx < schedule.length - 1 ? "1px solid rgba(255, 255, 255, 0.05)" : "none",
+                      fontSize: 12,
                       alignItems: "center",
-                      justifyContent: "space-between",
-                      fontSize: 11,
+                      background: idx === 0 ? "rgba(0, 229, 255, 0.04)" : "transparent",
                     }}
                   >
                     <div>
-                      <span style={{ color: "var(--muted)" }}>Calculated at: </span>
-                      <strong style={{ color: "var(--ba-cyan)" }}>
-                        {activeSignal.reference_time_label || timeMode}
-                      </strong>
+                      <div style={{ fontWeight: 700, color: "var(--text)" }}>{item.rashi}</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)" }}>{item.rashi_sanskrit}</div>
                     </div>
-                    <div style={{ color: "var(--muted)", fontSize: 10 }}>
-                      Lahiri Sidereal Ayanamsha • Daily Motion in Deg/Min/Sec per Day
+                    <div style={{ color: "var(--ba-cyan)", fontWeight: 600 }}>{item.rashi_lord}</div>
+                    <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--text)" }}>{item.ingress_ist}</div>
+                    <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--text)" }}>{item.egress_ist}</div>
+                    <div style={{ textAlign: "right", fontFamily: "monospace", fontSize: 11, color: "var(--muted)" }}>
+                      {item.duration_hours}h
                     </div>
                   </div>
-
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      fontSize: 11,
-                      textAlign: "left",
-                    }}
-                  >
-                    <thead>
-                      <tr
-                        style={{
-                          borderBottom: "1px solid var(--border)",
-                          color: "var(--muted)",
-                          fontSize: 10,
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        <th style={{ padding: "8px 10px" }}>Body</th>
-                        <th style={{ padding: "8px 10px" }}>Sidereal Sign & Deg</th>
-                        <th style={{ padding: "8px 10px" }}>Nakshatra (Lord)</th>
-                        <th style={{ padding: "8px 10px" }}>Pada</th>
-                        <th style={{ padding: "8px 10px" }}>KP Sub-Lord</th>
-                        <th style={{ padding: "8px 10px" }}>Daily Motion (Speed)</th>
-                        <th style={{ padding: "8px 10px", textAlign: "right" }}>State</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeSignal.planets.map((p, idx) => (
-                        <tr
-                          key={idx}
-                          style={{
-                            borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
-                            background: idx % 2 === 0 ? "transparent" : "rgba(255, 255, 255, 0.015)",
-                          }}
-                        >
-                          <td style={{ padding: "8px 10px", fontWeight: 800, color: "var(--text)" }}>
-                            {p.name}
-                          </td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                            <span style={{ fontWeight: 700, color: "var(--ba-cyan)" }}>{p.sign}</span>{" "}
-                            <span style={{ color: "var(--text)", fontSize: 11 }}>{p.sign_degree_str}</span>
-                          </td>
-                          <td style={{ padding: "8px 10px", fontWeight: 700 }}>
-                            {p.nakshatra}{" "}
-                            <span style={{ fontSize: 9, color: "var(--muted)" }}>({p.nakshatra_lord})</span>
-                          </td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                            P{p.pada}
-                          </td>
-                          <td style={{ padding: "8px 10px", fontWeight: 700, color: "var(--ba-amber)" }}>
-                            {p.kp_sub_lord}
-                          </td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                            <div style={{ fontWeight: 700, color: "var(--text)" }}>
-                              {p.speed_str || `${p.speed > 0 ? `+${p.speed.toFixed(2)}` : p.speed.toFixed(2)}°/d`}
-                            </div>
-                            <div style={{ fontSize: 9, color: "var(--muted)" }}>
-                              {p.speed > 0 ? `+${p.speed.toFixed(4)}` : p.speed.toFixed(4)}°/d
-                            </div>
-                          </td>
-                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
-                            {p.is_stationary ? (
-                              <span
-                                style={{
-                                  fontSize: 9,
-                                  fontWeight: 800,
-                                  padding: "2px 5px",
-                                  borderRadius: 3,
-                                  background: "rgba(255,59,87,0.2)",
-                                  color: "var(--red)",
-                                }}
-                              >
-                                STATIONARY
-                              </span>
-                            ) : p.is_retrograde ? (
-                              <span
-                                style={{
-                                  fontSize: 9,
-                                  fontWeight: 800,
-                                  padding: "2px 5px",
-                                  borderRadius: 3,
-                                  background: "rgba(255,183,3,0.15)",
-                                  color: "var(--yellow)",
-                                }}
-                              >
-                                RETRO
-                              </span>
-                            ) : (
-                              <span style={{ fontSize: 9, color: "var(--muted)" }}>DIRECT</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
+                ))}
+              </div>
             </div>
           )}
-        </div>
 
-        {/* Footer Note */}
-        <div
-          style={{
-            padding: "10px 20px",
-            borderTop: "1px solid var(--border)",
-            background: "var(--surface2)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            fontSize: 10,
-            color: "var(--muted)",
-          }}
-        >
-          <span>Swiss Ephemeris Moshier Analytical Model (Lahiri Sidereal Mode)</span>
-          <span style={{ fontFamily: "monospace" }}>
-            Selected: {selectedDate} • {activeSignal?.reference_time_label || timeMode} • {settings.city}
-          </span>
+          {/* User Custom Extension & Domain Rules Tab */}
+          {activeTab === "RULES" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div
+                style={{
+                  background: "rgba(0, 229, 255, 0.06)",
+                  border: "1px solid rgba(0, 229, 255, 0.25)",
+                  borderRadius: 8,
+                  padding: 14,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ba-cyan)", fontWeight: 700, fontSize: 13 }}>
+                  <Sparkles size={16} />
+                  <span>User Custom Rules & Lunar Formula Extension</span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text)", lineHeight: 1.5 }}>
+                  This section is reserved for your specialized trading rules, Gann lunar price-time angles, Nakshatra market biases, and Lunar Day (Tithi) indicators.
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  padding: 14,
+                  background: "var(--surface2)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "var(--muted)", letterSpacing: 0.5 }}>
+                  Extension Slots (Awaiting Information)
+                </div>
+
+                <div
+                  style={{
+                    background: "rgba(0, 0, 0, 0.25)",
+                    border: "1px dashed var(--border)",
+                    borderRadius: 6,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+                    1. Gann Lunar Degree & Angular Harmonics
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                    Define cardinal / fixed cross angles (0°, 90°, 180°, 270°) or harmonic divisions from Moon entry.
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: "rgba(0, 0, 0, 0.25)",
+                    border: "1px dashed var(--border)",
+                    borderRadius: 6,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+                    2. Moon-Gandanta Junction Sensitivity
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                    Monitor the critical 0° Water-Fire transitions (Cancer-Leo, Scorpio-Sagittarius, Pisces-Aries) for extreme volatility pauses.
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: "rgba(0, 0, 0, 0.25)",
+                    border: "1px dashed var(--border)",
+                    borderRadius: 6,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+                    3. Nakshatra & Pada Market Directional Rules
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                    Configure specific trading bias (e.g. Rohini Bullish, Bharani Rangebound) or instrument-specific filters.
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: "rgba(0, 0, 0, 0.25)",
+                    border: "1px dashed var(--border)",
+                    borderRadius: 6,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+                    4. Vedic Tithi & Lunar Phase Indicators
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                    Track Shukla / Krishna Paksha and Tithi progression relative to the Sun.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Footer Timestamp */}
+          <div
+            style={{
+              paddingTop: 12,
+              borderTop: "1px solid var(--border)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              fontSize: 11,
+              color: "var(--muted)",
+            }}
+          >
+            <span>Calculated at: {calculatedAt}</span>
+            <span style={{ color: "var(--ba-cyan)", fontWeight: 600 }}>Lahiri Sidereal Mode</span>
+          </div>
         </div>
       </div>
     </div>
   );
 };
-
-// Helper component for rendering individual Monday-to-Friday market day chips
-function renderMarketDayChip(
-  day: MarketDayOutlookItem,
-  selectedDate: string,
-  onSelect: (date: string) => void
-) {
-  const isSelected = selectedDate === day.date;
-  const isVol = day.volatility_alert;
-  const isBull = day.regime_bias === "BULLISH_TAILWIND";
-  const isBear = day.regime_bias === "BEARISH_HEADWIND";
-
-  const dotColor = isVol
-    ? "var(--red)"
-    : isBull
-    ? "var(--green)"
-    : isBear
-    ? "var(--yellow)"
-    : "var(--muted)";
-  const formattedDate = day.date.slice(5); // MM-DD
-
-  return (
-    <button
-      key={day.date}
-      type="button"
-      onClick={() => onSelect(day.date)}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "6px 8px",
-        minWidth: 72,
-        borderRadius: 4,
-        background: isSelected ? "var(--surface2)" : "var(--surface)",
-        border: isSelected
-          ? "1px solid var(--ba-cyan)"
-          : day.is_today
-          ? "1px solid rgba(0, 230, 118, 0.4)"
-          : "1px solid var(--border)",
-        boxShadow: isSelected ? "0 0 8px rgba(8, 182, 222, 0.25)" : "none",
-        cursor: "pointer",
-        position: "relative",
-      }}
-      title={`Date: ${day.date} (${day.day_name})\nSunrise: ${day.sunrise_time_str || "06:48 IST"}\nAspect Score: ${day.net_sentiment_score > 0 ? "+" + day.net_sentiment_score : day.net_sentiment_score}\nRegime: ${day.regime_bias}\nShift Windows: ${day.total_shift_windows}`}
-    >
-      {day.is_today && (
-        <span
-          style={{
-            position: "absolute",
-            top: -6,
-            right: 4,
-            fontSize: 7,
-            fontWeight: 800,
-            padding: "1px 4px",
-            borderRadius: 2,
-            background: "var(--green)",
-            color: "#000",
-          }}
-        >
-          TODAY
-        </span>
-      )}
-
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <span
-          style={{
-            width: 5,
-            height: 5,
-            borderRadius: "50%",
-            background: dotColor,
-          }}
-        />
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: isSelected ? 800 : 700,
-            color: isSelected ? "var(--ba-cyan)" : "var(--text)",
-          }}
-        >
-          {day.day_name} {formattedDate}
-        </span>
-      </div>
-
-      <div style={{ fontSize: 7, color: "var(--muted)", textTransform: "uppercase", fontWeight: 700, marginTop: 3 }}>
-        Aspect Score
-      </div>
-
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 800,
-          fontFamily: "monospace",
-          marginTop: 1,
-          color:
-            day.net_sentiment_score > 0
-              ? "var(--green)"
-              : day.net_sentiment_score < 0
-              ? "var(--red)"
-              : "var(--muted)",
-        }}
-      >
-        {day.net_sentiment_score > 0 ? `+${day.net_sentiment_score}` : day.net_sentiment_score}
-      </div>
-
-      <div style={{ fontSize: 8, color: "var(--muted)", marginTop: 1 }}>
-        {day.total_shift_windows} shifts
-      </div>
-    </button>
-  );
-}

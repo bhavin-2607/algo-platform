@@ -8,15 +8,34 @@ from app.schemas.astro import (
     AstroMarketSignal,
     IntradayAstroResponse,
     MarketWeekOutlookResponse,
+    MoonTransitSnapshot,
 )
 from app.services.astro_service import (
     get_astro_snapshot,
     get_intraday_windows,
     get_market_week_outlook,
+    get_moon_transit_snapshot,
 )
 
 router = APIRouter()
 IST = zoneinfo.ZoneInfo("Asia/Kolkata")
+
+
+@router.get("/moon-transit", response_model=MoonTransitSnapshot, summary="Get high-precision Moon transit, Vedic lunar telemetry, and upcoming schedule")
+async def get_moon_transit():
+    """
+    Returns high-precision Vedic Moon transit telemetry:
+    - Active Rashi, Sanskrit name, Rashi Lord, DMS degree, total longitude
+    - Active Nakshatra, Pada, Nakshatra Lord, KP Sub-Lord
+    - Daily speed (deg/day) and DMS formatting
+    - Real-time transit clock: Ingress, Egress, % Elapsed, Hours remaining
+    - Next Rashi and Lord transition
+    - Next 7 upcoming Moon sign transits
+    """
+    try:
+        return get_moon_transit_snapshot()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Moon transit calculation error: {exc}")
 
 
 @router.get("/snapshot", response_model=AstroMarketSignal, summary="Get current or point-in-time financial astrology snapshot")
