@@ -274,15 +274,85 @@ function TokenRenewalCard({qc}: {qc: any}) {
               TOTP CONFIGURED
             </span>
           )}
-          <span className={`badge ${dhan.token_valid ? "badge-green" : "badge-red"}`}>
-            {dhan.token_valid ? "CONNECTED" : "NEEDS TOKEN"}
+          <span className={`badge ${dhan.token_valid ? (dhan.is_expiring_soon ? "badge-yellow" : "badge-green") : "badge-red"}`}>
+            {dhan.token_valid ? (dhan.is_expiring_soon ? "EXPIRING SOON" : "CONNECTED") : "NEEDS TOKEN"}
           </span>
         </div>
       </div>
+
+      {/* Live Token Status & Expiry Panel */}
+      <div
+        style={{
+          margin: "10px 14px 6px",
+          padding: "10px 12px",
+          background: "var(--surface2)",
+          border: `1px solid ${dhan.token_valid ? (dhan.is_expiring_soon ? "rgba(255, 183, 3, 0.35)" : "rgba(0, 230, 118, 0.25)") : "rgba(255, 59, 87, 0.3)"}`,
+          borderRadius: 4,
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: dhan.token_valid ? (dhan.is_expiring_soon ? "var(--yellow)" : "var(--green)") : "var(--red)",
+                boxShadow: dhan.token_valid ? `0 0 6px ${dhan.is_expiring_soon ? "var(--yellow)" : "var(--green)"}` : "none",
+              }}
+            />
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>
+              CURRENT STATUS:{" "}
+              <span style={{ color: dhan.token_valid ? (dhan.is_expiring_soon ? "var(--yellow)" : "var(--green)") : "var(--red)" }}>
+                {dhan.token_valid
+                  ? (dhan.is_expiring_soon ? "ACTIVE (EXPIRING SOON)" : "ACTIVE & VALID")
+                  : (dhan.token_set ? "EXPIRED / INVALID" : "NOT CONFIGURED")}
+              </span>
+            </span>
+          </div>
+
+          {dhan.hours_remaining !== undefined && dhan.hours_remaining !== null && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: dhan.hours_remaining > 3.5 ? "var(--green)" : dhan.hours_remaining > 0 ? "var(--yellow)" : "var(--red)",
+              }}
+            >
+              {dhan.hours_remaining > 0 ? `${dhan.hours_remaining}h remaining` : "Expired"}
+            </span>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginTop: 4, fontSize: 10, color: "var(--muted)" }}>
+          <div>
+            <span style={{ fontWeight: 600 }}>Expires At:</span>{" "}
+            <span style={{ color: "var(--text)", fontWeight: 700 }}>
+              {dhan.expires_at_ist || (dhan.token_set ? "Unknown" : "N/A")}
+            </span>
+          </div>
+          <div>
+            <span style={{ fontWeight: 600 }}>Issued At:</span>{" "}
+            <span style={{ color: "var(--text)", fontWeight: 700 }}>
+              {dhan.issued_at_ist || "N/A"}
+            </span>
+          </div>
+          <div>
+            <span style={{ fontWeight: 600 }}>Auto-Renewal:</span>{" "}
+            <span style={{ color: "var(--green)", fontWeight: 700 }}>
+              Every 30m (Proactive)
+            </span>
+          </div>
+        </div>
+      </div>
+
       <div className="token-grid">
         <div>
           <div className="field-label">CLIENT ID</div>
-          <div className="token-value">{dhan.client_id_set ? "Saved" : "Missing"}</div>
+          <div className="token-value">{dhan.client_id || (dhan.client_id_set ? "Saved" : "Missing")}</div>
         </div>
         <div>
           <div className="field-label">ACCESS TOKEN</div>
@@ -290,7 +360,7 @@ function TokenRenewalCard({qc}: {qc: any}) {
         </div>
         <div>
           <div className="field-label">AUTO RENEW</div>
-          <div className="token-value">7:45 IST</div>
+          <div className="token-value">Every 30m</div>
         </div>
         <button
           className="connect-btn"
