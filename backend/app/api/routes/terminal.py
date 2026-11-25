@@ -1220,8 +1220,10 @@ async def list_algo_rows(
     from app.api.routes.market import resolve_dhan_instrument
     healed_any = False
     for r in rows:
+        sym_u = (r.symbol or "").upper().strip()
+        is_mcx_sym = r.exchange == "MCX" or r.segment == "MCX_COMM" or any(sym_u.startswith(p) for p in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "NICKEL", "ALUMINIUM", "LEAD"))
         if not r.token or str(r.token).strip() in ("0", "None", ""):
-            resolved = resolve_dhan_instrument(r.symbol, r.exchange, r.segment)
+            resolved = resolve_dhan_instrument(r.symbol, "MCX" if is_mcx_sym else r.exchange, "MCX_COMM" if is_mcx_sym else r.segment)
             if resolved and resolved.get("security_id"):
                 r.token = resolved["security_id"]
                 if resolved.get("segment"):
@@ -1229,7 +1231,12 @@ async def list_algo_rows(
                 if resolved.get("exchange"):
                     r.exchange = resolved["exchange"]
                 healed_any = True
-        seg = r.segment or ("NSE_FNO" if is_option_symbol(r.symbol) else "NSE_EQ")
+        elif is_mcx_sym and (r.segment != "MCX_COMM" or r.exchange != "MCX"):
+            r.segment = "MCX_COMM"
+            r.exchange = "MCX"
+            healed_any = True
+
+        seg = "MCX_COMM" if is_mcx_sym else (r.segment or ("NSE_FNO" if is_option_symbol(r.symbol) else "NSE_EQ"))
         if r.token and str(r.token).strip() not in ("0", "None", ""):
             poller.add_symbol(r.symbol, r.token, seg)
 
@@ -1251,14 +1258,18 @@ async def list_algo_rows(
                 securities = {}
                 for r in missing:
                     sec_id = r.token or poller._watchlist.get(r.symbol, {}).get("security_id")
-                    seg = r.segment or "NSE_EQ"
+                    sym_u = (r.symbol or "").upper().strip()
+                    is_mcx_sym = r.exchange == "MCX" or r.segment == "MCX_COMM" or any(sym_u.startswith(p) for p in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "NICKEL", "ALUMINIUM", "LEAD"))
+                    seg = "MCX_COMM" if is_mcx_sym else (r.segment or "NSE_EQ")
                     if sec_id and str(sec_id) not in ("0", "None", ""):
                         securities.setdefault(seg, []).append(int(sec_id))
                 if securities:
                     raw_dhan = _dhan_ohlc(securities, settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
                     for r in missing:
                         sec_id = str(r.token or poller._watchlist.get(r.symbol, {}).get("security_id") or "")
-                        seg = r.segment or "NSE_EQ"
+                        sym_u = (r.symbol or "").upper().strip()
+                        is_mcx_sym = r.exchange == "MCX" or r.segment == "MCX_COMM" or any(sym_u.startswith(p) for p in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "NICKEL", "ALUMINIUM", "LEAD"))
+                        seg = "MCX_COMM" if is_mcx_sym else (r.segment or "NSE_EQ")
                         raw = raw_dhan.get(seg, {}).get(sec_id, {})
                         if raw:
                             parsed = _parse_ohlc(raw, r.symbol, segment=seg, security_id=sec_id)
@@ -1293,7 +1304,9 @@ async def list_algo_rows(
 
         # Compute live formula outputs
         from app.market.daily_ohlc import get_previous_day_ohlc, enqueue_daily_ohlc_fetch
-        seg = r.segment or ("NSE_FNO" if is_option else "NSE_EQ")
+        sym_u = (r.symbol or "").upper().strip()
+        is_mcx_sym = r.exchange == "MCX" or r.segment == "MCX_COMM" or any(sym_u.startswith(p) for p in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "NICKEL", "ALUMINIUM", "LEAD"))
+        seg = "MCX_COMM" if is_mcx_sym else (r.segment or ("NSE_FNO" if is_option else "NSE_EQ"))
         sec_id_val = str(r.token or poller._watchlist.get(r.symbol, {}).get("security_id") or "")
         p_data = get_previous_day_ohlc(seg, sec_id_val) if sec_id_val and sec_id_val != "0" else None
         if not p_data and sec_id_val and sec_id_val != "0":
@@ -1621,9 +1634,10 @@ async def add_algo_row(
     sym = payload.symbol.upper().strip()
     seg_upper = (payload.segment or "").upper().strip()
     exch_upper = (payload.exchange or "").upper().strip()
+    is_mcx = "MCX" in seg_upper or exch_upper == "MCX" or any(sym.startswith(p) for p in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "NICKEL", "ALUMINIUM", "LEAD"))
     is_opt = is_option_symbol(sym, seg_upper if seg_upper != "NSE_EQ" else None)
 
-    if "MCX" in seg_upper or exch_upper == "MCX":
+    if is_mcx:
         target_seg = "MCX_COMM"
         target_exch = "MCX"
     elif "BSE" in seg_upper or "BFO" in seg_upper or exch_upper in ("BSE", "BFO"):
@@ -2101,9 +2115,10 @@ async def import_dhan_position_to_algo(
     sym = payload.symbol.upper().strip()
     seg_upper = (payload.segment or "").upper().strip()
     exch_upper = (payload.exchange or "").upper().strip()
+    is_mcx = "MCX" in seg_upper or exch_upper == "MCX" or any(sym.startswith(p) for p in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "NICKEL", "ALUMINIUM", "LEAD"))
     is_opt = is_option_symbol(sym, seg_upper if seg_upper != "NSE_EQ" else None)
 
-    if "MCX" in seg_upper or exch_upper == "MCX":
+    if is_mcx:
         target_seg = "MCX_COMM"
         target_exch = "MCX"
     elif "BSE" in seg_upper or "BFO" in seg_upper or exch_upper in ("BSE", "BFO"):
