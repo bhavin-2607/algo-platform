@@ -171,6 +171,8 @@ export default function TerminalPage() {
   });
 
   // ── WebSocket live feed ────────────────────────────────────────────────────
+  const [lastTickAt, setLastTickAt] = useState<number>(Date.now());
+
   useEffect(() => {
     if (!accessToken) return;
     const url = `${wsBase()}/api/ws/market?token=${accessToken}&symbols=ALL`;
@@ -188,6 +190,7 @@ export default function TerminalPage() {
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === "ticks") {
+            setLastTickAt(Date.now());
             setLiveData(prev => {
               const next = {...prev};
               msg.data.forEach((q: any) => { next[q.symbol] = q; });
@@ -200,7 +203,7 @@ export default function TerminalPage() {
       ws.onclose = () => {
         if (!isMounted) return;
         setWsStatus("polling");
-        timerId = setTimeout(connect, 8000);
+        timerId = setTimeout(connect, 4000);
       };
     }
     connect();
@@ -211,21 +214,20 @@ export default function TerminalPage() {
     };
   }, [accessToken]);
 
-  // ── REST fallback ──────────────────────────────────────────────────────────
+  // ── REST fallback (triggers if ws disconnected OR no ticks received for 5 seconds) ──
+  const isWsStale = wsStatus === "live" && (Date.now() - lastTickAt > 5000);
   useQuery({
-    queryKey: ["live-quotes-fallback"],
+    queryKey: ["live-quotes-fallback", isWsStale ? "stale" : wsStatus],
     queryFn: async () => {
       if (watchlist.length === 0) return [];
       const data = await api.get("/market/live-quotes", { params: { symbols: watchlist.join(",") } }).then(r => r.data);
-      if (wsStatus !== "live") {
-        const map: Record<string,any> = {};
-        data.forEach((q: any) => { map[q.symbol] = q; });
-        setLiveData(map);
-      }
+      const map: Record<string,any> = {};
+      data.forEach((q: any) => { map[q.symbol] = q; });
+      setLiveData(prev => ({ ...prev, ...map }));
       return data;
     },
-    refetchInterval: 4_000,
-    enabled: wsStatus !== "live" && watchlist.length > 0,
+    refetchInterval: 2_500,
+    enabled: (wsStatus !== "live" || isWsStale) && watchlist.length > 0,
   });
 
   // All columns (default + custom) from DB
@@ -233,7 +235,8 @@ export default function TerminalPage() {
     queryKey: ["terminal-columns"],
     queryFn: () => api.get("/terminal/columns").then(r => r.data),
   });
-  const [viewMode, setViewMode] = useState<"equity" | "options" | "mcx" | "algo">("equity");
+  const [viewMode, setViewMode] = useState<"watchlist" | "algo">("watchlist");
+  const [segmentFilter, setSegmentFilter] = useState<"all" | "equity" | "options" | "mcx">("all");
 
   const visibleCols = useMemo(() => {
     return (allCols ?? [])
@@ -246,6 +249,7 @@ export default function TerminalPage() {
     const forBook = visibleCols.filter((c: any) => {
       const colBook = (c.book || "equity").toLowerCase();
       if (!c.formula) return true; // default columns (open, high, ltp, etc.) are shared
+      if (book === "all") return true; // return all columns in single watchlist view
       if (colBook === book || colBook === "shared") return true;
       if (book === "mcx" && !hasBookFormulas && colBook === "equity") return true;
       return false;
@@ -330,6 +334,13 @@ export default function TerminalPage() {
   const mcxSymbols = useMemo(() => watchlist.filter(isMcxSymbol), [watchlist, isMcxSymbol]);
   const optionSymbols = useMemo(() => watchlist.filter(isOptionSymbol), [watchlist, isOptionSymbol]);
   const equitySymbols = useMemo(() => watchlist.filter(isEquitySymbol), [watchlist, isEquitySymbol]);
+
+  const filteredWatchlist = useMemo(() => {
+    if (segmentFilter === "equity") return equitySymbols;
+    if (segmentFilter === "options") return optionSymbols;
+    if (segmentFilter === "mcx") return mcxSymbols;
+    return watchlist;
+  }, [segmentFilter, watchlist, equitySymbols, optionSymbols, mcxSymbols]);
 
   const ticksRef = useRef<Record<string, any>>({});
   ticksRef.current = liveData;
@@ -563,38 +574,22 @@ export default function TerminalPage() {
           background: "var(--surface)",
         }}
       >
-        {/* Left: Tab Switcher (EQUITY | OPTIONS | MCX | ALGO WINDOW) */}
+        {/* Left: Tab Switcher (WATCHLIST | ALGO WINDOW) */}
         <div style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
             <button
               type="button"
-              className={`tab-btn ${viewMode === "equity" ? "active" : ""}`}
-              onClick={() => setViewMode("equity")}
-              style={{ padding: "4px 10px", fontSize: 11 }}
+              className={`tab-btn ${viewMode === "watchlist" ? "active" : ""}`}
+              onClick={() => setViewMode("watchlist")}
+              style={{ padding: "4px 12px", fontSize: 11, fontWeight: 700 }}
             >
-              EQUITY ({equitySymbols.length})
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${viewMode === "options" ? "active" : ""}`}
-              onClick={() => setViewMode("options")}
-              style={{ padding: "4px 10px", fontSize: 11 }}
-            >
-              OPTIONS ({optionSymbols.length})
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${viewMode === "mcx" ? "active" : ""}`}
-              onClick={() => setViewMode("mcx")}
-              style={{ padding: "4px 10px", fontSize: 11 }}
-            >
-              MCX ({mcxSymbols.length})
+              WATCHLIST ({watchlist.length})
             </button>
             <button
               type="button"
               className={`tab-btn ${viewMode === "algo" ? "active" : ""}`}
               onClick={() => setViewMode("algo")}
-              style={{ padding: "4px 10px", fontSize: 11 }}
+              style={{ padding: "4px 12px", fontSize: 11, fontWeight: 700 }}
             >
               ALGO WINDOW ({algoRows?.length ?? 0})
             </button>
@@ -781,107 +776,109 @@ export default function TerminalPage() {
         />
       )}
 
-      {/* ── Separate List Views (EQUITY | OPTIONS | MCX | ALGO WINDOW) ──────── */}
-      {viewMode === "equity" && (
-        equitySymbols.length === 0 ? (
-          <div style={{
-            padding:"40px 20px", textAlign:"center", color:"var(--muted)",
-            fontSize:12, border:"1px solid var(--border)", background:"var(--surface)"
-          }}>
-            No equity symbols in watchlist. Click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to add.
+      {/* ── Single Unified Watchlist Pane for All Segments ──────── */}
+      {viewMode === "watchlist" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Segment Filter Toolbar */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 8,
+              padding: "4px 10px",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+            }}
+          >
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", letterSpacing: 0.5 }}>
+                SEGMENT:
+              </span>
+              <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
+                <button
+                  type="button"
+                  className={`tab-btn ${segmentFilter === "all" ? "active" : ""}`}
+                  onClick={() => setSegmentFilter("all")}
+                  style={{ padding: "3px 8px", fontSize: 10 }}
+                >
+                  ALL ({watchlist.length})
+                </button>
+                <button
+                  type="button"
+                  className={`tab-btn ${segmentFilter === "equity" ? "active" : ""}`}
+                  onClick={() => setSegmentFilter("equity")}
+                  style={{ padding: "3px 8px", fontSize: 10 }}
+                >
+                  EQUITY ({equitySymbols.length})
+                </button>
+                <button
+                  type="button"
+                  className={`tab-btn ${segmentFilter === "options" ? "active" : ""}`}
+                  onClick={() => setSegmentFilter("options")}
+                  style={{ padding: "3px 8px", fontSize: 10 }}
+                >
+                  OPTIONS ({optionSymbols.length})
+                </button>
+                <button
+                  type="button"
+                  className={`tab-btn ${segmentFilter === "mcx" ? "active" : ""}`}
+                  onClick={() => setSegmentFilter("mcx")}
+                  style={{ padding: "3px 8px", fontSize: 10 }}
+                >
+                  MCX ({mcxSymbols.length})
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: "var(--muted)" }}>
+              Showing {filteredWatchlist.length} of {watchlist.length} symbols
+            </div>
           </div>
-        ) : (
-          <TerminalTable
-            title="EQUITY"
-            book="equity"
-            onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({
-              symbol: sym,
-              segment: seg || instrMap[sym]?.segment || "NSE_EQ",
-              exchange: exch || "NSE",
-              token: tok || instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id),
-            })}
-            onMoveCol={handleMoveCol}
-            instrMap={instrMap}
-            watchlist={equitySymbols}
-            liveData={liveData}
-            termRowMap={termRowMap}
-            visibleCols={colsFor("equity")}
-            columnValues={columnValues ?? {}}
-            isAdmin={isAdmin}
-            onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
-            onExitRow={(id)=>exitRowMutation.mutate(id)}
-            onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
-          />
-        )
-      )}
 
-      {viewMode === "options" && (
-        optionSymbols.length === 0 ? (
-          <div style={{
-            padding:"40px 20px", textAlign:"center", color:"var(--muted)",
-            fontSize:12, border:"1px solid var(--border)", background:"var(--surface)"
-          }}>
-            No option contracts in watchlist. Click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to search & add options.
-          </div>
-        ) : (
-          <TerminalTable
-            title="OPTIONS"
-            book="option"
-            onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({
-              symbol: sym,
-              segment: seg || instrMap[sym]?.segment || "NSE_FNO",
-              exchange: exch || "NFO",
-              token: tok || instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id),
-            })}
-            onMoveCol={handleMoveCol}
-            instrMap={instrMap}
-            watchlist={optionSymbols}
-            liveData={liveData}
-            termRowMap={termRowMap}
-            visibleCols={colsFor("option")}
-            columnValues={columnValues ?? {}}
-            isAdmin={isAdmin}
-            onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
-            onExitRow={(id)=>exitRowMutation.mutate(id)}
-            onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
-          />
-        )
-      )}
-
-      {viewMode === "mcx" && (
-        mcxSymbols.length === 0 ? (
-          <div style={{
-            padding:"40px 20px", textAlign:"center", color:"var(--muted)",
-            fontSize:12, border:"1px solid var(--border)", background:"var(--surface)"
-          }}>
-            No MCX commodity contracts in watchlist. Click <strong style={{color:"var(--green)"}}>+ ADD SYMBOL</strong> to search & add GOLD, SILVER, CRUDEOIL, etc.
-          </div>
-        ) : (
-          <TerminalTable
-            title="MCX COMMODITIES"
-            book="mcx"
-            onOrder={(sym, inst, prefillSide, prefillPrice) => setOrderPanel({symbol:sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined})}
-            onAddToAlgo={(sym, seg, exch, tok) => addAlgoRowMutation.mutate({
-              symbol: sym,
-              segment: seg || instrMap[sym]?.segment || "MCX_COMM",
-              exchange: exch || "MCX",
-              token: tok || instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id),
-            })}
-            onMoveCol={handleMoveCol}
-            instrMap={instrMap}
-            watchlist={mcxSymbols}
-            liveData={liveData}
-            termRowMap={termRowMap}
-            visibleCols={colsFor("mcx")}
-            columnValues={columnValues ?? {}}
-            isAdmin={isAdmin}
-            onRemoveSymbol={(sym)=>removeMutation.mutate(sym)}
-            onExitRow={(id)=>exitRowMutation.mutate(id)}
-            onFormulaRow={(id,sym)=>setFormulaRow({id,symbol:sym})}
-          />
-        )
+          {filteredWatchlist.length === 0 ? (
+            <div
+              style={{
+                padding: "40px 20px",
+                textAlign: "center",
+                color: "var(--muted)",
+                fontSize: 12,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+              }}
+            >
+              No symbols in this segment. Click <strong style={{ color: "var(--green)" }}>+ ADD SYMBOL</strong> to add.
+            </div>
+          ) : (
+            <TerminalTable
+              title={segmentFilter === "all" ? "WATCHLIST (ALL SEGMENTS)" : segmentFilter.toUpperCase()}
+              book={segmentFilter === "all" ? "equity" : segmentFilter}
+              onOrder={(sym, inst, prefillSide, prefillPrice) =>
+                setOrderPanel({ symbol: sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined })
+              }
+              onAddToAlgo={(sym, seg, exch, tok) =>
+                addAlgoRowMutation.mutate({
+                  symbol: sym,
+                  segment: seg || instrMap[sym]?.segment || (isOptionSymbol(sym) ? "NSE_FNO" : isMcxSymbol(sym) ? "MCX_COMM" : "NSE_EQ"),
+                  exchange: exch || (isOptionSymbol(sym) ? "NFO" : isMcxSymbol(sym) ? "MCX" : "NSE"),
+                  token: tok || instrMap[sym]?.security_id || ((SECURITY_IDS as any)[sym]?.security_id),
+                })
+              }
+              onMoveCol={handleMoveCol}
+              instrMap={instrMap}
+              watchlist={filteredWatchlist}
+              liveData={liveData}
+              termRowMap={termRowMap}
+              visibleCols={colsFor(segmentFilter)}
+              columnValues={columnValues ?? {}}
+              isAdmin={isAdmin}
+              onRemoveSymbol={(sym) => removeMutation.mutate(sym)}
+              onExitRow={(id) => exitRowMutation.mutate(id)}
+              onFormulaRow={(id, sym) => setFormulaRow({ id, symbol: sym })}
+            />
+          )}
+        </div>
       )}
 
       {/* ── Algo Trading Window Table ────────────────────────────────────── */}

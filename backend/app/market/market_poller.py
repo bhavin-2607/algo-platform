@@ -78,7 +78,17 @@ class MarketPoller:
 
     def add_symbol(self, symbol: str, security_id: str, exchange_segment: str):
         """Add a symbol to the watchlist."""
+        if not symbol or not security_id:
+            return
         sym_u = symbol.upper()
+        existing = self._watchlist.get(sym_u)
+        if (
+            existing
+            and str(existing.get("security_id")) == str(security_id)
+            and existing.get("exchange_segment") == exchange_segment
+        ):
+            return
+
         self._watchlist[sym_u] = {
             "security_id":      str(security_id),
             "exchange_segment": exchange_segment,
@@ -209,15 +219,18 @@ class MarketPoller:
         # 3. Broadcast to all active client WebSocket queues
         for q in list(self._queues):
             try:
+                if q.full():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
                 q.put_nowait([tick])
-            except asyncio.QueueFull:
-                pass
             except Exception:
                 pass
 
     async def subscribe(self, symbols: str = "") -> asyncio.Queue:
         """Register a new WebSocket client. Returns a queue to receive ticks."""
-        q: asyncio.Queue = asyncio.Queue(maxsize=10)
+        q: asyncio.Queue = asyncio.Queue(maxsize=100)
 
         async with self._lock:
             self._queues.append(q)

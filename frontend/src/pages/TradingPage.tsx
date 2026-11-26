@@ -24,7 +24,7 @@ export default function TradingPage() {
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
-  const [tab, setTab] = useState<"orders">("orders");
+  const [tab, setTab] = useState<"all" | "positions" | "orders">("all");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ broker:"dhan", client_id:"", access_token:"", paper_trading:true });
 
@@ -86,83 +86,189 @@ export default function TradingPage() {
     <Layout>
       <div className="page-header">
         <div>
-          <h1 className="page-title">TRADING</h1>
-          <p className="page-sub">Order management & broker connections</p>
+          <h1 className="page-title">POSITIONS & ORDERS</h1>
+          <p className="page-sub">Live Dhan positions, execution orderbook, and status</p>
         </div>
-        <div style={{display:"flex", gap:8}}>
+        <div style={{ display: "flex", gap: 8 }}>
           <div className="tab-switcher">
-            <button className={`tab-btn${tab==="orders"?"  active":""}`} onClick={()=>setTab("orders")}>ORDER BOOK</button>
-
+            <button
+              className={`tab-btn${tab === "all" ? " active" : ""}`}
+              onClick={() => setTab("all")}
+            >
+              ALL
+            </button>
+            <button
+              className={`tab-btn${tab === "positions" ? " active" : ""}`}
+              onClick={() => setTab("positions")}
+            >
+              POSITIONS ({positions?.length ?? 0})
+            </button>
+            <button
+              className={`tab-btn${tab === "orders" ? " active" : ""}`}
+              onClick={() => setTab("orders")}
+            >
+              ORDER BOOK ({orderbook?.length ?? 0})
+            </button>
           </div>
         </div>
       </div>
 
-
-      {/* ── ORDER BOOK TAB ───────────────────────────────────────────────────── */}
-      {tab === "orders" && (
-        <>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-header"><span className="card-title">ORDER BOOK</span></div>
-            {obLoading ? (
-              <div className="empty-state">Loading orders…</div>
-            ) : !orderbook?.length ? (
-              <div className="empty-state">No orders today.</div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      {["SYMBOL","SIDE","QTY","STATUS","AVG ₹","TIME","ORDER ID"].map(h => <th key={h}>{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orderbook.map((o: any) => (
-                      <tr key={o.order_id}>
-                        <td className="symbol">{o.symbol}</td>
-                        <td>{o.transaction_type}</td>
-                        <td>{o.filled_qty || o.quantity}</td>
-                        <td>{o.status}</td>
-                        <td>{o.avg_price ?? o.price ?? "—"}</td>
-                        <td>{o.created_at || "—"}</td>
-                        <td>{o.order_id}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+      {/* ── POSITIONS SECTION ──────────────────────────────────────────────── */}
+      {(tab === "all" || tab === "positions") && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-header">
+            <span className="card-title">DHAN LIVE POSITIONS</span>
+            <span className="card-badge">
+              {(positions ?? []).filter((p: any) => Number(p.net_qty) !== 0).length} open / {(positions ?? []).length} total
+            </span>
           </div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-header"><span className="card-title">POSITIONS</span></div>
-            {posLoading ? (
-              <div className="empty-state">Loading positions…</div>
-            ) : !positions?.length ? (
-              <div className="empty-state">No positions today.</div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      {["SYMBOL","NET QTY","TYPE","BUY","SELL","REALIZED"].map(h => <th key={h}>{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {positions.map((p: any) => (
+          {posLoading ? (
+            <div className="empty-state">Loading positions…</div>
+          ) : !positions?.length ? (
+            <div className="empty-state">No positions today.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table" style={{ minWidth: 900 }}>
+                <thead>
+                  <tr>
+                    {["SYMBOL", "EXCH", "PRODUCT", "NET QTY", "STATUS", "BUY", "SELL", "REALIZED", "UNREALIZED", "TOTAL P&L"].map(h => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map((p: any) => {
+                    const netQty = Number(p.net_qty) || 0;
+                    const realized = Number(p.realized) || 0;
+                    const unrealized = Number(p.unrealized) || 0;
+                    const total = Number(p.total_pnl != null ? p.total_pnl : (realized + unrealized));
+                    const isOpen = netQty !== 0;
+                    return (
                       <tr key={`${p.symbol}-${p.product_type}`}>
-                        <td className="symbol">{p.symbol}</td>
-                        <td>{p.net_qty}</td>
-                        <td>{p.position_type}</td>
-                        <td>{p.buy_qty} @ {p.buy_avg ?? "—"}</td>
-                        <td>{p.sell_qty} @ {p.sell_avg ?? "—"}</td>
-                        <td>{p.realized ?? "—"}</td>
+                        <td className="symbol" style={{ fontWeight: 600 }}>{p.symbol}</td>
+                        <td style={{ fontSize: 10, color: "var(--muted)" }}>{p.exchange || "—"}</td>
+                        <td style={{ fontSize: 11 }}>{p.product_type || "—"}</td>
+                        <td
+                          style={{
+                            fontFamily: "monospace",
+                            fontWeight: 700,
+                            color: netQty > 0 ? "var(--green)" : netQty < 0 ? "var(--red)" : "var(--muted)",
+                          }}
+                        >
+                          {netQty}
+                        </td>
+                        <td>
+                          <span className={`badge ${isOpen ? "badge-green" : "badge-gray"}`}>
+                            {isOpen ? "OPEN" : "CLOSED"}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: 11, fontFamily: "monospace" }}>
+                          {p.buy_qty ? `${p.buy_qty} @ ₹${Number(p.buy_avg ?? 0).toFixed(2)}` : "—"}
+                        </td>
+                        <td style={{ fontSize: 11, fontFamily: "monospace" }}>
+                          {p.sell_qty ? `${p.sell_qty} @ ₹${Number(p.sell_avg ?? 0).toFixed(2)}` : "—"}
+                        </td>
+                        <td className={realized >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace" }}>
+                          {`${realized >= 0 ? "+" : ""}₹${realized.toFixed(2)}`}
+                        </td>
+                        <td className={unrealized >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace" }}>
+                          {`${unrealized >= 0 ? "+" : ""}₹${unrealized.toFixed(2)}`}
+                        </td>
+                        <td className={total >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace", fontWeight: 700 }}>
+                          {`${total >= 0 ? "+" : ""}₹${total.toFixed(2)}`}
+                        </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ORDER BOOK SECTION ──────────────────────────────────────────────── */}
+      {(tab === "all" || tab === "orders") && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-header">
+            <span className="card-title">DHAN LIVE ORDER BOOK</span>
+            <span className="card-badge">{orderbook?.length ?? 0} orders</span>
           </div>
-        </>
+          {obLoading ? (
+            <div className="empty-state">Loading orders…</div>
+          ) : !orderbook?.length ? (
+            <div className="empty-state">No orders today.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table" style={{ minWidth: 950 }}>
+                <thead>
+                  <tr>
+                    {["TIME", "SYMBOL", "EXCH", "SIDE", "TYPE", "PRODUCT", "QTY", "PRICE", "AVG ₹", "STATUS", "ORDER ID", "REMARKS"].map(h => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderbook.map((o: any) => {
+                    const statusUpper = String(o.status || "").toUpperCase();
+                    const sideUpper = String(o.transaction_type || "").toUpperCase();
+                    const isTraded = statusUpper === "TRADED" || statusUpper === "FILLED";
+                    const isRejected = statusUpper === "REJECTED" || statusUpper === "CANCELLED";
+                    const formattedTime = o.created_at
+                      ? (o.created_at.includes("T") ? o.created_at.split("T")[1]?.slice(0, 8) : o.created_at.slice(11, 19))
+                      : "—";
+                    return (
+                      <tr key={o.order_id}>
+                        <td style={{ color: "var(--muted)", fontSize: 11, whiteSpace: "nowrap", fontFamily: "monospace" }}>
+                          {formattedTime}
+                        </td>
+                        <td className="symbol" style={{ fontWeight: 600 }}>{o.symbol}</td>
+                        <td style={{ fontSize: 10, color: "var(--muted)" }}>{o.exchange || "NSE"}</td>
+                        <td>
+                          <span className={`badge ${sideUpper === "BUY" ? "badge-green" : "badge-red"}`}>
+                            {sideUpper}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: 11 }}>{o.order_type || "—"}</td>
+                        <td style={{ fontSize: 11 }}>{o.product_type || "—"}</td>
+                        <td style={{ fontFamily: "monospace" }}>
+                          {o.filled_qty != null && o.filled_qty !== o.quantity ? `${o.filled_qty}/${o.quantity}` : (o.quantity || "—")}
+                        </td>
+                        <td style={{ fontFamily: "monospace" }}>
+                          {o.price ? `₹${Number(o.price).toLocaleString()}` : "MKT"}
+                        </td>
+                        <td style={{ fontFamily: "monospace", fontWeight: 600 }}>
+                          {o.avg_price ? `₹${Number(o.avg_price).toLocaleString()}` : "—"}
+                        </td>
+                        <td>
+                          <span className={`badge ${isTraded ? "badge-green" : isRejected ? "badge-red" : "badge-yellow"}`}>
+                            {statusUpper}
+                          </span>
+                        </td>
+                        <td style={{ fontFamily: "monospace", color: "var(--muted)", fontSize: 11 }}>
+                          {o.order_id}
+                        </td>
+                        <td
+                          style={{
+                            fontSize: 11,
+                            color: isRejected ? "var(--red)" : "var(--muted)",
+                            maxWidth: 240,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                          title={o.remarks || ""}
+                        >
+                          {o.remarks || "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
     </Layout>
   );

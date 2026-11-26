@@ -2487,38 +2487,71 @@ def _pair_dhan_fills(fills: list[dict]) -> tuple[list[dict], list[dict]]:
 async def get_dhan_trade_history(
     current_user: User = Depends(get_current_user),
 ):
-    """Live fills from Dhan, including trades placed on the Dhan app."""
+    """Live fills and positions from Dhan, including trades placed on the Dhan app."""
     from datetime import date, timedelta
     from app.core.config import settings
 
     if not settings.DHAN_ACCESS_TOKEN or not settings.DHAN_CLIENT_ID:
         return {"connected": False, "trades": [], "summary": None, "weekly": []}
 
+    # 1. Fetch live positions from Dhan to get true live realized and unrealized profit
+    pos_data = await _dhan_get("/positions")
+    pos_rows = pos_data if isinstance(pos_data, list) else (pos_data.get("data") or []) if isinstance(pos_data, dict) else []
+    today_realized = round(sum(float(p.get("realizedProfit") or 0) for p in pos_rows if isinstance(p, dict)), 2)
+    today_unrealized = round(sum(float(p.get("unrealizedProfit") or 0) for p in pos_rows if isinstance(p, dict)), 2)
+    today_positions_pnl = round(today_realized + today_unrealized, 2)
+
+    # 2. Fetch today's fills directly from /trades
+    today_trades_data = await _dhan_get("/trades")
+    today_trades_rows = today_trades_data if isinstance(today_trades_data, list) else (today_trades_data.get("data") or []) if isinstance(today_trades_data, dict) else []
+
+    fills = []
+    seen_fills = set()
+
+    def _parse_row(row: dict):
+        if not isinstance(row, dict):
+            return None
+        when = row.get("exchangeTime") or row.get("updateTime") or row.get("createTime")
+        if when in (None, "NA"):
+            when = None
+        order_id = str(row.get("orderId") or row.get("exchangeTradeId") or "")
+        side = row.get("transactionType")
+        qty = row.get("tradedQuantity") or 0
+        price = float(row.get("tradedPrice") or 0)
+        sec_id = str(row.get("securityId") or "")
+        key = (order_id, side, qty, price, sec_id)
+        if key in seen_fills:
+            return None
+        seen_fills.add(key)
+        return {
+            "symbol": row.get("customSymbol") or row.get("tradingSymbol") or row.get("securityId"),
+            "exchange": row.get("exchangeSegment"),
+            "security_id": sec_id,
+            "product": row.get("productType") or "",
+            "side": side,
+            "qty": qty,
+            "price": price,
+            "time": when,
+            "order_id": order_id,
+        }
+
+    for row in today_trades_rows:
+        item = _parse_row(row)
+        if item:
+            fills.append(item)
+
+    # 3. Also fetch historical fills from 90 days
     end = date.today()
     start = end - timedelta(days=90)
-    fills = []
-    for page in range(5):
+    for page in range(3):
         data = await _dhan_get(f"/trades/{start.isoformat()}/{end.isoformat()}/{page}")
         rows = data if isinstance(data, list) else []
         if not rows:
             break
         for row in rows:
-            if not isinstance(row, dict):
-                continue
-            when = row.get("exchangeTime") or row.get("updateTime") or row.get("createTime")
-            if when in (None, "NA"):
-                when = None
-            fills.append({
-                "symbol": row.get("customSymbol") or row.get("tradingSymbol") or row.get("securityId"),
-                "exchange": row.get("exchangeSegment"),
-                "security_id": str(row.get("securityId") or ""),
-                "product": row.get("productType") or "",
-                "side": row.get("transactionType"),
-                "qty": row.get("tradedQuantity") or 0,
-                "price": float(row.get("tradedPrice") or 0),
-                "time": when,
-                "order_id": str(row.get("orderId") or row.get("exchangeTradeId") or ""),
-            })
+            item = _parse_row(row)
+            if item:
+                fills.append(item)
         if len(rows) < 100:
             break
 
@@ -2528,16 +2561,22 @@ async def get_dhan_trade_history(
     losers = [row for row in closed if (row["pnl"] or 0) < 0]
     total_pnl = round(sum(row["pnl"] or 0 for row in closed), 2)
     today = date.today().isoformat()
-    today_pnl = round(sum(
+    today_pnl_from_fills = round(sum(
         row["pnl"] or 0 for row in closed
         if (row["closed_at"] or "").startswith(today)
     ), 2)
+    final_today_pnl = today_positions_pnl if pos_rows else today_pnl_from_fills
+
     weekly = []
     for offset in range(6, -1, -1):
         day = end - timedelta(days=offset)
         key = day.isoformat()
-        pnl = sum(row["pnl"] or 0 for row in closed if (row["closed_at"] or "").startswith(key))
+        if key == today and pos_rows:
+            pnl = today_positions_pnl
+        else:
+            pnl = sum(row["pnl"] or 0 for row in closed if (row["closed_at"] or "").startswith(key))
         weekly.append({"day": day.strftime("%a"), "date": key, "pnl": round(pnl, 2)})
+
     return {
         "connected": True,
         "trades": trades[:50],
@@ -2545,7 +2584,9 @@ async def get_dhan_trade_history(
             "total_trades": len(trades),
             "closed_trades": len(closed),
             "total_pnl": total_pnl,
-            "today_pnl": today_pnl,
+            "today_pnl": final_today_pnl,
+            "today_realized_pnl": today_realized,
+            "today_unrealized_pnl": today_unrealized,
             "win_rate": round(len(winners) / len(closed) * 100, 1) if closed else 0,
             "winners": len(winners),
             "losers": len(losers),
@@ -2595,23 +2636,29 @@ async def get_orderbook(
 async def get_today_positions(
     current_user: User = Depends(get_current_user),
 ):
-    """Fetch today's positions from Dhan. A flattened trade comes back with netQty 0."""
+    """Fetch today's positions from Dhan with full profit and execution details."""
     data = await _dhan_get("/positions")
     rows = data if isinstance(data, list) else (data.get("data") or []) if isinstance(data, dict) else []
-    return [
-        {
+    res = []
+    for p in rows:
+        if not isinstance(p, dict):
+            continue
+        realized = float(p.get("realizedProfit") or 0)
+        unrealized = float(p.get("unrealizedProfit") or 0)
+        total_pnl = round(realized + unrealized, 2)
+        res.append({
             "symbol":        p.get("tradingSymbol") or p.get("securityId"),
             "exchange":      p.get("exchangeSegment"),
             "product_type":  p.get("productType"),
-            "net_qty":       p.get("netQty"),
+            "net_qty":       p.get("netQty") or 0,
             "position_type": p.get("positionType"),
-            "buy_qty":       p.get("dayBuyQty") or p.get("buyQty"),
-            "sell_qty":      p.get("daySellQty") or p.get("sellQty"),
+            "buy_qty":       p.get("dayBuyQty") or p.get("buyQty") or 0,
+            "sell_qty":      p.get("daySellQty") or p.get("sellQty") or 0,
             "buy_avg":       p.get("buyAvg"),
             "sell_avg":      p.get("sellAvg"),
-            "unrealized":    p.get("unrealizedProfit"),
-            "realized":      p.get("realizedProfit"),
-        }
-        for p in rows
-        if isinstance(p, dict)
-    ]
+            "cost_price":    p.get("costPrice"),
+            "unrealized":    round(unrealized, 2),
+            "realized":      round(realized, 2),
+            "total_pnl":     total_pnl,
+        })
+    return res

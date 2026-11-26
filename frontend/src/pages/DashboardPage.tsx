@@ -44,13 +44,13 @@ export default function DashboardPage() {
   const { data: brokerOrders } = useQuery({
     queryKey: ["orderbook"],
     queryFn: () => api.get("/terminal/orderbook").then(r => r.data),
-    refetchInterval: 15_000,
+    refetchInterval: 10_000,
   });
 
   const { data: brokerPositions } = useQuery({
     queryKey: ["dhan-positions"],
     queryFn: () => api.get("/terminal/positions").then(r => r.data),
-    refetchInterval: 15_000,
+    refetchInterval: 10_000,
   });
 
   const { data: brokers } = useQuery({
@@ -59,6 +59,14 @@ export default function DashboardPage() {
   });
 
   const openPositions = (brokerPositions ?? []).filter((p: any) => Number(p.net_qty) !== 0);
+
+  // Compute live Today P&L from broker positions (realized + unrealized) with fallback to trade summary
+  const positionsRealized = (brokerPositions ?? []).reduce((acc: number, p: any) => acc + (Number(p.realized) || 0), 0);
+  const positionsUnrealized = (brokerPositions ?? []).reduce((acc: number, p: any) => acc + (Number(p.unrealized) || 0), 0);
+  const livePositionsPnl = positionsRealized + positionsUnrealized;
+  const todayPnl = (brokerPositions && brokerPositions.length > 0)
+    ? livePositionsPnl
+    : (summary?.today_pnl ?? 0);
 
   return (
     <Layout>
@@ -75,9 +83,10 @@ export default function DashboardPage() {
       <div className="stats-grid">
         <StatCard
           label="TODAY'S P&L"
-          value={`₹${(summary?.today_pnl ?? 0).toLocaleString()}`}
-          delta={summary?.today_pnl >= 0 ? "Profitable day" : "Loss day"}
-          positive={summary?.today_pnl >= 0}
+          value={`${todayPnl >= 0 ? "+" : ""}₹${Number(todayPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          delta={todayPnl > 0 ? "Profitable day" : todayPnl < 0 ? "Loss day" : "Break-even"}
+          positive={todayPnl > 0}
+          neutral={todayPnl === 0}
         />
         <StatCard
           label="TOTAL P&L"
@@ -129,39 +138,148 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Live Orderbook with Full Execution Details */}
       <div className="card" style={{ marginBottom: 10 }}>
         <div className="card-header">
           <span className="card-title">DHAN LIVE ORDERBOOK</span>
-          <span className="card-badge">{openPositions.length} open</span>
+          <span className="card-badge">{brokerOrders?.length ?? 0} orders</span>
         </div>
-        {!brokerOrders?.length && !brokerPositions?.length ? (
+        {!brokerOrders?.length ? (
           <div className="empty-state">No Dhan orders today.</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table className="data-table">
+            <table className="data-table" style={{ minWidth: 950 }}>
               <thead>
                 <tr>
-                  {["SYMBOL","SIDE","QTY","STATUS","ORDER ID"].map(h => <th key={h}>{h}</th>)}
+                  {["TIME", "SYMBOL", "EXCH", "SIDE", "TYPE", "PRODUCT", "QTY", "PRICE", "AVG ₹", "STATUS", "ORDER ID", "REMARKS"].map(h => (
+                    <th key={h}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {(brokerOrders ?? []).map((o: any) => (
-                  <tr key={o.order_id}>
-                    <td className="symbol">{o.symbol}</td>
-                    <td>
-                      <span className={`badge ${String(o.transaction_type).toUpperCase()==="BUY"?"badge-green":"badge-red"}`}>
-                        {o.transaction_type}
-                      </span>
-                    </td>
-                    <td>{o.filled_qty || o.quantity}</td>
-                    <td>
-                      <span className={`badge ${String(o.status).toUpperCase()==="TRADED"||String(o.status).toUpperCase()==="FILLED"?"badge-green":String(o.status).toUpperCase()==="REJECTED"||String(o.status).toUpperCase()==="CANCELLED"?"badge-red":"badge-yellow"}`}>
-                        {o.status}
-                      </span>
-                    </td>
-                    <td style={{fontFamily:"monospace", color:"var(--muted)", fontSize:11}}>{o.order_id}</td>
-                  </tr>
-                ))}
+                {(brokerOrders ?? []).map((o: any) => {
+                  const statusUpper = String(o.status || "").toUpperCase();
+                  const sideUpper = String(o.transaction_type || "").toUpperCase();
+                  const isTraded = statusUpper === "TRADED" || statusUpper === "FILLED";
+                  const isRejected = statusUpper === "REJECTED" || statusUpper === "CANCELLED";
+                  const formattedTime = o.created_at
+                    ? (o.created_at.includes("T") ? o.created_at.split("T")[1]?.slice(0, 8) : o.created_at.slice(11, 19))
+                    : "—";
+                  return (
+                    <tr key={o.order_id}>
+                      <td style={{ color: "var(--muted)", fontSize: 11, whiteSpace: "nowrap", fontFamily: "monospace" }}>
+                        {formattedTime}
+                      </td>
+                      <td className="symbol" style={{ fontWeight: 600 }}>{o.symbol}</td>
+                      <td style={{ fontSize: 10, color: "var(--muted)" }}>{o.exchange || "NSE"}</td>
+                      <td>
+                        <span className={`badge ${sideUpper === "BUY" ? "badge-green" : "badge-red"}`}>
+                          {sideUpper}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 11 }}>{o.order_type || "—"}</td>
+                      <td style={{ fontSize: 11 }}>{o.product_type || "—"}</td>
+                      <td style={{ fontFamily: "monospace" }}>
+                        {o.filled_qty != null && o.filled_qty !== o.quantity ? `${o.filled_qty}/${o.quantity}` : (o.quantity || "—")}
+                      </td>
+                      <td style={{ fontFamily: "monospace" }}>
+                        {o.price ? `₹${Number(o.price).toLocaleString()}` : "MKT"}
+                      </td>
+                      <td style={{ fontFamily: "monospace", fontWeight: 600 }}>
+                        {o.avg_price ? `₹${Number(o.avg_price).toLocaleString()}` : "—"}
+                      </td>
+                      <td>
+                        <span className={`badge ${isTraded ? "badge-green" : isRejected ? "badge-red" : "badge-yellow"}`}>
+                          {statusUpper}
+                        </span>
+                      </td>
+                      <td style={{ fontFamily: "monospace", color: "var(--muted)", fontSize: 11 }}>
+                        {o.order_id}
+                      </td>
+                      <td
+                        style={{
+                          fontSize: 11,
+                          color: isRejected ? "var(--red)" : "var(--muted)",
+                          maxWidth: 240,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={o.remarks || ""}
+                      >
+                        {o.remarks || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Live Positions with Full P&L Breakdown */}
+      <div className="card" style={{ marginBottom: 10 }}>
+        <div className="card-header">
+          <span className="card-title">DHAN LIVE POSITIONS</span>
+          <span className="card-badge">{openPositions.length} open / {(brokerPositions ?? []).length} total</span>
+        </div>
+        {!brokerPositions?.length ? (
+          <div className="empty-state">No Dhan positions today.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="data-table" style={{ minWidth: 900 }}>
+              <thead>
+                <tr>
+                  {["SYMBOL", "EXCH", "PRODUCT", "NET QTY", "STATUS", "BUY", "SELL", "REALIZED", "UNREALIZED", "TOTAL P&L"].map(h => (
+                    <th key={h}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(brokerPositions ?? []).map((p: any) => {
+                  const netQty = Number(p.net_qty) || 0;
+                  const realized = Number(p.realized) || 0;
+                  const unrealized = Number(p.unrealized) || 0;
+                  const total = Number(p.total_pnl != null ? p.total_pnl : (realized + unrealized));
+                  const isOpen = netQty !== 0;
+                  return (
+                    <tr key={`${p.symbol}-${p.product_type}`}>
+                      <td className="symbol" style={{ fontWeight: 600 }}>{p.symbol}</td>
+                      <td style={{ fontSize: 10, color: "var(--muted)" }}>{p.exchange || "—"}</td>
+                      <td style={{ fontSize: 11 }}>{p.product_type || "—"}</td>
+                      <td
+                        style={{
+                          fontFamily: "monospace",
+                          fontWeight: 700,
+                          color: netQty > 0 ? "var(--green)" : netQty < 0 ? "var(--red)" : "var(--muted)",
+                        }}
+                      >
+                        {netQty}
+                      </td>
+                      <td>
+                        <span className={`badge ${isOpen ? "badge-green" : "badge-gray"}`}>
+                          {isOpen ? "OPEN" : "CLOSED"}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 11, fontFamily: "monospace" }}>
+                        {p.buy_qty ? `${p.buy_qty} @ ₹${Number(p.buy_avg ?? 0).toFixed(2)}` : "—"}
+                      </td>
+                      <td style={{ fontSize: 11, fontFamily: "monospace" }}>
+                        {p.sell_qty ? `${p.sell_qty} @ ₹${Number(p.sell_avg ?? 0).toFixed(2)}` : "—"}
+                      </td>
+                      <td className={realized >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace" }}>
+                        {`${realized >= 0 ? "+" : ""}₹${realized.toFixed(2)}`}
+                      </td>
+                      <td className={unrealized >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace" }}>
+                        {`${unrealized >= 0 ? "+" : ""}₹${unrealized.toFixed(2)}`}
+                      </td>
+                      <td className={total >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace", fontWeight: 700 }}>
+                        {`${total >= 0 ? "+" : ""}₹${total.toFixed(2)}`}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

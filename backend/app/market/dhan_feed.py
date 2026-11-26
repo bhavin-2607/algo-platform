@@ -171,12 +171,24 @@ class DhanLiveFeed:
 
         logger.info(f"Subscribed: {exchange}:{sec_id_str} ({symbol or ''}) → tick:{exchange}:{token or sec_id_str}")
 
-        # If feed is active, send dynamic subscription packet
-        if self._market_feed_instance and self._is_connected:
+        # Thread-safe dynamic subscription: dispatch to background feed thread's event loop
+        self._safe_dynamic_subscribe(dhan_exchange, sec_id_str)
+
+    def _safe_dynamic_subscribe(self, dhan_exchange: int, sec_id_str: str):
+        """Schedule dynamic subscription packet onto the background feed event loop."""
+        if not self._market_feed_instance or not self._is_connected:
+            return
+        loop = getattr(self, "_feed_loop", None)
+        if loop and loop.is_running():
+            def _dispatch():
+                try:
+                    self._market_feed_instance.subscribe_symbols([(dhan_exchange, sec_id_str, _get_quote_code())])
+                except Exception as e:
+                    logger.debug(f"Dynamic subscribe_symbols error: {e}")
             try:
-                self._market_feed_instance.subscribe_symbols([(dhan_exchange, sec_id_str, _get_quote_code())])
+                loop.call_soon_threadsafe(_dispatch)
             except Exception as e:
-                logger.debug(f"Dynamic subscribe_symbols error: {e}")
+                logger.debug(f"Failed to schedule dynamic subscription: {e}")
 
     def unsubscribe(self, symbol: str):
         """Unsubscribe by symbol name dynamically."""
@@ -243,6 +255,7 @@ class DhanLiveFeed:
         retry_count = 0
 
         async def _listen():
+            self._feed_loop = asyncio.get_running_loop()
             # Build instrument list in Dhan SDK format
             dhan_instruments = [
                 (inst["dhan_exchange"], inst["security_id"], _get_quote_code())
@@ -255,12 +268,16 @@ class DhanLiveFeed:
             logger.info("DhanLiveFeed WebSocket connected successfully to api-feed.dhan.co")
 
             while self._running and feed.ws is not None:
-                response = await feed.ws.recv()
-                if not isinstance(response, (bytes, bytearray)):
-                    continue
-                data = feed.process_data(response)
-                if isinstance(data, dict):
-                    self._on_tick(data, self._channel_map)
+                try:
+                    response = await feed.ws.recv()
+                    if not isinstance(response, (bytes, bytearray)):
+                        continue
+                    data = feed.process_data(response)
+                    if isinstance(data, dict):
+                        self._on_tick(data, self._channel_map)
+                except Exception as ex:
+                    logger.warning(f"Dhan live feed tick loop exception: {ex}")
+                    break
 
         while self._running:
             try:
@@ -278,6 +295,7 @@ class DhanLiveFeed:
                 time.sleep(wait)
 
         self._is_connected = False
+        self._feed_loop = None
         logger.info("DhanLiveFeed stopped")
 
     def _on_tick(self, data: dict, channel_map: dict):
