@@ -60,12 +60,179 @@ class BsaAlgoEngine:
         self._running = False
         self._db_lock = asyncio.Lock()
         self._row_locks: dict[UUID, asyncio.Lock] = {}
+        self._last_dhan_sync_time: dict[str, float] = {}
 
     @classmethod
     def get_instance(cls) -> "BsaAlgoEngine":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
+
+    async def sync_dhan_status(self, db: AsyncSession, user_id: Optional[UUID] = None, force: bool = False) -> int:
+        """
+        Synchronize Algo Window rows with live Dhan orderbook and position status.
+        Ensures the Algo Window row status strictly reflects true broker state:
+        - If Dhan position is CLOSED (netQty=0, buyQty>0, sellQty>0) -> COMPLETED.
+        - If Dhan position is OPEN (netQty>0) -> IN_POSITION with real buyAvg.
+        - If Dhan recent order is REJECTED -> REJECTED and ALGO OFF.
+        - If Dhan recent order is TRADED BUY -> IN_POSITION with real traded price.
+        - If Dhan recent order is TRADED SELL -> COMPLETED and ALGO OFF.
+        """
+        user_key = str(user_id) if user_id else "all"
+        now_ts = asyncio.get_event_loop().time()
+        # Debounce: 2.0s cache unless forced
+        if not force and (now_ts - self._last_dhan_sync_time.get(user_key, 0.0) < 2.0):
+            return 0
+        self._last_dhan_sync_time[user_key] = now_ts
+
+        # Find active BrokerAccount
+        stmt = select(BrokerAccount).where(BrokerAccount.is_active == True)
+        if user_id:
+            stmt = stmt.where(BrokerAccount.user_id == user_id)
+        result = await db.execute(stmt)
+        accounts = result.scalars().all()
+        if not accounts:
+            return 0
+
+        # Select active live Dhan account (skip simulated/paper accounts)
+        dhan_account = next(
+            (a for a in accounts if not a.paper_trading and "DHAN" in (a.broker_type or "").upper()),
+            None,
+        )
+        if not dhan_account:
+            return 0
+
+        try:
+            adapter = get_broker_adapter(dhan_account)
+            if not adapter:
+                return 0
+
+            # Fetch live positions and orders from Dhan
+            positions_res, orders_res = await asyncio.gather(
+                adapter.get_positions(),
+                adapter.get_order_book(),
+                return_exceptions=True,
+            )
+
+            pos_list = positions_res if isinstance(positions_res, list) else []
+            order_list = orders_res if isinstance(orders_res, list) else []
+
+            # Map positions by securityId and tradingSymbol
+            pos_by_sec_id = {}
+            pos_by_sym = {}
+            for p in pos_list:
+                sid = str(p.get("securityId") or "").strip()
+                sym = str(p.get("tradingSymbol") or "").strip().upper()
+                if sid:
+                    pos_by_sec_id[sid] = p
+                if sym:
+                    pos_by_sym[sym] = p
+
+            # Map orders by orderId and securityId (ordered chronologically)
+            order_by_id = {}
+            orders_by_sec_id = {}
+            for o in order_list:
+                oid = str(o.get("orderId") or "").strip()
+                sid = str(o.get("securityId") or "").strip()
+                if oid:
+                    order_by_id[oid] = o
+                if sid:
+                    orders_by_sec_id.setdefault(sid, []).append(o)
+
+            # Query algo rows
+            row_stmt = select(BsaAlgoRow)
+            if user_id:
+                row_stmt = row_stmt.where(BsaAlgoRow.user_id == user_id)
+            row_res = await db.execute(row_stmt)
+            algo_rows = row_res.scalars().all()
+
+            updated_count = 0
+            for r in algo_rows:
+                sec_id = str(r.token or "").strip()
+                sym_u = (r.symbol or "").strip().upper()
+                pos = pos_by_sec_id.get(sec_id) or pos_by_sym.get(sym_u)
+
+                # 1. Check Dhan Position state
+                if pos:
+                    net_qty = int(pos.get("netQty") or 0)
+                    buy_qty = int(pos.get("buyQty") or 0)
+                    sell_qty = int(pos.get("sellQty") or 0)
+                    buy_avg = float(pos.get("buyAvg") or pos.get("costPrice") or 0.0)
+                    sell_avg = float(pos.get("sellAvg") or 0.0)
+                    realized = float(pos.get("realizedProfit") or 0.0)
+
+                    if net_qty == 0 and buy_qty > 0 and sell_qty > 0:
+                        # Full round-trip trade closed on Dhan
+                        if r.status != "COMPLETED" or r.is_algo_active:
+                            r.status = "COMPLETED"
+                            r.trades_completed = max(r.trades_completed, 1)
+                            if buy_avg > 0:
+                                r.buy_price = buy_avg
+                            if sell_avg > 0:
+                                r.sell_tgt = sell_avg
+                            r.pnl = realized
+                            r.is_algo_active = False
+                            r.last_signal = "DHAN CLOSED"
+                            updated_count += 1
+                    elif net_qty > 0:
+                        # Open holding in Dhan
+                        if r.status != "IN_POSITION" or not r.buy_price:
+                            r.status = "IN_POSITION"
+                            if buy_avg > 0:
+                                r.buy_price = buy_avg
+                            r.quantity = net_qty
+                            r.last_signal = "DHAN HOLDING"
+                            if r.trade_mode == "BUY_ONLY":
+                                r.is_algo_active = False
+                            updated_count += 1
+
+                # 2. Check Dhan Order state
+                sec_orders = orders_by_sec_id.get(sec_id) or []
+                latest_order = None
+                if r.last_order_id and r.last_order_id in order_by_id:
+                    latest_order = order_by_id[r.last_order_id]
+                elif sec_orders:
+                    latest_order = sec_orders[-1]
+
+                if latest_order:
+                    o_status = str(latest_order.get("orderStatus") or "").upper()
+                    o_side = str(latest_order.get("transactionType") or "").upper()
+                    o_price = float(latest_order.get("price") or 0.0)
+                    oms_err = str(latest_order.get("omsErrorDescription") or "")
+
+                    if o_status == "REJECTED":
+                        if r.status in ("ORDER_PENDING", "EXIT_PENDING"):
+                            r.status = "REJECTED"
+                            r.is_algo_active = False
+                            r.last_signal = f"REJECTED: {oms_err}"[:50]
+                            updated_count += 1
+                    elif o_status in ("PENDING", "TRANSIT"):
+                        if o_side == "BUY" and r.status != "ORDER_PENDING":
+                            r.status = "ORDER_PENDING"
+                            updated_count += 1
+                        elif o_side == "SELL" and r.status != "EXIT_PENDING":
+                            r.status = "EXIT_PENDING"
+                            updated_count += 1
+                    elif o_status == "TRADED":
+                        if o_side == "BUY" and r.status in ("ORDER_PENDING", "IDLE", "WAITING_SIGNAL"):
+                            r.status = "IN_POSITION"
+                            if o_price > 0:
+                                r.buy_price = o_price
+                            if r.trade_mode == "BUY_ONLY":
+                                r.is_algo_active = False
+                            updated_count += 1
+                        elif o_side == "SELL" and r.status in ("EXIT_PENDING", "IN_POSITION"):
+                            r.status = "COMPLETED"
+                            r.trades_completed = max(r.trades_completed, 1)
+                            r.is_algo_active = False
+                            updated_count += 1
+
+            if updated_count > 0:
+                await db.commit()
+            return updated_count
+        except Exception as e:
+            logger.warning(f"Dhan status sync failed: {e}")
+            return 0
 
     async def evaluate_tick_for_symbol(self, symbol: str, tick: dict, db: AsyncSession):
         """
@@ -201,21 +368,16 @@ class BsaAlgoEngine:
         entry_type = getattr(row, "entry_type", "FORMULA") or "FORMULA"
         custom_entry = getattr(row, "custom_entry", None)
 
-        # In SELL_ONLY mode, if row is still in IDLE, immediately transition to IN_POSITION
-        if trade_mode == "SELL_ONLY" and row.status in ("IDLE", "WAITING_SIGNAL"):
-            row.status = "IN_POSITION"
-            if chosen_target > 0:
-                row.sell_tgt = chosen_target
-
         # ── 1. Check Entry (State: IDLE or WAITING_SIGNAL) ───────────────────
+        # RULE 3: In FULL CYCLE, if BUY is not done it must NEVER initiate SELL.
+        # SELL_ONLY mode NEVER executes entry; it only manages an existing holding.
         if row.status in ("IDLE", "WAITING_SIGNAL") and trade_mode != "SELL_ONLY" and row.trades_completed < row.number_of_trades:
-            # Determine if entry trigger condition is met
             entry_triggered = False
             entry_type_norm = (entry_type or "FORMULA").upper().strip()
-            active_buy_price = entry_calc
+            active_buy_price = float(entry_calc or 0.0)
 
             if entry_type_norm == "CUSTOM" and custom_entry and custom_entry > 0:
-                # Custom Buy Trigger: executes when price dips to or touches the custom buy price
+                # Custom Buy Trigger: executes when market touches or dips to custom entry price
                 active_buy_price = float(custom_entry)
                 if ltp <= active_buy_price:
                     entry_triggered = True
@@ -230,38 +392,47 @@ class BsaAlgoEngine:
                         if ltp >= active_buy_price:
                             entry_triggered = True
             else:
-                # Default Formula Signal Trigger
-                active_buy_price = entry_calc
-                if signal == "BUY":
+                # RULE 1: BUY ONLY / FORMULA ENTRY
+                # When BUY TARGET is set to ENTRY FORMULA, buy at the entry price and not the LTP.
+                # Only triggers when signal is BUY and price reaches entry price (ltp <= active_buy_price).
+                active_buy_price = float(entry_calc or 0.0)
+                if active_buy_price > 0 and signal == "BUY" and ltp <= active_buy_price:
                     entry_triggered = True
 
-            if entry_triggered:
+            if entry_triggered and active_buy_price > 0:
                 row.status = "ORDER_PENDING"
                 await db.commit()
 
-                # Execute Market BUY
+                # Execute BUY at entry price (LIMIT order at active_buy_price, not at LTP)
                 try:
-                    fill_price = await self._execute_order(row, side="BUY", price=ltp, db=db)
+                    fill_price = await self._execute_order(
+                        row=row,
+                        side="BUY",
+                        price=active_buy_price,
+                        order_type="LIMIT",
+                        db=db,
+                    )
                 except Exception as e:
                     row.status = "REJECTED"
                     row.last_signal = f"ERR: {str(e)[:40]}"
                     row.is_algo_active = False
                     await db.commit()
                     return
+
                 if fill_price:
                     row.buy_price = fill_price
-                    row.entry_level = active_buy_price if active_buy_price > 0 else fill_price
+                    row.entry_level = active_buy_price
                     row.sell_tgt = chosen_target
                     row.stop_loss = sl_calc
                     row.status = "IN_POSITION"
                     row.last_signal = "BUY"
 
-                    # If BUY_ONLY, disarm algo immediately so exit is 100% manual
+                    # RULE 1: If BUY_ONLY, disarm algo immediately so exit is 100% manual
                     if trade_mode == "BUY_ONLY":
                         row.is_algo_active = False
                         logger.info(
-                            f"[ALGO EXEC] BUY_ONLY {row.symbol} qty={row.quantity} @ {fill_price:.2f}. "
-                            f"Algo disarmed for manual exit."
+                            f"[ALGO EXEC] BUY_ONLY {row.symbol} qty={row.quantity} bought @ {fill_price:.2f}. "
+                            f"Algo disarmed for manual exit (ALGO OFF)."
                         )
                     else:
                         logger.info(
@@ -275,33 +446,43 @@ class BsaAlgoEngine:
                 return
 
         # ── 2. Check Exit (State: IN_POSITION) ────────────────────────────────
-        if row.status == "IN_POSITION":
+        # RULE 2: SELL ONLY works ONLY when current holding is shown in Algo Window (IN_POSITION with buy_price > 0).
+        # RULE 3: FULL CYCLE requires BUY first; this exit block is reached ONLY if status is IN_POSITION.
+        if row.status == "IN_POSITION" and row.buy_price is not None and row.buy_price > 0:
             # Update live PnL
-            if row.buy_price:
-                row.pnl = round((ltp - row.buy_price) * row.quantity, 2)
+            row.pnl = round((ltp - row.buy_price) * row.quantity, 2)
 
             # In BUY_ONLY mode, do not execute auto-exit (exit is manual)
             if trade_mode != "BUY_ONLY":
-                hit_target = bool(row.sell_tgt and ltp >= row.sell_tgt)
-                hit_sl = bool(row.stop_loss and ltp <= row.stop_loss)
+                effective_target = chosen_target if chosen_target > 0 else (row.sell_tgt or 0.0)
+                hit_target = bool(effective_target > 0 and ltp >= effective_target)
+                hit_sl = bool(row.stop_loss and row.stop_loss > 0 and ltp <= row.stop_loss)
 
                 if hit_target or hit_sl:
                     reason = "TARGET HIT" if hit_target else "STOP LOSS HIT"
+                    exit_price = effective_target if hit_target else row.stop_loss
                     row.status = "EXIT_PENDING"
                     await db.commit()
 
                     try:
-                        exit_fill = await self._execute_order(row, side="SELL", price=ltp, db=db)
+                        # RULE 2: Sell at target price and not at LTP (LIMIT order at exit_price)
+                        exit_fill = await self._execute_order(
+                            row=row,
+                            side="SELL",
+                            price=exit_price,
+                            order_type="LIMIT",
+                            db=db,
+                        )
                     except Exception as e:
                         row.status = "IN_POSITION"
                         row.last_signal = f"ERR: {str(e)[:40]}"
                         row.is_algo_active = False
                         await db.commit()
                         return
+
                     if exit_fill:
                         row.trades_completed += 1
-                        if row.buy_price:
-                            row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
+                        row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
 
                         logger.info(
                             f"[ALGO EXEC] SELL {row.symbol} qty={row.quantity} @ {exit_fill:.2f} ({reason}) "
@@ -333,9 +514,17 @@ class BsaAlgoEngine:
                 )
                 await db.commit()
 
-    async def _execute_order(self, row: BsaAlgoRow, side: str, price: float, db: AsyncSession) -> Optional[float]:
+    async def _execute_order(
+        self,
+        row: BsaAlgoRow,
+        side: str,
+        price: float,
+        order_type: str = "LIMIT",
+        db: AsyncSession = None,
+    ) -> Optional[float]:
         """
         Execute an order through the Dhan adapter (or paper simulated broker).
+        Uses LIMIT orders at target/entry price by default, avoiding market slippage.
         Returns the fill price.
         """
         # Look up active broker account for user
@@ -385,7 +574,9 @@ class BsaAlgoEngine:
         from app.market.market_poller import get_poller
         poller = get_poller()
         live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
-        fill_price = float(price or live.get("ltp") or row.buy_price or 0.0)
+        target_price = float(price or 0.0)
+        ltp_price = float(live.get("ltp") or row.buy_price or 0.0)
+        execution_price = target_price if target_price > 0 else ltp_price
 
         # Options and commodity derivatives default to MARGIN (Normal / Carryforward)
         # to ensure compatibility with Dhan RMS policies which restrict Intraday on certain derivative scrips.
@@ -398,14 +589,20 @@ class BsaAlgoEngine:
         if is_derivative and contract_lot > 1 and final_order_qty < contract_lot:
             final_order_qty = final_order_qty * contract_lot
 
+        actual_order_type = (order_type or "LIMIT").upper()
+        actual_price = round(execution_price, 2) if actual_order_type == "LIMIT" and execution_price > 0 else 0.0
+        if actual_order_type == "LIMIT" and actual_price <= 0:
+            actual_order_type = "MARKET"
+            actual_price = 0.0
+
         req = OrderRequest(
             symbol=security_id,
             exchange=exchange,
             direction=side.upper(),
             quantity=final_order_qty,
-            order_type="MARKET",
+            order_type=actual_order_type,
             product=algo_prod,
-            price=0.0,
+            price=actual_price,
         )
 
         try:
@@ -425,11 +622,12 @@ class BsaAlgoEngine:
                     await raise_alert("ALGO EXEC ERROR", f"Dhan rejected {side} order for {row.symbol}: {err_msg}")
                     raise RuntimeError(f"Dhan rejected {side} order for {row.symbol}: {err_msg}")
                 row.last_order_id = master_info.get("broker_order_id") or f"DHAN-{int(asyncio.get_event_loop().time()*1000)}"
+                fill_price = float(master_info.get("fill_price") or execution_price)
                 return fill_price
             else:
                 # Simulated paper execution
                 row.last_order_id = f"SIM-{int(asyncio.get_event_loop().time()*1000)}"
-                return fill_price
+                return execution_price
         except Exception as e:
             logger.error(f"[ALGO EXEC ERROR] Failed placing {side} order for {row.symbol}: {e}")
             raise

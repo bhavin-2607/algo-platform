@@ -442,6 +442,7 @@ class DhanFanoutEngine:
             "client_id": account.client_id,
             "quantity": order.quantity,
             "status": status,
+            "broker_status": getattr(resp, "status", None) if resp else None,
             "broker_order_id": order_id,
             "fill_price": fill_price,
             "error_message": error_msg,

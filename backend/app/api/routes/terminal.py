@@ -1209,6 +1209,13 @@ async def list_algo_rows(
     from app.strategy.excel_formula_engine import evaluate_columns_in_order, formula_for_book
     from app.models.terminal_column import STANDARD_FORMULA_COLUMNS
 
+    # Synchronize Dhan broker orderbook & positions status
+    try:
+        from app.services.bsa_algo_engine import algo_engine
+        await algo_engine.sync_dhan_status(db, current_user.id)
+    except Exception as e:
+        logger.warning(f"Algo row Dhan status sync: {e}")
+
     is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
     stmt = select(BsaAlgoRow).order_by(BsaAlgoRow.created_at)
     if not is_admin:
@@ -1882,7 +1889,13 @@ async def kill_algo_row(
     row.is_algo_active = False
 
     if row.status == "IN_POSITION":
-        exit_fill = await algo_engine._execute_order(row, side="SELL", price=ltp, db=db)
+        exit_fill = await algo_engine._execute_order(
+            row=row,
+            side="SELL",
+            price=ltp,
+            order_type="MARKET",
+            db=db,
+        )
         if exit_fill:
             row.trades_completed += 1
             if row.buy_price:
@@ -1892,6 +1905,10 @@ async def kill_algo_row(
         row.status = "IDLE"
 
     await db.commit()
+    try:
+        await algo_engine.sync_dhan_status(db, current_user.id, force=True)
+    except Exception:
+        pass
     return {"status": "killed", "id": str(row.id), "symbol": row.symbol, "is_algo_active": False}
 
 
@@ -1961,6 +1978,12 @@ async def manual_algo_order(
     if side not in ("BUY", "SELL"):
         raise HTTPException(status_code=400, detail="Invalid order side")
 
+    if side == "SELL" and row.status not in ("IN_POSITION", "WAITING_RETURN") and not row.buy_price:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot SELL: no active holding or position in Algo Window"
+        )
+
     order_qty = payload.quantity or row.quantity
     order_price = payload.price or 0.0
 
@@ -1980,7 +2003,13 @@ async def manual_algo_order(
     from app.core.trading_mode import LiveTradingError
 
     try:
-        fill = await algo_engine._execute_order(row, side=side, price=order_price, db=db)
+        fill = await algo_engine._execute_order(
+            row=row,
+            side=side,
+            price=order_price,
+            order_type="LIMIT" if order_price > 0 else "MARKET",
+            db=db,
+        )
         if not fill:
             raise HTTPException(status_code=502, detail="Broker order execution failed or was rejected")
     except LiveTradingError as e:
@@ -2025,6 +2054,10 @@ async def manual_algo_order(
         row.status = "COMPLETED" if row.trades_completed >= row.number_of_trades else "WAITING_RETURN"
 
     await db.commit()
+    try:
+        await algo_engine.sync_dhan_status(db, current_user.id, force=True)
+    except Exception:
+        pass
     return {
         "status": "executed",
         "side": side,
