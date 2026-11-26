@@ -1267,3 +1267,25 @@ async def get_vwap(
         "vwap":    round(vwap, 2),
         "candles": len(df),
     }
+
+
+@router.post("/poller-interval")
+async def update_poller_interval(
+    interval: float = Query(..., ge=0.5, le=10.0, description="Poller interval in seconds"),
+    current_user: User = Depends(get_current_user),
+):
+    """Dynamically adjust the market poller interval in real-time without service restarts."""
+    from app.market.market_poller import get_poller
+    poller = get_poller()
+    poller.set_interval(interval)
+    return {"status": "success", "interval_seconds": poller._interval}
+
+
+@router.get("/poller-interval")
+async def get_poller_interval(
+    current_user: User = Depends(get_current_user),
+):
+    """Get the current market poller interval in seconds."""
+    from app.market.market_poller import get_poller
+    poller = get_poller()
+    return {"interval_seconds": poller._interval}

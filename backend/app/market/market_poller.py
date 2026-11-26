@@ -48,8 +48,10 @@ class MarketPoller:
     Supports dynamic add/remove of symbols.
     """
 
-    def __init__(self, interval_seconds: float = 4.0):
-        self._interval   = interval_seconds
+    def __init__(self, interval_seconds: Optional[float] = None):
+        import os
+        configured = float(getattr(settings, "MARKET_POLLER_INTERVAL_SECONDS", 1.0))
+        self._interval   = float(interval_seconds if interval_seconds is not None else float(os.getenv("MARKET_POLLER_INTERVAL_SECONDS", configured)))
         self._queues:    list[asyncio.Queue] = []
         self._task:      Optional[asyncio.Task] = None
         self._last_data: list = []
@@ -66,6 +68,11 @@ class MarketPoller:
     @property
     def client_count(self) -> int:
         return len(self._queues)
+
+    def set_interval(self, seconds: float):
+        """Dynamically update polling frequency on the fly without restarting."""
+        self._interval = max(0.5, float(seconds))
+        logger.info(f"MarketPoller interval dynamically set to {self._interval}s")
 
     def add_symbol(self, symbol: str, security_id: str, exchange_segment: str):
         """Add a symbol to the watchlist."""
@@ -305,5 +312,5 @@ def get_poller() -> MarketPoller:
     """Get or create the singleton market poller."""
     global _poller
     if _poller is None:
-        _poller = MarketPoller(interval_seconds=4.0)
+        _poller = MarketPoller()
     return _poller

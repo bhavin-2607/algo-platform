@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID:   str = ""
     FEED_STALE_SEC:     int = 90
+    MARKET_POLLER_INTERVAL_SECONDS: float = 1.0
 
     def reload_from_disk(self):
         """Re-read credentials and settings directly from .env files on disk without restarting."""
