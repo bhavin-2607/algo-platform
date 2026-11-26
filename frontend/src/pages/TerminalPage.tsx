@@ -9,7 +9,7 @@
 import { memo, useState, useEffect, useRef, useMemo, useCallback, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
-import { api } from "@/utils/api";
+import { api, refreshAccessToken } from "@/utils/api";
 import { wsBase } from "@/utils/ws";
 import { useAuthStore } from "@/store/auth";
 import { notifyOrder, notifyError } from "@/store/notifications";
@@ -174,16 +174,19 @@ export default function TerminalPage() {
   const [lastTickAt, setLastTickAt] = useState<number>(Date.now());
 
   useEffect(() => {
-    if (!accessToken) return;
-    const url = `${wsBase()}/api/ws/market?token=${accessToken}&symbols=ALL`;
     let isMounted = true;
     let timerId: ReturnType<typeof setTimeout> | null = null;
 
     function connect() {
       if (!isMounted) return;
+      const currentToken = useAuthStore.getState().accessToken || accessToken;
+      if (!currentToken) return;
+
       setWsStatus("connecting");
+      const url = `${wsBase()}/api/ws/market?token=${currentToken}&symbols=ALL`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
+
       ws.onopen    = () => { if (isMounted) setWsStatus("live"); };
       ws.onmessage = (e) => {
         if (!isMounted) return;
@@ -200,10 +203,13 @@ export default function TerminalPage() {
         } catch {}
       };
       ws.onerror = () => { if (isMounted) setWsStatus("polling"); };
-      ws.onclose = () => {
+      ws.onclose = async () => {
         if (!isMounted) return;
         setWsStatus("polling");
-        timerId = setTimeout(connect, 4000);
+        try {
+          await refreshAccessToken();
+        } catch {}
+        timerId = setTimeout(connect, 3000);
       };
     }
     connect();

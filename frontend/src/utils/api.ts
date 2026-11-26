@@ -18,7 +18,7 @@ api.interceptors.request.use((config) => {
 
 let refreshInFlight: Promise<string | null> | null = null;
 
-function refreshAccessToken(): Promise<string | null> {
+export function refreshAccessToken(): Promise<string | null> {
   const refresh = useAuthStore.getState().refreshToken;
   if (!refresh) return Promise.resolve(null);
   if (!refreshInFlight) {
