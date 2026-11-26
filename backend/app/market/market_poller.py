@@ -56,6 +56,8 @@ class MarketPoller:
         self._task:      Optional[asyncio.Task] = None
         self._last_data: list = []
         self._lock       = asyncio.Lock()
+        self._ws_feed    = None
+        self._loop:      Optional[asyncio.AbstractEventLoop] = None
         # Dynamic watchlist: symbol → {security_id, exchange_segment}
         self._watchlist: dict = {
             sym: {
@@ -76,18 +78,29 @@ class MarketPoller:
 
     def add_symbol(self, symbol: str, security_id: str, exchange_segment: str):
         """Add a symbol to the watchlist."""
-        self._watchlist[symbol.upper()] = {
+        sym_u = symbol.upper()
+        self._watchlist[sym_u] = {
             "security_id":      str(security_id),
             "exchange_segment": exchange_segment,
         }
-        enqueue_daily_ohlc_fetch(exchange_segment, str(security_id), symbol)
+        enqueue_daily_ohlc_fetch(exchange_segment, str(security_id), sym_u)
+        if self._ws_feed and self._ws_feed._running:
+            self._ws_feed.subscribe(
+                exchange=exchange_segment,
+                security_id=str(security_id),
+                token=str(security_id),
+                symbol=sym_u,
+            )
         logger.info(f"MarketPoller: added {symbol} ({exchange_segment}:{security_id})")
 
     def remove_symbol(self, symbol: str):
         """Remove a symbol from the watchlist."""
-        self._watchlist.pop(symbol.upper(), None)
+        sym_u = symbol.upper()
+        self._watchlist.pop(sym_u, None)
         # Remove from cached data
-        self._last_data = [t for t in self._last_data if t["symbol"] != symbol.upper()]
+        self._last_data = [t for t in self._last_data if t["symbol"] != sym_u]
+        if self._ws_feed and self._ws_feed._running:
+            self._ws_feed.unsubscribe(sym_u)
         logger.info(f"MarketPoller: removed {symbol}")
 
     def get_watchlist(self) -> list[str]:
@@ -120,10 +133,87 @@ class MarketPoller:
             return False
 
     def ensure_started(self):
-        """Ensure the background poller loop is running if not already started."""
+        """Ensure the background poller loop and Dhan WebSocket live feed are running."""
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._poll_loop())
             logger.info("MarketPoller started autonomously")
+
+        self._ensure_ws_feed_started()
+
+    def _ensure_ws_feed_started(self):
+        """Start the persistent Dhan WebSocket live feed in a daemon thread."""
+        if not settings.DHAN_CLIENT_ID or not settings.DHAN_ACCESS_TOKEN:
+            return
+        if not getattr(settings, "DHAN_WS_FEED_ENABLED", True):
+            return
+        if self._ws_feed and self._ws_feed.is_connected:
+            return
+
+        try:
+            from app.market.dhan_feed import DhanLiveFeed
+            if not self._ws_feed:
+                self._ws_feed = DhanLiveFeed(
+                    client_id=settings.DHAN_CLIENT_ID,
+                    access_token=settings.DHAN_ACCESS_TOKEN,
+                    on_tick_callback=self._handle_live_ws_tick,
+                )
+            for sym, info in self._watchlist.items():
+                self._ws_feed.subscribe(
+                    exchange=info["exchange_segment"],
+                    security_id=str(info["security_id"]),
+                    token=str(info["security_id"]),
+                    symbol=sym,
+                )
+            if not self._ws_feed._running:
+                self._ws_feed.start()
+                logger.info("MarketPoller: Dhan WebSocket live feed initialized and started")
+        except Exception as e:
+            logger.warning(f"Could not initialize Dhan WebSocket feed: {e}")
+
+    def _handle_live_ws_tick(self, tick: dict):
+        """Callback invoked on each incoming binary tick from Dhan WebSocket thread."""
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._process_ws_tick, tick)
+
+    def _process_ws_tick(self, tick: dict):
+        """Process a real-time WebSocket tick in the main event loop."""
+        sym = tick.get("symbol")
+        if not sym:
+            return
+
+        # 1. Update in-memory tick cache in place
+        found = False
+        for idx, existing in enumerate(self._last_data):
+            if existing.get("symbol") == sym:
+                self._last_data[idx] = {**existing, **tick}
+                found = True
+                break
+        if not found:
+            self._last_data.append(tick)
+
+        # 2. Immediately dispatch to algo engine for millisecond trigger evaluation
+        try:
+            loop = self._loop
+            if loop and loop.is_running():
+                loop.create_task(self._notify_algo_engine([tick]))
+            else:
+                asyncio.create_task(self._notify_algo_engine([tick]))
+        except RuntimeError:
+            pass
+
+        # 3. Broadcast to all active client WebSocket queues
+        for q in list(self._queues):
+            try:
+                q.put_nowait([tick])
+            except asyncio.QueueFull:
+                pass
+            except Exception:
+                pass
 
     async def subscribe(self, symbols: str = "") -> asyncio.Queue:
         """Register a new WebSocket client. Returns a queue to receive ticks."""
@@ -173,6 +263,11 @@ class MarketPoller:
                     securities, sym_index = self._build_securities()
                     if not securities:
                         await asyncio.sleep(backoff)
+                        continue
+
+                    # If live WebSocket feed is actively streaming ticks, skip redundant REST quote calls
+                    if self._ws_feed and self._ws_feed.is_alive:
+                        await asyncio.sleep(self._interval)
                         continue
 
                     headers = {

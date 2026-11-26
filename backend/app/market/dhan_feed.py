@@ -89,34 +89,101 @@ COMMON_INSTRUMENTS = {
 
 class DhanLiveFeed:
     """
-    Subscribes to Dhan WebSocket market feed and publishes ticks to Redis.
-    Runs in a background thread — does not require an asyncio event loop.
+    Subscribes to Dhan WebSocket market feed and publishes real-time ticks
+    to both Redis and an in-memory async callback for MarketPoller & AlgoEngine.
+    Runs in a background thread with automatic reconnect and dynamic subscriptions.
     """
 
-    def __init__(self, client_id: str, access_token: str):
+    def __init__(
+        self,
+        client_id: str,
+        access_token: str,
+        on_tick_callback=None,
+    ):
         self._client_id    = client_id
         self._access_token = access_token
-        self._redis        = sync_redis.from_url(settings.REDIS_URL, decode_responses=True)
+        self._on_tick_callback = on_tick_callback
+        try:
+            self._redis = sync_redis.from_url(settings.REDIS_URL, decode_responses=True)
+        except Exception:
+            self._redis = None
         self._running      = False
+        self._is_connected = False
+        self._last_tick_time = 0.0
         self._thread: threading.Thread | None = None
+        self._market_feed_instance = None
         self._instruments: list = []   # Dhan format: (exchange_segment, security_id, mode)
+        self._symbol_map: dict = {}    # (dhan_exchange, security_id) -> symbol
+        self._channel_map: dict = {}   # (dhan_exchange, security_id) -> channel
 
-    def subscribe(self, exchange: str, security_id: str, token: str | None = None):
+    @property
+    def is_alive(self) -> bool:
+        """Returns True if the feed is connected and received a tick within the last 15 seconds."""
+        return self._running and self._is_connected and (time.time() - self._last_tick_time < 15.0)
+
+    @property
+    def is_connected(self) -> bool:
+        return self._running and self._is_connected
+
+    def subscribe(self, exchange: str, security_id: str, token: str | None = None, symbol: str | None = None):
         """
-        Add an instrument to subscribe to.
+        Add an instrument to subscribe to. Supports dynamic addition while feed is running.
         exchange: NSE / BSE / NFO etc.
         security_id: Dhan security ID (numeric string)
         token: our internal Redis channel token (defaults to security_id)
+        symbol: optional human trading symbol e.g. 'NIFTY50'
         """
         from dhanhq import marketfeed
         dhan_exchange = self._to_dhan_exchange(exchange)
-        self._instruments.append({
+        sec_id_str = str(security_id).strip()
+
+        # Check if already subscribed
+        for item in self._instruments:
+            if item["dhan_exchange"] == dhan_exchange and item["security_id"] == sec_id_str:
+                if symbol:
+                    self._symbol_map[(dhan_exchange, sec_id_str)] = symbol.upper()
+                return
+
+        inst = {
             "dhan_exchange": dhan_exchange,
-            "security_id":   str(security_id),
-            "token":         token or str(security_id),
+            "security_id":   sec_id_str,
+            "token":         token or sec_id_str,
             "exchange":      exchange,
-        })
-        logger.info(f"Subscribed: {exchange}:{security_id} → tick:{exchange}:{token or security_id}")
+            "symbol":        symbol.upper() if symbol else "",
+        }
+        self._instruments.append(inst)
+        self._channel_map[(dhan_exchange, sec_id_str)] = f"tick:{exchange}:{token or sec_id_str}"
+        if symbol:
+            self._symbol_map[(dhan_exchange, sec_id_str)] = symbol.upper()
+
+        logger.info(f"Subscribed: {exchange}:{sec_id_str} ({symbol or ''}) → tick:{exchange}:{token or sec_id_str}")
+
+        # If feed is active, send dynamic subscription packet
+        if self._market_feed_instance and self._is_connected:
+            try:
+                self._market_feed_instance.subscribe_symbols([(dhan_exchange, sec_id_str, marketfeed.Quote)])
+            except Exception as e:
+                logger.debug(f"Dynamic subscribe_symbols error: {e}")
+
+    def unsubscribe(self, symbol: str):
+        """Unsubscribe by symbol name dynamically."""
+        from dhanhq import marketfeed
+        sym_u = (symbol or "").upper().strip()
+        matched_keys = [k for k, s in self._symbol_map.items() if s == sym_u]
+        if not matched_keys:
+            return
+
+        for k in matched_keys:
+            dhan_ex, sec_id = k
+            self._instruments = [i for i in self._instruments if not (i["dhan_exchange"] == dhan_ex and i["security_id"] == sec_id)]
+            self._channel_map.pop(k, None)
+            self._symbol_map.pop(k, None)
+            if self._market_feed_instance and self._is_connected:
+                try:
+                    self._market_feed_instance.unsubscribe_symbols([(dhan_ex, sec_id, marketfeed.Quote)])
+                except Exception as e:
+                    logger.debug(f"Dynamic unsubscribe_symbols error: {e}")
+        logger.info(f"Unsubscribed: {sym_u}")
 
     def subscribe_symbol(self, symbol: str):
         """Subscribe by common symbol name e.g. 'NIFTY50'."""
@@ -128,6 +195,7 @@ class DhanLiveFeed:
             exchange    = redis_exchange(info["exchange"]),
             security_id = info["security_id"],
             token       = info["token"],
+            symbol      = symbol.upper(),
         )
 
     def start(self):
@@ -136,8 +204,7 @@ class DhanLiveFeed:
             logger.warning("DhanLiveFeed already running")
             return
         if not self._instruments:
-            logger.error("No instruments subscribed — call subscribe() first")
-            return
+            logger.warning("No instruments subscribed yet — feed will connect and await subscriptions")
         self._running = True
         self._thread  = threading.Thread(
             target=self._run, daemon=True, name="dhan-live-feed"
@@ -147,6 +214,12 @@ class DhanLiveFeed:
 
     def stop(self):
         self._running = False
+        self._is_connected = False
+        if self._market_feed_instance:
+            try:
+                self._market_feed_instance.close_connection()
+            except Exception:
+                pass
         logger.info("DhanLiveFeed stop requested")
 
     def _run(self):
@@ -154,57 +227,51 @@ class DhanLiveFeed:
         from dhanhq import marketfeed, DhanContext
 
         ctx = DhanContext(self._client_id, self._access_token)
-
-        # Build instrument list in Dhan SDK format
-        dhan_instruments = [
-            (inst["dhan_exchange"], inst["security_id"], marketfeed.Quote)
-            for inst in self._instruments
-        ]
-
-        # Build a lookup: (dhan_exchange, security_id) → our tick channel
-        channel_map = {
-            (inst["dhan_exchange"], inst["security_id"]): f"tick:{inst['exchange']}:{inst['token']}"
-            for inst in self._instruments
-        }
-
         retry_count = 0
 
         async def _listen():
+            # Build instrument list in Dhan SDK format
+            dhan_instruments = [
+                (inst["dhan_exchange"], inst["security_id"], marketfeed.Quote)
+                for inst in self._instruments
+            ]
             feed = marketfeed.MarketFeed(ctx, dhan_instruments, version="v2")
+            self._market_feed_instance = feed
             await feed.connect()
+            self._is_connected = True
+            logger.info("DhanLiveFeed WebSocket connected successfully to api-feed.dhan.co")
+
             while self._running and feed.ws is not None:
                 response = await feed.ws.recv()
                 if not isinstance(response, (bytes, bytearray)):
                     continue
                 data = feed.process_data(response)
                 if isinstance(data, dict):
-                    self._on_tick(data, channel_map)
+                    self._on_tick(data, self._channel_map)
 
         while self._running:
             try:
-                logger.info("Connecting to Dhan live feed...")
+                self._is_connected = False
+                logger.info("Connecting to Dhan live feed WebSocket...")
                 asyncio.run(_listen())
                 retry_count = 0
             except Exception as e:
+                self._is_connected = False
                 if not self._running:
                     break
                 retry_count += 1
-                wait = min(retry_count * 5, 60)   # backoff up to 60s
-                logger.error(f"Dhan feed error (retry {retry_count} in {wait}s): {e}")
+                wait = min(retry_count * 3, 30)   # backoff up to 30s
+                logger.error(f"Dhan feed WebSocket error (retry {retry_count} in {wait}s): {e}")
                 time.sleep(wait)
 
+        self._is_connected = False
         logger.info("DhanLiveFeed stopped")
 
     def _on_tick(self, data: dict, channel_map: dict):
         """
-        Called by dhanhq SDK on each tick.
-        Parses the tick and publishes to Redis.
-
-        Dhan Quote packet fields (from SDK):
-          type, exchange_segment, security_id,
-          LTP, LTQ, LTT, ATP, volume,
-          total_sell_quantity, total_buy_quantity,
-          open, close, high, low
+        Called on each incoming binary tick packet.
+        Parses tick, updates last tick time, invokes callback for MarketPoller,
+        and optionally publishes to Redis.
         """
         if not data or not self._running:
             return
@@ -217,6 +284,17 @@ class DhanLiveFeed:
             if ltp == 0:
                 return
 
+            self._last_tick_time = time.time()
+
+            # Find matching symbol
+            dhan_ex_code = exchange_segment if isinstance(exchange_segment, int) else self._to_dhan_exchange(str(exchange_segment))
+            symbol = self._symbol_map.get((dhan_ex_code, security_id))
+            if not symbol:
+                for (ex_c, sid), sym in self._symbol_map.items():
+                    if sid == security_id:
+                        symbol = sym
+                        break
+
             # Find our Redis channel
             key     = (exchange_segment, security_id)
             channel = channel_map.get(key)
@@ -226,45 +304,132 @@ class DhanLiveFeed:
                         channel = ch
                         break
 
-            if not channel:
-                logger.debug(f"No channel for {exchange_segment}:{security_id}")
-                return
-
             if isinstance(exchange_segment, int):
                 exchange = _CODE_TO_EXCHANGE.get(exchange_segment, "NSE")
+                seg_str = self._to_segment_string(exchange_segment)
             elif isinstance(exchange_segment, str):
                 exchange = SEGMENT_MAP.get(
                     exchange_segment,
                     exchange_segment.split("_")[0] if "_" in exchange_segment else exchange_segment,
                 )
+                seg_str = exchange_segment
             else:
                 exchange = "NSE"
+                seg_str = "NSE_EQ"
 
-            payload = json.dumps({
-                "exchange":  exchange,
-                "token":     security_id,
-                "ltp":       ltp,
-                "volume":    int(float(data.get("volume") or 0)),
-                "open":      float(data.get("open") or ltp),
-                "high":      float(data.get("high") or ltp),
-                "low":       float(data.get("low") or ltp),
-                "close":     float(data.get("close") or ltp),
-                "atp":       float(data.get("avg_price") or data.get("ATP") or ltp),
-                "ltt":       0,
-                "ltq":       int(float(data.get("LTQ") or 0)),
-                "oi":        int(float(data.get("OI") or data.get("oi") or 0)),
-                "ts":        str(int(time.time())),
-                "source":    "dhan_live",
-            })
+            open_val  = float(data.get("open") or ltp)
+            high_val  = float(data.get("high") or ltp)
+            low_val   = float(data.get("low") or ltp)
+            close_val = float(data.get("close") or ltp)
+            vol_val   = int(float(data.get("volume") or 0))
+            avg_price = float(data.get("avg_price") or data.get("ATP") or ltp)
+            oi_val    = int(float(data.get("OI") or data.get("oi") or 0))
+            ltq_val   = int(float(data.get("LTQ") or 0))
 
-            self._redis.publish(channel, payload)
+            # Fetch previous day data from memory cache
+            p_close = close_val
+            p_high  = close_val
+            p_low   = close_val
+            p_open  = close_val
             try:
-                self._redis.set("feed:heartbeat", str(time.time()), ex=3600)
+                from app.market.daily_ohlc import get_previous_day_ohlc
+                p_data = get_previous_day_ohlc(seg_str, security_id)
+                if p_data:
+                    p_close = float(p_data.get("p_close") or close_val)
+                    p_high  = float(p_data.get("p_high") or p_close)
+                    p_low   = float(p_data.get("p_low") or p_close)
+                    p_open  = float(p_data.get("p_open") or p_close)
             except Exception:
                 pass
 
+            change = round(ltp - p_close, 2)
+            change_pct = round((change / max(p_close, 1)) * 100, 2)
+
+            # Depth parsing
+            depth = data.get("depth", [])
+            bp1 = 0.0
+            sp1 = 0.0
+            buy_qty = 0
+            sell_qty = 0
+            if depth and isinstance(depth, list) and len(depth) > 0:
+                first_d = depth[0]
+                bp1 = float(first_d.get("bid_price") or 0.0)
+                sp1 = float(first_d.get("ask_price") or 0.0)
+                buy_qty = int(first_d.get("bid_quantity") or 0)
+                sell_qty = int(first_d.get("ask_quantity") or 0)
+
+            # In-process callback to MarketPoller / AlgoEngine
+            if self._on_tick_callback and symbol:
+                norm_tick = {
+                    "symbol":     symbol,
+                    "ltp":        ltp,
+                    "open":       open_val,
+                    "high":       high_val,
+                    "low":        low_val,
+                    "close":      close_val,
+                    "p_close":    p_close,
+                    "p_high":     p_high,
+                    "p_low":      p_low,
+                    "p_open":     p_open,
+                    "change":     change,
+                    "change_pct": change_pct,
+                    "volume":     vol_val,
+                    "oi":         oi_val,
+                    "atp":        avg_price,
+                    "vwap":       avg_price,
+                    "buy_qty":    buy_qty,
+                    "sell_qty":   sell_qty,
+                    "bp1":        bp1,
+                    "sp1":        sp1,
+                    "net_change": change,
+                    "source":     "dhan_ws",
+                }
+                try:
+                    self._on_tick_callback(norm_tick)
+                except Exception as exc:
+                    logger.debug(f"Tick callback error for {symbol}: {exc}")
+
+            # Publish to Redis channel if available
+            if self._redis and channel:
+                payload = json.dumps({
+                    "exchange":  exchange,
+                    "token":     security_id,
+                    "ltp":       ltp,
+                    "volume":    vol_val,
+                    "open":      open_val,
+                    "high":      high_val,
+                    "low":       low_val,
+                    "close":     close_val,
+                    "atp":       avg_price,
+                    "ltt":       0,
+                    "ltq":       ltq_val,
+                    "oi":        oi_val,
+                    "ts":        str(int(time.time())),
+                    "source":    "dhan_ws",
+                })
+                try:
+                    self._redis.publish(channel, payload)
+                    self._redis.set("feed:heartbeat", str(time.time()), ex=3600)
+                except Exception:
+                    pass
+
         except Exception as e:
             logger.error(f"DhanLiveFeed tick error: {e} | data={data}")
+
+    @staticmethod
+    def _to_segment_string(exchange_code: int) -> str:
+        """Convert Dhan numeric exchange code to segment string."""
+        mapping = {
+            0: "IDX_I",
+            1: "NSE_EQ",
+            2: "NSE_FNO",
+            3: "NSE_CURRENCY",
+            4: "BSE_EQ",
+            5: "MCX_COMM",
+            7: "BSE_CURRENCY",
+            8: "BSE_FNO",
+        }
+        return mapping.get(exchange_code, "NSE_EQ")
 
     @staticmethod
     def _to_dhan_exchange(exchange: str) -> int:
