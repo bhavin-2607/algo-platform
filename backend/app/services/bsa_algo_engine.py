@@ -96,7 +96,14 @@ class BsaAlgoEngine:
 
         # Select active live Dhan account (skip simulated/paper accounts)
         dhan_account = next(
-            (a for a in accounts if not a.paper_trading and "DHAN" in (a.broker_type or "").upper()),
+            (
+                a for a in accounts
+                if not getattr(a, "paper_trading", False)
+                and (
+                    "DHAN" in str(getattr(a, "broker", "")).upper()
+                    or "DHAN" in str(getattr(a, "broker_type", "")).upper()
+                )
+            ),
             None,
         )
         if not dhan_account:

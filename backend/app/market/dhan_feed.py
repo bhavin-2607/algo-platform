@@ -87,6 +87,19 @@ COMMON_INSTRUMENTS = {
 }
 
 
+def _get_quote_code():
+    try:
+        from dhanhq import marketfeed
+        mf = getattr(marketfeed, "MarketFeed", None)
+        if mf and hasattr(mf, "Quote"):
+            return mf.Quote
+        if hasattr(marketfeed, "Quote"):
+            return marketfeed.Quote
+    except Exception:
+        pass
+    return 17
+
+
 class DhanLiveFeed:
     """
     Subscribes to Dhan WebSocket market feed and publishes real-time ticks
@@ -161,7 +174,7 @@ class DhanLiveFeed:
         # If feed is active, send dynamic subscription packet
         if self._market_feed_instance and self._is_connected:
             try:
-                self._market_feed_instance.subscribe_symbols([(dhan_exchange, sec_id_str, marketfeed.Quote)])
+                self._market_feed_instance.subscribe_symbols([(dhan_exchange, sec_id_str, _get_quote_code())])
             except Exception as e:
                 logger.debug(f"Dynamic subscribe_symbols error: {e}")
 
@@ -180,7 +193,7 @@ class DhanLiveFeed:
             self._symbol_map.pop(k, None)
             if self._market_feed_instance and self._is_connected:
                 try:
-                    self._market_feed_instance.unsubscribe_symbols([(dhan_ex, sec_id, marketfeed.Quote)])
+                    self._market_feed_instance.unsubscribe_symbols([(dhan_ex, sec_id, _get_quote_code())])
                 except Exception as e:
                     logger.debug(f"Dynamic unsubscribe_symbols error: {e}")
         logger.info(f"Unsubscribed: {sym_u}")
@@ -232,7 +245,7 @@ class DhanLiveFeed:
         async def _listen():
             # Build instrument list in Dhan SDK format
             dhan_instruments = [
-                (inst["dhan_exchange"], inst["security_id"], marketfeed.Quote)
+                (inst["dhan_exchange"], inst["security_id"], _get_quote_code())
                 for inst in self._instruments
             ]
             feed = marketfeed.MarketFeed(ctx, dhan_instruments, version="v2")
