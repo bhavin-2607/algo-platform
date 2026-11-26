@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { X, TrendingUp, TrendingDown, Layers, ShieldCheck, Check, AlertCircle } from "lucide-react";
 import { api } from "@/utils/api";
+import { resolveLotSize } from "@/utils/lotSize";
 import toast from "react-hot-toast";
 
 interface MobileOrderDrawerProps {
@@ -13,31 +14,7 @@ interface MobileOrderDrawerProps {
   ltp?: number;
   initialSide?: "BUY" | "SELL";
   onOrderSuccess?: () => void;
-}
-
-export function resolveLotSize(symbol: string, segment?: string): number {
-  const s = (symbol || "").toUpperCase().trim();
-  const seg = (segment || "").toUpperCase().trim();
-
-  if (s.includes("BANKNIFTY")) return 15;
-  if (s.includes("FINNIFTY")) return 25;
-  if (s.includes("MIDCPNIFTY")) return 50;
-  if (s.includes("NIFTY")) return 25;
-  if (s.includes("SENSEX")) return 10;
-  if (s.includes("BANKEX")) return 10;
-  if (s.includes("CRUDEOILM")) return 10;
-  if (s.includes("CRUDEOIL")) return 100;
-  if (s.includes("NATURALGASM") || s.includes("NATGASMINI")) return 250;
-  if (s.includes("NATURALGAS") || s.includes("NATGAS")) return 250;
-  if (s.includes("GOLDM")) return 10;
-  if (s.includes("GOLD")) return 100;
-  if (s.includes("SILVERM")) return 5;
-  if (s.includes("SILVER")) return 30;
-
-  if (seg === "NSE_FNO" || seg === "MCX_COMM" || seg === "BSE_FNO") {
-    return 1;
-  }
-  return 1;
+  lotSize?: number;
 }
 
 export const MobileOrderDrawer: React.FC<MobileOrderDrawerProps> = ({
@@ -50,6 +27,7 @@ export const MobileOrderDrawer: React.FC<MobileOrderDrawerProps> = ({
   ltp = 0,
   initialSide = "BUY",
   onOrderSuccess,
+  lotSize: propLotSize,
 }) => {
   const [side, setSide] = useState<"BUY" | "SELL">(initialSide);
   const [orderType, setOrderType] = useState<"MARKET" | "LIMIT">("MARKET");
@@ -58,8 +36,27 @@ export const MobileOrderDrawer: React.FC<MobileOrderDrawerProps> = ({
   const [lots, setLots] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  const lotSize = resolveLotSize(symbol, exchangeSegment);
-  const isDerivative = (exchangeSegment || "").includes("FNO") || (exchangeSegment || "").includes("MCX") || lotSize > 1;
+  const [lotSize, setLotSize] = useState<number>(() => resolveLotSize(symbol, exchangeSegment, propLotSize));
+  const isDerivative = (exchangeSegment || "").includes("FNO") || (exchangeSegment || "").includes("MCX") || (exchangeSegment || "").includes("BFO") || lotSize > 1;
+
+  useEffect(() => {
+    if (propLotSize && propLotSize > 0) {
+      setLotSize(propLotSize);
+      return;
+    }
+    const fallback = resolveLotSize(symbol, exchangeSegment);
+    setLotSize(fallback);
+    if (symbol || securityId) {
+      api.get("/terminal/lot-size", { params: { symbol, security_id: securityId } })
+        .then((res) => {
+          const remoteLot = Number(res.data?.lot_size || 0);
+          if (remoteLot > 0) {
+            setLotSize(remoteLot);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [symbol, securityId, exchangeSegment, propLotSize]);
 
   useEffect(() => {
     setSide(initialSide);

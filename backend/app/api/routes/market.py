@@ -817,6 +817,7 @@ def _search_instruments_sync(q: str, limit: int = 30) -> list[dict]:
                 "exchange":         exch,
                 "series":           srs,
                 "isin":             isin if segment in ("NSE_EQ", "BSE_EQ") else "",
+                "lot_size":         int(float(row.get("LOT_SIZE") or 1)),
             })
 
             if len(results) >= limit:

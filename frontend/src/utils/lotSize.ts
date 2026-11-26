@@ -13,7 +13,7 @@ export function resolveLotSize(symbol?: string, segment?: string, fallbackLot?: 
   if (sym.includes("FINNIFTY")) return 25;
   if (sym.includes("MIDCPNIFTY")) return 50;
   if (sym.includes("NIFTY")) return 25;
-  if (sym.includes("SENSEX")) return 10;
+  if (sym.includes("SENSEX")) return 20;
   if (sym.includes("BANKEX")) return 15;
 
   // MCX Commodities
@@ -21,9 +21,9 @@ export function resolveLotSize(symbol?: string, segment?: string, fallbackLot?: 
   if (sym.includes("CRUDEOIL") || sym.includes("CRUDE")) return 100;
   if (sym.includes("NATGASMINI") || sym.includes("NATURALGASM")) return 250;
   if (sym.includes("NATURALGAS") || sym.includes("NATGAS")) return 1250;
-  if (sym.includes("GOLDM")) return 100;
+  if (sym.includes("GOLDM")) return 10;
   if (sym.includes("GOLDPETAL")) return 1;
-  if (sym.includes("GOLD")) return 1;
+  if (sym.includes("GOLD")) return 100;
   if (sym.includes("SILVERMIC")) return 1;
   if (sym.includes("SILVERM")) return 5;
   if (sym.includes("SILVER")) return 30;

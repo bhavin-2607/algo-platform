@@ -1442,6 +1442,7 @@ async def list_watchlist_rows(
     from app.strategy.excel_formula_engine import evaluate_columns_in_order, formula_for_book
     from app.models.terminal_column import STANDARD_FORMULA_COLUMNS
     from app.api.routes.market import _dhan_ohlc, _parse_ohlc, _sim_quote, DHAN_SECURITY_IDS
+    from app.services.dhan_fanout_engine import resolve_lot_size
     from app.core.config import settings
 
     result = await db.execute(
@@ -1614,6 +1615,7 @@ async def list_watchlist_rows(
             "s1":               vals.get("s1"),
             "s2":               vals.get("s2"),
             "s3":               vals.get("s3"),
+            "lot_size":         resolve_lot_size(r.symbol, r.security_id),
         })
     return out
 

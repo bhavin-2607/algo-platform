@@ -80,6 +80,7 @@ export default function MobileApp() {
     exchange?: string;
     ltp?: number;
     side?: "BUY" | "SELL";
+    lotSize?: number;
   }>({
     isOpen: false,
     symbol: "",
@@ -98,6 +99,7 @@ export default function MobileApp() {
       exchange: item.exchange,
       ltp: item.ltp || 0,
       side,
+      lotSize: item.lot_size,
     });
   };
 
@@ -468,6 +470,7 @@ export default function MobileApp() {
         exchange={orderDrawer.exchange}
         ltp={orderDrawer.ltp}
         initialSide={orderDrawer.side}
+        lotSize={orderDrawer.lotSize}
         onOrderSuccess={() => {
           fetchAlgoRows();
           fetchWatchlist();

@@ -39,6 +39,7 @@ export interface WatchlistRowData {
   s2?: number;
   s3?: number;
   possible_tgt?: number;
+  lot_size?: number;
 }
 
 interface SymbolDetailDrawerProps {

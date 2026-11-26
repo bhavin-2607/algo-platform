@@ -29,6 +29,54 @@ logger = logging.getLogger(__name__)
 
 # Cache for contract lot sizes to avoid repeated disk reads
 LOT_SIZE_CACHE: Dict[str, int] = {}
+_CSV_LOT_MAP: Dict[str, int] = {}
+_CSV_LOT_MTIME: float = 0.0
+
+
+def _get_csv_lot_map() -> Dict[str, int]:
+    """Load and index exchange lot sizes directly from the official Dhan instruments master CSV."""
+    global _CSV_LOT_MAP, _CSV_LOT_MTIME
+    import os, csv
+    csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "market", "instruments.csv"))
+    if not os.path.exists(csv_path):
+        return _CSV_LOT_MAP
+
+    try:
+        mtime = os.path.getmtime(csv_path)
+        if _CSV_LOT_MAP and mtime == _CSV_LOT_MTIME:
+            return _CSV_LOT_MAP
+
+        new_map: Dict[str, int] = {}
+        with open(csv_path, mode="r", encoding="utf-8", errors="ignore") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            for r in reader:
+                if len(r) > 11:
+                    try:
+                        lot = int(float(r[11]))
+                        if lot > 0:
+                            if r[2]:
+                                new_map[r[2].strip()] = lot
+                            if r[7]:
+                                new_map[r[7].strip().upper()] = lot
+                            disp = r[8].strip().upper() if len(r) > 8 and r[8] else ""
+                            if disp:
+                                new_map[disp] = lot
+                                if " CALL" in disp:
+                                    new_map[disp.replace(" CALL", " CE")] = lot
+                                elif " CE" in disp:
+                                    new_map[disp.replace(" CE", " CALL")] = lot
+                                if " PUT" in disp:
+                                    new_map[disp.replace(" PUT", " PE")] = lot
+                                elif " PE" in disp:
+                                    new_map[disp.replace(" PE", " PUT")] = lot
+                    except (ValueError, TypeError):
+                        pass
+        _CSV_LOT_MAP = new_map
+        _CSV_LOT_MTIME = mtime
+    except Exception as e:
+        logger.debug(f"Error loading CSV lot map: {e}")
+    return _CSV_LOT_MAP
 
 
 FREEZE_QTY_CACHE: Dict[str, int] = {}
@@ -70,10 +118,30 @@ def resolve_freeze_qty(symbol: str, security_id: Optional[str] = None) -> int:
 def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
     """Resolve exchange contract lot size for F&O and Commodity contracts."""
     sym = (symbol or "").upper().strip()
-    if sym in LOT_SIZE_CACHE:
+    sec_id_str = str(security_id or "").strip()
+
+    # Fast memory cache check
+    if sec_id_str and sec_id_str in LOT_SIZE_CACHE:
+        return LOT_SIZE_CACHE[sec_id_str]
+    if sym and sym in LOT_SIZE_CACHE:
         return LOT_SIZE_CACHE[sym]
 
-    # Index heuristics for Indian markets
+    # Dynamic lookup from official Dhan instruments master
+    csv_lots = _get_csv_lot_map()
+    if sec_id_str and sec_id_str in csv_lots:
+        lot = csv_lots[sec_id_str]
+        LOT_SIZE_CACHE[sec_id_str] = lot
+        if sym:
+            LOT_SIZE_CACHE[sym] = lot
+        return lot
+    if sym and sym in csv_lots:
+        lot = csv_lots[sym]
+        LOT_SIZE_CACHE[sym] = lot
+        if sec_id_str:
+            LOT_SIZE_CACHE[sec_id_str] = lot
+        return lot
+
+    # Fallback heuristics for Indian markets if master not yet cached or synthetic symbol
     if "BANKNIFTY" in sym:
         lot = 15
     elif "FINNIFTY" in sym:
@@ -83,7 +151,7 @@ def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
     elif "NIFTY" in sym:
         lot = 25
     elif "SENSEX" in sym:
-        lot = 10
+        lot = 20
     elif "BANKEX" in sym:
         lot = 15
     # MCX Commodity heuristics
@@ -96,11 +164,11 @@ def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
     elif "NATURALGAS" in sym or "NATGAS" in sym:
         lot = 1250
     elif "GOLDM" in sym:
-        lot = 100
+        lot = 10
     elif "GOLDPETAL" in sym:
         lot = 1
     elif "GOLD" in sym:
-        lot = 1
+        lot = 100
     elif "SILVERMIC" in sym:
         lot = 1
     elif "SILVERM" in sym:
@@ -113,40 +181,12 @@ def resolve_lot_size(symbol: str, security_id: Optional[str] = None) -> int:
         lot = 5000
     else:
         lot = 1
-        try:
-            from app.api.routes.options import _load_option_rows
-            rows = _load_option_rows()
-            sec_id_str = str(security_id or "")
-            target_row = next(
-                (r for r in rows if r.get("SYMBOL_NAME") == sym or (sec_id_str and r.get("SECURITY_ID") == sec_id_str)),
-                None
-            )
-            if target_row and target_row.get("LOT_SIZE"):
-                lot = int(float(target_row["LOT_SIZE"]))
-        except Exception as e:
-            logger.debug(f"Could not resolve lot size from options rows for {sym}: {e}")
-            lot = 1
 
-        if lot <= 1:
-            # Check general instruments.csv directly
-            try:
-                import os, csv
-                csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "market", "instruments.csv"))
-                if os.path.exists(csv_path):
-                    sec_id_str = str(security_id or "")
-                    with open(csv_path, mode="r", encoding="utf-8", errors="ignore") as f:
-                        reader = csv.DictReader(f)
-                        for r in reader:
-                            if (sec_id_str and r.get("SECURITY_ID") == sec_id_str) or r.get("SYMBOL_NAME") == sym:
-                                val = r.get("LOT_SIZE")
-                                if val:
-                                    lot = int(float(val))
-                                    break
-            except Exception as e:
-                logger.debug(f"Could not resolve lot size from instruments.csv for {sym}: {e}")
-
-    LOT_SIZE_CACHE[sym] = max(1, lot)
-    return LOT_SIZE_CACHE[sym]
+    if sym:
+        LOT_SIZE_CACHE[sym] = lot
+    if sec_id_str:
+        LOT_SIZE_CACHE[sec_id_str] = lot
+    return lot
 
 
 def is_fno_symbol(symbol: str, exchange: Optional[str] = None, segment: Optional[str] = None) -> bool:
