@@ -359,13 +359,57 @@ def _parse_ohlc(raw: dict, symbol: str, segment: str = "", security_id: str = ""
     }
 
 
-def _sim_quote(symbol: str) -> dict:
+def _unavailable_quote(symbol: str, inst: Optional[dict] = None) -> dict:
+    """Return a neutral fallback quote with previous day close when live quote is unavailable in live mode."""
+    if not inst:
+        inst = DHAN_SECURITY_IDS.get(symbol)
+        if not inst:
+            try:
+                from app.market.market_poller import get_poller
+                poller = get_poller()
+                inst = poller._watchlist.get(symbol)
+            except Exception:
+                pass
+    seg = inst.get("exchange_segment", "") if inst else ""
+    sid = str(inst.get("security_id", "")) if inst else ""
+    p_close = 0.0
+    p_high = 0.0
+    p_low = 0.0
+    p_open = 0.0
+    try:
+        from app.market.daily_ohlc import get_previous_day_ohlc
+        p_data = get_previous_day_ohlc(seg, sid)
+        if p_data:
+            p_close = float(p_data.get("p_close") or 0.0)
+            p_high = float(p_data.get("p_high") or p_close)
+            p_low = float(p_data.get("p_low") or p_close)
+            p_open = float(p_data.get("p_open") or p_close)
+    except Exception:
+        pass
+    return {
+        "symbol": symbol,
+        "ltp": p_close,
+        "open": p_open or p_close,
+        "high": p_high or p_close,
+        "low": p_low or p_close,
+        "close": p_close,
+        "p_close": p_close,
+        "p_high": p_high or p_close,
+        "p_low": p_low or p_close,
+        "volume": 0,
+        "oi": 0,
+        "vwap": p_close,
+        "atp": p_close,
+        "change": 0.0,
+        "change_pct": 0.0,
+        "source": "dhan_unavailable",
+    }
+
+
+def _sim_quote(symbol: str, inst: Optional[dict] = None) -> dict:
     from app.core.trading_mode import synthetic_blocked
     if synthetic_blocked():
-        raise HTTPException(
-            status_code=409,
-            detail=f"No live quote for {symbol}. Synthetic prices are disabled while live trading is enabled.",
-        )
+        return _unavailable_quote(symbol, inst)
     info = INSTRUMENTS.get(symbol, {"base": 1000})
     base = info["base"]
     chg  = random.uniform(-0.015, 0.015)
@@ -417,7 +461,7 @@ async def get_live_quote(
             except Exception as e:
                 logger.warning(f"Dhan live quote failed [{symbol}]: {e}")
 
-    return _sim_quote(symbol)
+    return _sim_quote(symbol, inst if "inst" in locals() else None)
 
 
 @router.get("/live-quotes")
@@ -458,7 +502,7 @@ async def get_live_quotes(
                 for sym in symbol_list:
                     inst = resolved.get(sym)
                     if not inst:
-                        result.append(_sim_quote(sym))
+                        result.append(_sim_quote(sym, None))
                         continue
                     raw = data.get(inst["exchange_segment"], {}).get(str(inst["security_id"]), {})
                     if raw:
@@ -471,12 +515,12 @@ async def get_live_quotes(
                             )
                         )
                     else:
-                        result.append(_sim_quote(sym))
+                        result.append(_sim_quote(sym, inst))
                 return result
         except Exception as e:
             logger.warning(f"Dhan bulk quote failed: {e}")
 
-    return [_sim_quote(sym) for sym in symbol_list]
+    return [_sim_quote(sym, resolved.get(sym) if "resolved" in locals() else None) for sym in symbol_list]
 
 
 @router.get("/ticker")

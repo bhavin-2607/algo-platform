@@ -131,8 +131,12 @@ class DhanLiveFeed:
 
     @property
     def is_alive(self) -> bool:
-        """Returns True if the feed is connected and received a tick within the last 15 seconds."""
-        return self._running and self._is_connected and (time.time() - self._last_tick_time < 15.0)
+        """Returns True if the feed is connected and not stale."""
+        if not (self._running and self._is_connected):
+            return False
+        if self._last_tick_time == 0.0:
+            return True
+        return (time.time() - self._last_tick_time < 60.0)
 
     @property
     def is_connected(self) -> bool:
@@ -270,14 +274,19 @@ class DhanLiveFeed:
             while self._running and feed.ws is not None:
                 try:
                     response = await feed.ws.recv()
-                    if not isinstance(response, (bytes, bytearray)):
-                        continue
+                except Exception as ex:
+                    logger.warning(f"Dhan live feed connection recv exception: {ex}")
+                    break
+
+                if not isinstance(response, (bytes, bytearray)):
+                    continue
+
+                try:
                     data = feed.process_data(response)
                     if isinstance(data, dict):
                         self._on_tick(data, self._channel_map)
                 except Exception as ex:
-                    logger.warning(f"Dhan live feed tick loop exception: {ex}")
-                    break
+                    logger.debug(f"Dhan packet decode error: {ex}")
 
         while self._running:
             try:

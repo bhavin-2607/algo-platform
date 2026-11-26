@@ -270,133 +270,71 @@ class MarketPoller:
         for sym, info in self._watchlist.items():
             enqueue_daily_ohlc_fetch(info["exchange_segment"], str(info["security_id"]), sym)
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            while True:
-                try:
-                    securities, sym_index = self._build_securities()
-                    if not securities:
-                        await asyncio.sleep(backoff)
-                        continue
+        while True:
+            try:
+                securities, sym_index = self._build_securities()
+                if not securities:
+                    await asyncio.sleep(backoff)
+                    continue
 
-                    # If live WebSocket feed is actively streaming ticks, skip redundant REST quote calls
-                    if self._ws_feed and self._ws_feed.is_alive:
-                        await asyncio.sleep(self._interval)
-                        continue
+                # If live WebSocket feed is actively connected, skip redundant REST quote calls
+                if self._ws_feed and self._ws_feed.is_connected:
+                    await asyncio.sleep(self._interval)
+                    continue
 
-                    headers = {
-                        "access-token": settings.DHAN_ACCESS_TOKEN,
-                        "client-id":    settings.DHAN_CLIENT_ID,
-                        "Content-Type": "application/json",
-                        "Accept":       "application/json",
-                    }
-                    resp = await client.post(
-                        "https://api.dhan.co/v2/marketfeed/quote",
-                        headers=headers,
-                        json=securities,
-                    )
-                    data = resp.json()
+                # Fallback to shared rate-limited Dhan REST quotes
+                from app.api.routes.market import _dhan_ohlc, _parse_ohlc
+                raw_data = await asyncio.to_thread(
+                    _dhan_ohlc,
+                    securities,
+                    settings.DHAN_CLIENT_ID,
+                    settings.DHAN_ACCESS_TOKEN,
+                )
 
-                    if data.get("status") == "success":
-                        ticks    = []
-                        raw_data = data.get("data", {})
+                if raw_data:
+                    ticks = []
+                    for (seg, sid), sym in sym_index.items():
+                        raw = raw_data.get(seg, {}).get(sid, {})
+                        if not raw:
+                            continue
+                        tick = _parse_ohlc(raw, sym, segment=seg, security_id=sid)
+                        ticks.append(tick)
 
-                        for (seg, sid), sym in sym_index.items():
-                            raw = raw_data.get(seg, {}).get(sid, {})
-                            if not raw:
-                                continue
-                            ltp   = float(raw.get("last_price", 0))
-                            ohlc  = raw.get("ohlc", {})
-                            close = float(ohlc.get("close", ltp))
-                            net_chg = float(raw.get("net_change", 0))
+                    if ticks:
+                        self._last_data = ticks
+                        backoff = max(1.5, self._interval)
+                        try:
+                            from app.core.redis_client import FEED_HEARTBEAT_KEY, get_redis
+                            import time as _time
+                            await get_redis().set(FEED_HEARTBEAT_KEY, str(_time.time()), ex=3600)
+                        except Exception as exc:
+                            logger.debug(f"Feed heartbeat write failed: {exc}")
 
-                            p_data = get_previous_day_ohlc(seg, sid)
-                            if p_data:
-                                p_close = float(p_data["p_close"])
-                                p_high  = float(p_data["p_high"])
-                                p_low   = float(p_data["p_low"])
-                                p_open  = float(p_data.get("p_open", p_close))
-                            else:
-                                enqueue_daily_ohlc_fetch(seg, sid, sym)
-                                if net_chg != 0:
-                                    p_close = round(ltp - net_chg, 2)
-                                else:
-                                    p_close = close
-                                p_high = p_close
-                                p_low  = p_close
-                                p_open = p_close
+                        # Dispatch to BSA Algo engine in background
+                        asyncio.create_task(self._notify_algo_engine(ticks))
 
-                            change = round(ltp - p_close, 2)
-                            change_pct = round((change / max(p_close, 1)) * 100, 2)
+                        async with self._lock:
+                            dead = []
+                            for q in self._queues:
+                                try:
+                                    q.put_nowait(ticks)
+                                except asyncio.QueueFull:
+                                    pass
+                                except Exception:
+                                    dead.append(q)
+                            for q in dead:
+                                self._queues.remove(q)
 
-                            depth = raw.get("depth", {})
-                            buy0  = depth.get("buy",  [{}])[0] if depth else {}
-                            sell0 = depth.get("sell", [{}])[0] if depth else {}
-                            ticks.append({
-                                "symbol":     sym,
-                                "ltp":        ltp,
-                                "open":       float(ohlc.get("open",  ltp)),
-                                "high":       float(ohlc.get("high",  ltp)),
-                                "low":        float(ohlc.get("low",   ltp)),
-                                "close":      close,
-                                "p_close":    p_close,
-                                "p_high":     p_high,
-                                "p_low":      p_low,
-                                "p_open":     p_open,
-                                "change":     change,
-                                "change_pct": change_pct,
-                                "volume":     int(raw.get("volume", 0)),
-                                "oi":         int(raw.get("oi", 0)),
-                                "atp":        float(raw.get("average_price", 0)),  # VWAP
-                                "vwap":       float(raw.get("average_price", 0)),
-                                "buy_qty":    int(raw.get("buy_quantity",  0)),
-                                "sell_qty":   int(raw.get("sell_quantity", 0)),
-                                "bp1":        float(buy0.get("price",  0)),
-                                "sp1":        float(sell0.get("price", 0)),
-                                "net_change": net_chg,
-                                "source":     "dhan_live",
-                            })
+                    logger.debug(f"MarketPoller: {len(ticks)} symbols → {len(self._queues)} clients")
+                else:
+                    backoff = min(backoff * 1.5, 10.0)
 
-                        if ticks:
-                            self._last_data = ticks
-                            backoff = self._interval
-                            try:
-                                from app.core.redis_client import FEED_HEARTBEAT_KEY, get_redis
-                                import time as _time
-                                await get_redis().set(FEED_HEARTBEAT_KEY, str(_time.time()), ex=3600)
-                            except Exception as exc:
-                                logger.debug(f"Feed heartbeat write failed: {exc}")
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(f"MarketPoller error: {e}")
 
-                            # Dispatch to BSA Algo engine in background
-                            asyncio.create_task(self._notify_algo_engine(ticks))
-
-                            async with self._lock:
-                                dead = []
-                                for q in self._queues:
-                                    try:
-                                        q.put_nowait(ticks)
-                                    except asyncio.QueueFull:
-                                        pass
-                                    except Exception:
-                                        dead.append(q)
-                                for q in dead:
-                                    self._queues.remove(q)
-
-                        logger.debug(f"MarketPoller: {len(ticks)} symbols → {len(self._queues)} clients")
-
-                    elif "805" in str(data):
-                        backoff = min(backoff * 2, 30)
-                        logger.warning(f"Dhan rate limit — backing off to {backoff:.0f}s")
-                    else:
-                        logger.warning(f"Dhan OHLC error: {data}")
-
-                except httpx.TimeoutException:
-                    logger.warning("MarketPoller: timeout")
-                except asyncio.CancelledError:
-                    return
-                except Exception as e:
-                    logger.error(f"MarketPoller error: {e}")
-
-                await asyncio.sleep(backoff)
+            await asyncio.sleep(backoff)
 
     async def _notify_algo_engine(self, ticks: list[dict]):
         try:
