@@ -238,7 +238,7 @@ export default function MarketPage() {
             <table className="data-table">
               <thead><tr>
                 {["SYMBOL","LTP","CHANGE","CHG %","OPEN","HIGH","LOW","VOLUME","DATA",""].map(h=>(
-                  <th key={h}>{h}</th>
+                  <th key={h} style={h === "LTP" ? { minWidth: 135, textAlign: "right" } : undefined}>{h}</th>
                 ))}
               </tr></thead>
               <tbody>
@@ -255,7 +255,9 @@ export default function MarketPage() {
                     <tr key={sym} onClick={()=>setSelected(sym)}
                       style={{cursor:"pointer",background:selected===sym?"var(--green-dim)":undefined}}>
                       <td className="symbol" style={{color:selected===sym?"var(--green)":undefined}}>{sym}</td>
-                      <td style={{fontWeight:700}}>{Number(q.ltp).toLocaleString()}</td>
+                      <td style={{fontWeight:700, minWidth: 135, textAlign: "right", fontVariantNumeric: "tabular-nums"}}>
+                        {Number(q.ltp).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
                       <td style={{color:pos?"var(--green)":"var(--red)"}}>
                         {pos?"+":""}{Number(q.change).toFixed(2)}
                       </td>

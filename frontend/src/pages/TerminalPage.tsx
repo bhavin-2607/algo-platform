@@ -1968,7 +1968,7 @@ function ImportDhanPositionsModal({
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "left" }}>SEGMENT</th>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>QTY</th>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>BUY AVG</th>
-                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>LTP</th>
+                    <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right", minWidth: 120 }}>LTP</th>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "right" }}>P&L</th>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "center", width: 110 }}>EXIT TARGET</th>
                     <th style={{ padding: "8px 6px", fontSize: 10, color: "var(--muted)", textAlign: "center", width: 120 }}>ACTION</th>
@@ -1994,8 +1994,8 @@ function ImportDhanPositionsModal({
                         <td style={{ padding: "8px 6px", textAlign: "right", color: "var(--text)" }}>
                           {Number(pos.buy_price || 0).toLocaleString()}
                         </td>
-                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: "var(--text)" }}>
-                          {Number(pos.ltp || 0).toLocaleString()}
+                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: "var(--text)", minWidth: 120, fontVariantNumeric: "tabular-nums" }}>
+                          {Number(pos.ltp || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                         <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: (pos.pnl || 0) >= 0 ? "var(--green)" : "var(--red)" }}>
                           {(pos.pnl || 0) >= 0 ? "+" : ""}{Number(pos.pnl || 0).toLocaleString()}
@@ -2167,7 +2167,7 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}>#</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "left", minWidth: 105 }}>SCRIPT</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>MODE</th>
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 80 }}>LTP</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 135, width: 135 }}>LTP</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>BUY TARGET / ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 85 }}>ENTRY</th>
@@ -2249,18 +2249,32 @@ function AlgoWindowTable({
                       </select>
                     </td>
 
-                    <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
+                    <td style={{
+                      padding: "8px 8px",
+                      textAlign: "right",
+                      fontWeight: 700,
+                      fontSize: 12,
+                      whiteSpace: "nowrap",
+                      minWidth: 135,
+                      width: 135,
+                      fontVariantNumeric: "tabular-nums",
+                      fontFeatureSettings: '"tnum"',
+                    }}>
                       {r.ltp != null ? (
                         <span style={{
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "flex-end",
                           gap: 4,
+                          width: "100%",
+                          fontVariantNumeric: "tabular-nums",
                           color: isLtpUp ? "var(--green)" : isLtpDown ? "var(--red)" : "var(--text)"
                         }}>
                           {isLtpUp && <span style={{ fontSize: 9, color: "var(--green)" }}>▲</span>}
                           {isLtpDown && <span style={{ fontSize: 9, color: "var(--red)" }}>▼</span>}
-                          <span>{Number(r.ltp).toLocaleString()}</span>
+                          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                            {Number(r.ltp).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
                         </span>
                       ) : "—"}
                     </td>
@@ -2811,7 +2825,10 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                   <th style={{
                     padding:"8px 8px", fontSize:10, letterSpacing:1.5, whiteSpace:"nowrap",
                     color:col.col_type==="custom"||col.col_type==="formula"?"var(--yellow)":"var(--muted)",
-                    borderRight:"1px solid var(--border)", minWidth:col.width||80, textAlign:"left",
+                    borderRight:"1px solid var(--border)",
+                    minWidth: col.col_key === "ltp" ? Math.max(col.width || 0, 135) : (col.width || 80),
+                    width: col.col_key === "ltp" ? Math.max(col.width || 0, 135) : undefined,
+                    textAlign: col.col_key === "ltp" ? "right" : "left",
                   }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
                       <span>{columnTitle(col.name)}</span>
@@ -2908,7 +2925,11 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                 } else if (col.col_key==="change_pct") {
                   formatted = `${pos?"+":""}${Number(value).toFixed(2)}%`;
                 } else if (typeof value==="number" && col.col_key!=="quantity") {
-                  formatted = Number(value).toLocaleString();
+                  if (col.col_key === "ltp" || col.col_key === "open" || col.col_key === "high" || col.col_key === "low" || col.col_key === "close" || col.col_key === "p_close" || col.col_key === "p_high" || col.col_key === "p_low" || col.col_key === "vwap" || col.col_key === "p_vwap") {
+                    formatted = Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  } else {
+                    formatted = Number(value).toLocaleString();
+                  }
                 } else {
                   formatted = String(value);
                 }
@@ -3024,12 +3045,24 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                         fontWeight:col.col_key==="ltp"?"700":"400",
                         fontSize:col.col_key==="ltp"?"14px":"13px",
                         whiteSpace: col.col_key==="ltp" ? "nowrap" : undefined,
+                        minWidth: col.col_key === "ltp" ? Math.max(col.width || 0, 135) : undefined,
+                        width: col.col_key === "ltp" ? Math.max(col.width || 0, 135) : undefined,
+                        textAlign: col.col_key === "ltp" ? "right" : undefined,
+                        fontVariantNumeric: "tabular-nums",
+                        fontFeatureSettings: '"tnum"',
                       }}>
                         {col.col_key === "ltp" && ltp != null ? (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "flex-end",
+                            gap: 4,
+                            width: "100%",
+                            fontVariantNumeric: "tabular-nums"
+                          }}>
                             {isLtpUp && <span style={{ fontSize: 9, color: "var(--green)" }}>▲</span>}
                             {isLtpDown && <span style={{ fontSize: 9, color: "var(--red)" }}>▼</span>}
-                            <span>{formatted}</span>
+                            <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatted}</span>
                           </span>
                         ) : (
                           formatted

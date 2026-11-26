@@ -32,7 +32,7 @@ class TerminalColumn(Base):
 STANDARD_FORMULA_COLUMNS = [
     {"name": "SYMBOL",              "col_key": "symbol",              "col_type": "default", "col_order": 0,  "width": 120, "color_rules": None, "formula": None, "is_visible": True},
     {"name": "TREND",               "col_key": "trend",               "col_type": "custom",  "col_order": 1,  "width": 80,  "color_rules": '{"UP":"green","DOWN":"red"}', "formula": '=IF((p_high+p_low+p_close)/3>ltp,"DOWN","UP")', "is_visible": True},
-    {"name": "LTP",                 "col_key": "ltp",                 "col_type": "default", "col_order": 2,  "width": 95,  "color_rules": None, "formula": None, "is_visible": True},
+    {"name": "LTP",                 "col_key": "ltp",                 "col_type": "default", "col_order": 2,  "width": 135, "color_rules": None, "formula": None, "is_visible": True},
     {"name": "OPEN",                "col_key": "open",                "col_type": "default", "col_order": 3,  "width": 85,  "color_rules": None, "formula": None, "is_visible": True},
     {"name": "HIGH",                "col_key": "high",                "col_type": "default", "col_order": 4,  "width": 85,  "color_rules": '{"field":"high","style":"green"}', "formula": None, "is_visible": True},
     {"name": "LOW",                 "col_key": "low",                 "col_type": "default", "col_order": 5,  "width": 85,  "color_rules": '{"field":"low","style":"red"}', "formula": None, "is_visible": True},
