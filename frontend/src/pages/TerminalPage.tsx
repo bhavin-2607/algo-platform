@@ -15,7 +15,7 @@ import { useAuthStore } from "@/store/auth";
 import { notifyOrder, notifyError } from "@/store/notifications";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
-import { Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { resolveLotSize, formatQuantityWithLots } from "@/utils/lotSize";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -243,7 +243,6 @@ export default function TerminalPage() {
   });
   const [viewMode, setViewMode] = useState<"watchlist" | "algo">("watchlist");
   const [segmentFilter, setSegmentFilter] = useState<"all" | "equity" | "options" | "mcx">("all");
-  const [isSegmentsCollapsed, setIsSegmentsCollapsed] = useState(false);
 
   const visibleCols = useMemo(() => {
     return (allCols ?? [])
@@ -522,6 +521,20 @@ export default function TerminalPage() {
     onError: (err: any) => toast.error(err?.response?.data?.detail || "Failed to activate kill switch"),
   });
 
+  const killAllAlgoMutation = useMutation({
+    mutationFn: () => api.post("/terminal/algo-rows/kill-all"),
+    onSuccess: (res: any) => {
+      const exited = res.data?.positions_exited || 0;
+      toast.success(
+        exited > 0
+          ? `Common Kill Switch activated: all algos disarmed & ${exited} position(s) exited`
+          : "Common Kill Switch activated: all algos disarmed"
+      );
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail || "Failed to activate Common Kill Switch"),
+  });
+
   const importPositionMutation = useMutation({
     mutationFn: (payload: {
       symbol: string;
@@ -583,8 +596,8 @@ export default function TerminalPage() {
           background: "var(--surface)",
         }}
       >
-        {/* Left: Tab Switcher (WATCHLIST | ALGO WINDOW) */}
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        {/* Left: Tab Switcher (WATCHLIST | ALGO WINDOW) + Segment Tabs */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
           <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
             <button
               type="button"
@@ -603,6 +616,43 @@ export default function TerminalPage() {
               ALGO WINDOW ({algoRows?.length ?? 0})
             </button>
           </div>
+
+          {viewMode === "watchlist" && (
+            <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
+              <button
+                type="button"
+                className={`tab-btn ${segmentFilter === "all" ? "active" : ""}`}
+                onClick={() => setSegmentFilter("all")}
+                style={{ padding: "3px 8px", fontSize: 10, fontWeight: 700 }}
+              >
+                ALL ({watchlist.length})
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${segmentFilter === "equity" ? "active" : ""}`}
+                onClick={() => setSegmentFilter("equity")}
+                style={{ padding: "3px 8px", fontSize: 10, fontWeight: 700 }}
+              >
+                EQUITY ({equitySymbols.length})
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${segmentFilter === "options" ? "active" : ""}`}
+                onClick={() => setSegmentFilter("options")}
+                style={{ padding: "3px 8px", fontSize: 10, fontWeight: 700 }}
+              >
+                OPTIONS ({optionSymbols.length})
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${segmentFilter === "mcx" ? "active" : ""}`}
+                onClick={() => setSegmentFilter("mcx")}
+                style={{ padding: "3px 8px", fontSize: 10, fontWeight: 700 }}
+              >
+                MCX ({mcxSymbols.length})
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Right: AVAIL BALANCE | USED MARGIN | P&L | ACTIVE | IN POSITION | COLUMNS | ADD SYMBOL */}
@@ -792,111 +842,6 @@ export default function TerminalPage() {
       {/* ── Single Unified Watchlist Pane for All Segments ──────── */}
       {viewMode === "watchlist" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {/* Segment Filter Toolbar */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-              gap: 8,
-              padding: "4px 10px",
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-            }}
-          >
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <button
-                type="button"
-                onClick={() => setIsSegmentsCollapsed((c) => !c)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "2px 7px",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  background: "var(--surface2)",
-                  border: "1px solid var(--border)",
-                  color: "var(--text)",
-                  borderRadius: 3,
-                }}
-                title={isSegmentsCollapsed ? "Expand segment tabs" : "Collapse segment tabs"}
-              >
-                {isSegmentsCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-                <span>SEGMENTS</span>
-                {isSegmentsCollapsed && (
-                  <span style={{ color: "var(--green)", textTransform: "uppercase", marginLeft: 4 }}>
-                    ({segmentFilter.toUpperCase()})
-                  </span>
-                )}
-              </button>
-
-              {!isSegmentsCollapsed && (
-                <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
-                  <button
-                    type="button"
-                    className={`tab-btn ${segmentFilter === "all" ? "active" : ""}`}
-                    onClick={() => setSegmentFilter("all")}
-                    style={{ padding: "3px 8px", fontSize: 10 }}
-                  >
-                    ALL ({watchlist.length})
-                  </button>
-                  <button
-                    type="button"
-                    className={`tab-btn ${segmentFilter === "equity" ? "active" : ""}`}
-                    onClick={() => setSegmentFilter("equity")}
-                    style={{ padding: "3px 8px", fontSize: 10 }}
-                  >
-                    EQUITY ({equitySymbols.length})
-                  </button>
-                  <button
-                    type="button"
-                    className={`tab-btn ${segmentFilter === "options" ? "active" : ""}`}
-                    onClick={() => setSegmentFilter("options")}
-                    style={{ padding: "3px 8px", fontSize: 10 }}
-                  >
-                    OPTIONS ({optionSymbols.length})
-                  </button>
-                  <button
-                    type="button"
-                    className={`tab-btn ${segmentFilter === "mcx" ? "active" : ""}`}
-                    onClick={() => setSegmentFilter("mcx")}
-                    style={{ padding: "3px 8px", fontSize: 10 }}
-                  >
-                    MCX ({mcxSymbols.length})
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 10, color: "var(--muted)" }}>
-                Showing {filteredWatchlist.length} of {watchlist.length} symbols
-              </span>
-              {!isSegmentsCollapsed && (
-                <button
-                  type="button"
-                  onClick={() => setIsSegmentsCollapsed(true)}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--muted)",
-                    cursor: "pointer",
-                    padding: "2px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                  }}
-                  title="Collapse segment tabs"
-                >
-                  <ChevronUp size={14} />
-                </button>
-              )}
-            </div>
-          </div>
-
           {filteredWatchlist.length === 0 ? (
             <div
               style={{
@@ -952,6 +897,7 @@ export default function TerminalPage() {
           onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
           onManualOrder={(id, side) => manualAlgoOrderMutation.mutate({ id, side })}
           onKillRow={(id) => killAlgoMutation.mutate(id)}
+          onKillAll={() => killAllAlgoMutation.mutate()}
           onOpenImportPositions={() => setShowImportPositions(true)}
         />
       )}
@@ -2168,6 +2114,7 @@ function AlgoWindowTable({
   onResetRow,
   onManualOrder,
   onKillRow,
+  onKillAll,
   onOpenImportPositions,
 }: {
   algoRows: any[];
@@ -2178,6 +2125,7 @@ function AlgoWindowTable({
   onResetRow: (id: string) => void;
   onManualOrder: (id: string, side: "BUY" | "SELL") => void;
   onKillRow: (id: string) => void;
+  onKillAll?: () => void;
   onOpenImportPositions?: () => void;
 }) {
   const activeCount = algoRows.filter((r) => r.is_algo_active).length;
@@ -2203,6 +2151,34 @@ function AlgoWindowTable({
           <span className="badge badge-gray" style={{ fontSize: 10 }}>
             {algoRows.length} SCRIPTS
           </span>
+          {onKillAll && (
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm("ACTIVATE COMMON KILL SWITCH?\n\nThis will immediately STOP all active algos and EXIT all open positions across all scripts at market price.")) {
+                  onKillAll();
+                }
+              }}
+              style={{
+                padding: "3px 8px",
+                fontSize: 10,
+                fontWeight: 800,
+                letterSpacing: 0.5,
+                cursor: "pointer",
+                background: "rgba(255, 68, 102, 0.16)",
+                border: "1px solid var(--red)",
+                color: "var(--red)",
+                borderRadius: 3,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                transition: "all 0.15s",
+              }}
+              title="Common Kill Switch: Immediately disarm all algos and exit open positions"
+            >
+              KILL ALL
+            </button>
+          )}
         </div>
 
         {onOpenImportPositions && (
@@ -2257,8 +2233,7 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>ALGO ON/OFF</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 85 }}>TRADES</th>
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 80 }}>BUYPRICE</th>
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 85 }}>SELL TGT</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "right", minWidth: 100 }}>P&L</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 150 }}>ACTIONS</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 140 }}>STATUS</th>
                 <th style={{ padding: "8px 4px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}></th>
@@ -2667,21 +2642,19 @@ function AlgoWindowTable({
                       </select>
                     </td>
 
-                    {/* BUYPRICE */}
-                    <td style={{ padding: "8px 8px", textAlign: "right", color: r.buy_price ? "var(--green)" : "var(--muted)", fontSize: 12 }}>
-                      {r.buy_price != null ? Number(r.buy_price).toLocaleString() : "—"}
-                    </td>
-
-                    {/* SELL TGT */}
-                    <td style={{ padding: "8px 8px", textAlign: "right", color: r.sell_tgt ? (r.target_type === "CUSTOM" ? "#38bdf8" : "var(--green)") : "var(--muted)", fontSize: 12, fontWeight: 700 }}>
-                      {r.sell_tgt != null ? (
-                        <span>
-                          {Number(r.sell_tgt).toLocaleString()}
-                          {r.target_type === "CUSTOM" && <span style={{ fontSize: 9, marginLeft: 3, color: "#38bdf8" }}>[CUST]</span>}
-                        </span>
-                      ) : r.trade_mode === "BUY_ONLY" ? (
-                        <span style={{ fontSize: 10, color: "var(--muted)" }}>MANUAL</span>
-                      ) : "—"}
+                    {/* PROFIT / LOSS FOR COMPLETED TRADE */}
+                    <td style={{
+                      padding: "8px 8px",
+                      textAlign: "right",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      fontVariantNumeric: "tabular-nums",
+                      fontFeatureSettings: '"tnum"',
+                      color: r.pnl == null ? "var(--muted)" : r.pnl > 0 ? "var(--green)" : r.pnl < 0 ? "var(--red)" : "var(--text)",
+                    }}>
+                      {r.pnl != null
+                        ? `${r.pnl > 0 ? "+" : ""}₹${Number(r.pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : "—"}
                     </td>
 
                     {/* ACTIONS: Manual BUY/SELL + Instant Kill Switch */}

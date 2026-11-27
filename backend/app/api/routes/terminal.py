@@ -1925,6 +1925,63 @@ async def kill_algo_row(
     return {"status": "killed", "id": str(row.id), "symbol": row.symbol, "is_algo_active": False}
 
 
+@router.post("/algo-rows/kill-all")
+async def kill_all_algo_rows(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Common Kill Switch for all scripts in Algo Window:
+    Instantly disarms all algos (is_algo_active = False) and exits any open positions at market price.
+    """
+    from app.models.algo_row import BsaAlgoRow
+    from app.services.bsa_algo_engine import algo_engine
+    from app.market.market_poller import get_poller
+    from sqlalchemy import select
+
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    stmt = select(BsaAlgoRow)
+    if not is_admin:
+        stmt = stmt.where(BsaAlgoRow.user_id == current_user.id)
+    result = await db.execute(stmt)
+    rows = list(result.scalars().all())
+
+    poller = get_poller()
+    positions_exited = 0
+    for row in rows:
+        row.is_algo_active = False
+        if row.status == "IN_POSITION":
+            live = next((t for t in (poller._last_data or []) if t.get("symbol") == row.symbol), {})
+            ltp = float(live.get("ltp") or row.buy_price or 0.0)
+            exit_fill = await algo_engine._execute_order(
+                row=row,
+                side="SELL",
+                price=ltp,
+                order_type="MARKET",
+                db=db,
+            )
+            if exit_fill:
+                row.trades_completed += 1
+                if row.buy_price:
+                    row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
+                row.status = "COMPLETED"
+                positions_exited += 1
+        elif row.status != "COMPLETED":
+            row.status = "IDLE"
+
+    await db.commit()
+    try:
+        await algo_engine.sync_dhan_status(db, current_user.id, force=True)
+    except Exception:
+        pass
+
+    return {
+        "status": "all_killed",
+        "total_scripts": len(rows),
+        "positions_exited": positions_exited,
+    }
+
+
 @router.delete("/algo-rows/{row_id}")
 async def delete_algo_row(
     row_id: UUID,
