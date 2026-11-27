@@ -2359,6 +2359,100 @@ async def get_dhan_holdings(
     return []
 
 
+@router.get("/dhan-profile")
+async def get_dhan_profile(
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch user account, segment permissions, and subscription telemetry from Dhan."""
+    from app.core.config import settings
+
+    client_id = settings.DHAN_CLIENT_ID or ""
+    if not settings.DHAN_ACCESS_TOKEN or not client_id:
+        return {
+            "status": "unconfigured",
+            "connected": False,
+            "dhanClientId": client_id,
+            "tokenValidity": "",
+            "activeSegment": "",
+            "segments": [],
+            "ddpi": "Deactive",
+            "mtf": "Deactive",
+            "dataPlan": "Inactive",
+            "dataValidity": "",
+        }
+
+    try:
+        data = await _dhan_get("/profile")
+        if isinstance(data, dict):
+            if "dhanClientId" in data:
+                raw_seg = data.get("activeSegment", "")
+                seg_map = {
+                    "E": "Equity (NSE/BSE)",
+                    "D": "Futures & Options (FNO)",
+                    "C": "Currency (FX)",
+                    "M": "Commodity (MCX)",
+                }
+                segments = []
+                if isinstance(raw_seg, str):
+                    for part in raw_seg.split(","):
+                        p = part.strip()
+                        if p:
+                            segments.append(seg_map.get(p, p))
+
+                return {
+                    "status": "success",
+                    "connected": True,
+                    "dhanClientId": data.get("dhanClientId", client_id),
+                    "tokenValidity": data.get("tokenValidity", ""),
+                    "activeSegment": raw_seg,
+                    "segments": segments,
+                    "ddpi": data.get("ddpi", "Deactive"),
+                    "mtf": data.get("mtf", "Deactive"),
+                    "dataPlan": data.get("dataPlan", "Inactive"),
+                    "dataValidity": data.get("dataValidity", ""),
+                }
+            elif data.get("errorCode"):
+                return {
+                    "status": "error",
+                    "connected": False,
+                    "error": data.get("errorMessage", "Dhan authentication error"),
+                    "errorCode": data.get("errorCode"),
+                    "dhanClientId": client_id,
+                    "activeSegment": "",
+                    "segments": [],
+                    "ddpi": "Deactive",
+                    "mtf": "Deactive",
+                    "dataPlan": "Inactive",
+                    "dataValidity": "",
+                }
+    except Exception as e:
+        logger.warning(f"Failed to fetch Dhan profile: {e}")
+        return {
+            "status": "error",
+            "connected": False,
+            "error": str(e),
+            "dhanClientId": client_id,
+            "activeSegment": "",
+            "segments": [],
+            "ddpi": "Deactive",
+            "mtf": "Deactive",
+            "dataPlan": "Inactive",
+            "dataValidity": "",
+        }
+
+    return {
+        "status": "unknown",
+        "connected": False,
+        "dhanClientId": client_id,
+        "activeSegment": "",
+        "segments": [],
+        "ddpi": "Deactive",
+        "mtf": "Deactive",
+        "dataPlan": "Inactive",
+        "dataValidity": "",
+    }
+
+
 class ImportDhanPositionPayload(BaseModel):
     symbol: str
     exchange: Optional[str] = "NSE"

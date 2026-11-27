@@ -72,7 +72,13 @@ export default function DashboardPage() {
 
   const { data: tokenStatus } = useQuery({
     queryKey: ["dhan-auth-token-status"],
-    queryFn: () => api.get("/settings/dhan-token-status").then(r => r.data),
+    queryFn: () => api.get("/dhan-auth/token-status").then(r => r.data),
+    refetchInterval: 60_000,
+  });
+
+  const { data: dhanProfile } = useQuery({
+    queryKey: ["dhan-profile"],
+    queryFn: () => api.get("/terminal/dhan-profile").then(r => r.data),
     refetchInterval: 60_000,
   });
 
@@ -111,17 +117,33 @@ export default function DashboardPage() {
             <span className={`badge ${dhanConnected ? "badge-green" : "badge-yellow"}`} style={{ fontSize: 9 }}>
               {dhanConnected ? "DHAN LIVE BROKER" : "PAPER TRADING"}
             </span>
-            {tokenStatus?.valid && (
+            {tokenStatus?.valid ? (
               <span className="badge badge-green" style={{ fontSize: 9 }}>
-                TOKEN VALID ({tokenStatus.hours_remaining ?? 16}H LEFT)
+                TOKEN VALID ({typeof tokenStatus.hours_remaining === "number" ? tokenStatus.hours_remaining.toFixed(1) : 16}H LEFT)
+              </span>
+            ) : (
+              <span className="badge badge-yellow" style={{ fontSize: 9 }}>
+                TOKEN AUTH CYCLE
+              </span>
+            )}
+            {dhanProfile?.dataPlan && (
+              <span className={`badge ${dhanProfile.dataPlan.toLowerCase() === "active" ? "badge-green" : "badge-gray"}`} style={{ fontSize: 9 }}>
+                DATA FEED: {dhanProfile.dataPlan.toUpperCase()}
+              </span>
+            )}
+            {dhanProfile?.ddpi && (
+              <span className={`badge ${dhanProfile.ddpi.toLowerCase() === "active" ? "badge-green" : "badge-gray"}`} style={{ fontSize: 9 }}>
+                DDPI: {dhanProfile.ddpi.toUpperCase()}
               </span>
             )}
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>
-            CLIENT ID: <span style={{ color: "var(--green)", fontWeight: 700 }}>{tokenStatus?.client_id || user?.username}</span>
+            DHAN CLIENT ID: <span style={{ color: "var(--green)", fontWeight: 700 }}>{dhanProfile?.dhanClientId || tokenStatus?.client_id || user?.username}</span>
           </div>
         </div>
-        <div style={{ padding: "10px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+
+        {/* Funds & Margin Row */}
+        <div style={{ padding: "10px 14px 6px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
           <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
             <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>AVAILABLE CASH MARGIN</div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "var(--green)", marginTop: 2, fontFamily: "monospace" }}>
@@ -141,9 +163,57 @@ export default function DashboardPage() {
             </div>
           </div>
           <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>USER / ROLE</div>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>PLATFORM USER</div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>
               {user?.username} <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>({user?.role})</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Dhan Account & Trading Telemetry Row */}
+        <div style={{ padding: "0 14px 10px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>ACTIVE SEGMENTS</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              {dhanProfile?.segments && dhanProfile.segments.length > 0 ? (
+                dhanProfile.segments.map((s: string, idx: number) => (
+                  <span key={idx} className="badge badge-gray" style={{ fontSize: 9, padding: "2px 5px", background: "rgba(0,230,118,0.08)", color: "var(--green)", borderColor: "rgba(0,230,118,0.25)" }}>
+                    {s}
+                  </span>
+                ))
+              ) : (
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {dhanProfile?.activeSegment || "Equity, F&O, Currency, Commodity"}
+                </span>
+              )}
+            </div>
+          </div>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>DATA PLAN & VALIDITY</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginTop: 3 }}>
+              {dhanProfile?.dataPlan ? dhanProfile.dataPlan : "Active"}
+              {dhanProfile?.dataValidity && (
+                <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "monospace", marginTop: 2 }}>
+                  Valid: {dhanProfile.dataValidity.slice(0, 10)}
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>DDPI & MTF PRIVILEGES</div>
+            <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
+              <span className={`badge ${dhanProfile?.ddpi?.toLowerCase() === "active" ? "badge-green" : "badge-gray"}`} style={{ fontSize: 9 }}>
+                DDPI: {dhanProfile?.ddpi || "Deactive"}
+              </span>
+              <span className={`badge ${dhanProfile?.mtf?.toLowerCase() === "active" ? "badge-green" : "badge-gray"}`} style={{ fontSize: 9 }}>
+                MTF: {dhanProfile?.mtf || "Deactive"}
+              </span>
+            </div>
+          </div>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>SESSION TOKEN EXPIRATION</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginTop: 3, fontFamily: "monospace" }}>
+              {dhanProfile?.tokenValidity || tokenStatus?.expires_at_ist || tokenStatus?.expires_at || "Daily 24H Cycle"}
             </div>
           </div>
         </div>
