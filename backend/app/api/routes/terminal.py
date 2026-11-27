@@ -1748,9 +1748,12 @@ async def update_algo_row(
         if payload.is_algo_active:
             from app.market.market_poller import get_poller
             get_poller().ensure_started()
-        if payload.is_algo_active and row.status in ("COMPLETED", "STOPPED_SL"):
-            row.status = "IDLE"
-            row.trades_completed = 0
+            if row.status in ("COMPLETED", "STOPPED_SL", "DHAN CLOSED") or row.trades_completed >= row.number_of_trades:
+                row.status = "IDLE"
+                row.trades_completed = 0
+                row.buy_price = None
+                row.sell_tgt = None
+                row.last_signal = "RE-ARMED"
 
     if payload.quantity is not None:
         row.quantity = max(1, payload.quantity)

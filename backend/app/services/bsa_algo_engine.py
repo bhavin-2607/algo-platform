@@ -170,7 +170,10 @@ class BsaAlgoEngine:
 
                     if net_qty == 0 and buy_qty > 0 and sell_qty > 0:
                         # Full round-trip trade closed on Dhan
-                        if r.status != "COMPLETED" or r.is_algo_active:
+                        # Only mark COMPLETED and disarm algo if the row was actively holding a position
+                        # (IN_POSITION or EXIT_PENDING). If row is IDLE or WAITING_SIGNAL, the user has
+                        # re-armed it for a new trade, so old closed trades from earlier today must not shut it off!
+                        if r.status in ("IN_POSITION", "EXIT_PENDING"):
                             r.status = "COMPLETED"
                             r.trades_completed = max(r.trades_completed, 1)
                             if buy_avg > 0:

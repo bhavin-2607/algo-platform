@@ -443,6 +443,13 @@ export default function TerminalPage() {
     refetchInterval: 2000,
   });
 
+  const { data: orderbook } = useQuery({
+    queryKey: ["orderbook"],
+    queryFn: () => api.get("/terminal/orderbook").then(r => r.data as any[]),
+    refetchInterval: 3000,
+    enabled: viewMode === "algo",
+  });
+
   const { data: copySummary } = useQuery({
     queryKey: ["copy-trading-summary"],
     queryFn: () => api.get("/copy-trading/accounts").then(r => r.data),
@@ -888,18 +895,33 @@ export default function TerminalPage() {
 
       {/* ── Algo Trading Window Table ────────────────────────────────────── */}
       {viewMode === "algo" && (
-        <AlgoWindowTable
-          algoRows={algoRows ?? []}
-          isPaper={isPaperMode}
-          onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
-          onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
-          onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
-          onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
-          onManualOrder={(id, side) => manualAlgoOrderMutation.mutate({ id, side })}
-          onKillRow={(id) => killAlgoMutation.mutate(id)}
-          onKillAll={() => killAllAlgoMutation.mutate()}
-          onOpenImportPositions={() => setShowImportPositions(true)}
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <AlgoWindowTable
+            algoRows={algoRows ?? []}
+            isPaper={isPaperMode}
+            onToggleAlgo={(id, currentActive) => toggleAlgoMutation.mutate({ id, is_algo_active: !currentActive })}
+            onUpdateRow={(id, updates) => updateAlgoRowMutation.mutate({ id, updates })}
+            onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
+            onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
+            onManualOrder={(id, side) => manualAlgoOrderMutation.mutate({ id, side })}
+            onKillRow={(id) => killAlgoMutation.mutate(id)}
+            onKillAll={() => killAllAlgoMutation.mutate()}
+            onOpenImportPositions={() => setShowImportPositions(true)}
+          />
+          <CompletedAlgoOrdersTable
+            algoRows={algoRows ?? []}
+            orderbook={orderbook ?? []}
+            onReTrade={(id) => {
+              updateAlgoRowMutation.mutate({
+                id,
+                updates: { is_algo_active: true, trades_completed: 0, status: "IDLE", buy_price: null, sell_tgt: null },
+              });
+              toast.success("Algo re-armed for new trade cycle");
+            }}
+            onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
+            onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
+          />
+        </div>
       )}
 
     </Layout>
@@ -2221,7 +2243,7 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>MODE</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 135, width: 135 }}>LTP</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>BUY TARGET / ENTRY</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>BUY / ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 85 }}>ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
                 {TARGET_COLS.map((tc) => (
@@ -2229,7 +2251,7 @@ function AlgoWindowTable({
                     {tc.label}
                   </th>
                 ))}
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>SELL TARGET / EXIT</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>SELL / EXIT</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>ALGO ON/OFF</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 85 }}>TRADES</th>
@@ -2368,10 +2390,10 @@ function AlgoWindowTable({
                               cursor: "pointer",
                               fontWeight: 700,
                             }}
-                            title="Select trigger condition for BUY order (Formula Entry, T1-T9 Target level, or Custom Buy price)"
+                            title="Select trigger condition for BUY order (Formula Entry, T1-T5 Target level, or C. BUY custom price)"
                           >
                             <option value="FORMULA">
-                              ENTRY (FORMULA)
+                              ENTRY
                             </option>
                             {TARGET_COLS.map((tc) => (
                               <option key={tc.key} value={tc.key}>
@@ -2379,7 +2401,7 @@ function AlgoWindowTable({
                               </option>
                             ))}
                             <option value="CUSTOM">
-                              CUSTOM BUY PRICE
+                              C. BUY
                             </option>
                           </select>
 
@@ -2439,7 +2461,7 @@ function AlgoWindowTable({
                             {Number(r.buy_entry_price ?? r.entry ?? 0).toLocaleString()}
                           </span>
                           {r.entry_type === "CUSTOM" && (
-                            <span style={{ fontSize: 9, marginLeft: 3, color: "#38bdf8", fontWeight: 700 }}>[CUST]</span>
+                            <span style={{ fontSize: 9, marginLeft: 3, color: "#38bdf8", fontWeight: 700 }}>[C. BUY]</span>
                           )}
                           {r.entry_type && r.entry_type !== "FORMULA" && r.entry_type !== "CUSTOM" && (
                             <span style={{ fontSize: 9, marginLeft: 3, color: "#4ade80", fontWeight: 700 }}>[{r.entry_type}]</span>
@@ -2516,7 +2538,7 @@ function AlgoWindowTable({
                             {tc.label}
                           </option>
                         ))}
-                        <option value="CUSTOM">CUSTOM TARGET</option>
+                        <option value="CUSTOM">C. SELL</option>
                         <option value="KILL" style={{ color: "var(--red)", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
                       </select>
 
@@ -2719,6 +2741,27 @@ function AlgoWindowTable({
                         <button
                           type="button"
                           onClick={() => {
+                            if (confirm(`Reset trade cycle for ${r.symbol}? This clears completed trade count and re-arms the script.`)) {
+                              onResetRow(r.id);
+                            }
+                          }}
+                          style={{
+                            padding: "3px 6px",
+                            fontSize: 9,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            background: "rgba(251, 191, 36, 0.14)",
+                            border: "1px solid rgba(251, 191, 36, 0.5)",
+                            color: "#fbbf24",
+                            borderRadius: 3,
+                          }}
+                          title={`Reset completed trade count and re-arm ${r.symbol}`}
+                        >
+                          RESET
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
                             if (confirm(`Kill position and pause algo for ${r.symbol}?`)) {
                               onKillRow(r.id);
                             }
@@ -2804,6 +2847,351 @@ function AlgoWindowTable({
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Completed Algo Orders Table ──────────────────────────────────────────────
+function CompletedAlgoOrdersTable({
+  algoRows,
+  orderbook,
+  onReTrade,
+  onResetRow,
+  onDeleteRow,
+}: {
+  algoRows: any[];
+  orderbook: any[];
+  onReTrade: (id: string) => void;
+  onResetRow: (id: string) => void;
+  onDeleteRow: (id: string) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<"trades" | "executions">("trades");
+
+  const completedTrades = algoRows.filter(
+    (r) =>
+      r.status === "COMPLETED" ||
+      r.status === "DHAN CLOSED" ||
+      (r.trades_completed != null && r.trades_completed > 0) ||
+      (r.pnl != null && r.pnl !== 0 && r.status !== "IN_POSITION")
+  );
+
+  const totalRealizedPnl = completedTrades.reduce((acc, r) => acc + (Number(r.pnl) || 0), 0);
+
+  const tradedOrders = (orderbook || []).filter((o: any) => {
+    const st = String(o.orderStatus || o.status || "").toUpperCase();
+    return st === "TRADED";
+  });
+
+  return (
+    <div style={{ border: "1px solid var(--border)", background: "var(--surface)", marginBottom: 20 }}>
+      {/* Header bar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 14px",
+          borderBottom: "1px solid var(--border)",
+          background: "rgba(251, 191, 36, 0.04)",
+          flexWrap: "wrap",
+          gap: 10,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "#fbbf24" }}>
+            COMPLETED ALGO ORDERS & EXECUTIONS
+          </span>
+          <span className="badge badge-yellow" style={{ fontSize: 10 }}>
+            {completedTrades.length} COMPLETED TRADES
+          </span>
+          {completedTrades.length > 0 && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "2px 8px",
+                borderRadius: 3,
+                background: totalRealizedPnl >= 0 ? "rgba(0, 230, 118, 0.14)" : "rgba(255, 68, 102, 0.14)",
+                border: `1px solid ${totalRealizedPnl >= 0 ? "var(--green)" : "var(--red)"}`,
+                color: totalRealizedPnl >= 0 ? "var(--green)" : "var(--red)",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              REALIZED P&L: {totalRealizedPnl >= 0 ? "+" : ""}₹{totalRealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          )}
+        </div>
+
+        {/* Tab switcher */}
+        <div style={{ display: "inline-flex", background: "var(--surface2)", borderRadius: 4, padding: 2, border: "1px solid var(--border)" }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab("trades")}
+            style={{
+              padding: "3px 10px",
+              fontSize: 10,
+              fontWeight: 700,
+              border: "none",
+              borderRadius: 3,
+              cursor: "pointer",
+              background: activeTab === "trades" ? "rgba(251, 191, 36, 0.2)" : "transparent",
+              color: activeTab === "trades" ? "#fbbf24" : "var(--muted)",
+              transition: "all 0.15s",
+            }}
+          >
+            ROUND-TRIP TRADES ({completedTrades.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("executions")}
+            style={{
+              padding: "3px 10px",
+              fontSize: 10,
+              fontWeight: 700,
+              border: "none",
+              borderRadius: 3,
+              cursor: "pointer",
+              background: activeTab === "executions" ? "rgba(56, 189, 248, 0.2)" : "transparent",
+              color: activeTab === "executions" ? "#38bdf8" : "var(--muted)",
+              transition: "all 0.15s",
+            }}
+          >
+            DHAN EXECUTIONS ({tradedOrders.length})
+          </button>
+        </div>
+      </div>
+
+      {activeTab === "trades" ? (
+        completedTrades.length === 0 ? (
+          <div style={{ padding: "30px 20px", textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+            No completed trades yet today. When automated or manual algo cycles exit, their round-trip execution records and realized P&L will appear here.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontFamily: "var(--font)" }}>
+              <thead>
+                <tr style={{ background: "var(--surface)", borderBottom: "2px solid var(--border)" }}>
+                  <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}>#</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "left", minWidth: 110 }}>SCRIPT</th>
+                  <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 90 }}>MODE</th>
+                  <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 90 }}>ENTRY</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "right", minWidth: 90 }}>EXIT / TGT</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "right", minWidth: 110 }}>REALIZED P&L</th>
+                  <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 80 }}>CYCLE</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 110 }}>STATUS</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 150 }}>ACTIONS</th>
+                  <th style={{ padding: "8px 4px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {completedTrades.map((r, idx) => {
+                  const pnl = r.pnl;
+                  const isWin = pnl != null && pnl > 0;
+                  const isLoss = pnl != null && pnl < 0;
+                  return (
+                    <tr
+                      key={r.id || idx}
+                      style={{
+                        borderBottom: "1px solid var(--border)",
+                        background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
+                      }}
+                    >
+                      <td style={{ padding: "8px 6px", fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
+                        {idx + 1}
+                      </td>
+                      <td style={{ padding: "8px 8px", fontWeight: 700 }}>
+                        <div style={{ color: "var(--green)", fontSize: 12 }}>{r.symbol}</div>
+                        <div style={{ fontSize: 9, color: "var(--muted)" }}>{r.segment || "NSE_EQ"}</div>
+                      </td>
+                      <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                        <span className="badge badge-gray" style={{ fontSize: 9, fontWeight: 700 }}>
+                          {r.trade_mode || "FULL"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 6px", textAlign: "center", fontFamily: "monospace", fontSize: 11, fontWeight: 700 }}>
+                        {r.quantity}
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "right", fontSize: 12, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        {r.buy_price != null ? Number(r.buy_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "right", fontSize: 12, fontWeight: 700, color: "var(--yellow)", fontVariantNumeric: "tabular-nums" }}>
+                        {r.sell_tgt != null
+                          ? Number(r.sell_tgt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : (r.ltp != null ? Number(r.ltp).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—")}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 8px",
+                          textAlign: "right",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          fontVariantNumeric: "tabular-nums",
+                          color: isWin ? "var(--green)" : isLoss ? "var(--red)" : "var(--text)",
+                        }}
+                      >
+                        {pnl != null
+                          ? `${isWin ? "+" : ""}₹${Number(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          : "—"}
+                      </td>
+                      <td style={{ padding: "8px 6px", textAlign: "center", fontSize: 10, color: "var(--muted)" }}>
+                        {r.trades_completed}/{r.number_of_trades}
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "center" }}>
+                        <span
+                          className={`badge ${
+                            r.status === "COMPLETED"
+                              ? "badge-yellow"
+                              : r.status === "DHAN CLOSED"
+                              ? "badge-green"
+                              : "badge-gray"
+                          }`}
+                          style={{ fontSize: 9, fontWeight: 700 }}
+                        >
+                          {r.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "center", whiteSpace: "nowrap" }}>
+                        <div style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
+                          <button
+                            type="button"
+                            onClick={() => onReTrade(r.id)}
+                            style={{
+                              padding: "3px 8px",
+                              fontSize: 9,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              background: "rgba(0, 230, 118, 0.16)",
+                              border: "1px solid var(--green)",
+                              color: "var(--green)",
+                              borderRadius: 3,
+                            }}
+                            title="Re-arm this script for a new automated trade cycle"
+                          >
+                            ↺ RE-TRADE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onResetRow(r.id)}
+                            style={{
+                              padding: "3px 6px",
+                              fontSize: 9,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              background: "rgba(251, 191, 36, 0.14)",
+                              border: "1px solid rgba(251, 191, 36, 0.5)",
+                              color: "#fbbf24",
+                              borderRadius: 3,
+                            }}
+                            title="Reset trade counter and status to IDLE"
+                          >
+                            RESET
+                          </button>
+                        </div>
+                      </td>
+                      <td style={{ padding: "8px 4px", textAlign: "center" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Remove ${r.symbol} from Algo Window?`)) {
+                              onDeleteRow(r.id);
+                            }
+                          }}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "rgba(255,68,102,0.6)",
+                            cursor: "pointer",
+                            fontSize: 13,
+                            padding: 2,
+                          }}
+                          title={`Remove ${r.symbol} from Algo Window`}
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        tradedOrders.length === 0 ? (
+          <div style={{ padding: "30px 20px", textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+            No executed orders found in today's Dhan orderbook.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontFamily: "var(--font)" }}>
+              <thead>
+                <tr style={{ background: "var(--surface)", borderBottom: "2px solid var(--border)" }}>
+                  <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}>#</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "left", minWidth: 120 }}>TIME / ORDER ID</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "left", minWidth: 120 }}>SCRIPT</th>
+                  <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIDE</th>
+                  <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>QTY</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 90 }}>AVG PRICE</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 80 }}>PRODUCT</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 90 }}>STATUS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tradedOrders.map((o: any, idx: number) => {
+                  const side = String(o.transactionType || o.side || "").toUpperCase();
+                  const isBuy = side === "BUY";
+                  const sym = o.tradingSymbol || o.customSymbol || o.symbol || "—";
+                  const orderId = o.orderId || o.id || "—";
+                  const time = o.orderTimestamp || o.createTime || o.time || "—";
+                  const qty = o.filledQty || o.quantity || o.qty || 0;
+                  const price = o.averageTradedPrice || o.price || 0;
+                  const product = o.productType || o.product || "—";
+                  return (
+                    <tr
+                      key={orderId + idx}
+                      style={{
+                        borderBottom: "1px solid var(--border)",
+                        background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
+                      }}
+                    >
+                      <td style={{ padding: "8px 6px", fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
+                        {idx + 1}
+                      </td>
+                      <td style={{ padding: "8px 8px" }}>
+                        <div style={{ fontSize: 11, color: "var(--text)", fontFamily: "monospace" }}>{time}</div>
+                        <div style={{ fontSize: 9, color: "var(--muted)", fontFamily: "monospace" }}>ID: {orderId}</div>
+                      </td>
+                      <td style={{ padding: "8px 8px", fontWeight: 700, color: "var(--green)", fontSize: 12 }}>
+                        {sym}
+                      </td>
+                      <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                        <span className={`badge ${isBuy ? "badge-green" : "badge-red"}`} style={{ fontSize: 9, fontWeight: 700 }}>
+                          {side}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 6px", textAlign: "center", fontFamily: "monospace", fontSize: 11, fontWeight: 700 }}>
+                        {qty}
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "right", fontSize: 12, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        ₹{Number(price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "center", fontSize: 10, color: "var(--muted)" }}>
+                        {product}
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "center" }}>
+                        <span className="badge badge-green" style={{ fontSize: 9, fontWeight: 700 }}>
+                          TRADED
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
     </div>
   );
