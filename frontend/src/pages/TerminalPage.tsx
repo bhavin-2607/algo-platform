@@ -450,6 +450,21 @@ export default function TerminalPage() {
     enabled: viewMode === "algo",
   });
 
+  const { data: algoHistory } = useQuery({
+    queryKey: ["algo-history"],
+    queryFn: () => api.get("/terminal/algo-history").then(r => r.data as any[]),
+    refetchInterval: 3000,
+    enabled: viewMode === "algo",
+  });
+
+  const deleteAlgoHistoryMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/terminal/algo-history/${id}`),
+    onSuccess: () => {
+      toast.success("Trade removed from completed history");
+      qc.invalidateQueries({ queryKey: ["algo-history"] });
+    },
+  });
+
   const { data: copySummary } = useQuery({
     queryKey: ["copy-trading-summary"],
     queryFn: () => api.get("/copy-trading/accounts").then(r => r.data),
@@ -910,16 +925,28 @@ export default function TerminalPage() {
           />
           <CompletedAlgoOrdersTable
             algoRows={algoRows ?? []}
+            algoHistory={algoHistory ?? []}
             orderbook={orderbook ?? []}
-            onReTrade={(id) => {
-              updateAlgoRowMutation.mutate({
-                id,
-                updates: { is_algo_active: true, trades_completed: 0, status: "IDLE", buy_price: null, sell_tgt: null },
-              });
-              toast.success("Algo re-armed for new trade cycle");
+            onReTrade={(symbolOrId) => {
+              const existingRow = (algoRows ?? []).find((r: any) => r.id === symbolOrId || r.symbol === symbolOrId);
+              if (existingRow) {
+                updateAlgoRowMutation.mutate({
+                  id: existingRow.id,
+                  updates: { is_algo_active: true, trades_completed: 0, status: "IDLE", buy_price: null, sell_tgt: null },
+                });
+              } else {
+                addAlgoRowMutation.mutate({ symbol: symbolOrId });
+              }
+              toast.success(`Algo re-armed for ${existingRow?.symbol || symbolOrId}`);
+              qc.invalidateQueries({ queryKey: ["algo-rows"] });
+              qc.invalidateQueries({ queryKey: ["algo-history"] });
             }}
-            onResetRow={(id) => resetAlgoRowMutation.mutate(id)}
+            onResetRow={(id) => {
+              resetAlgoRowMutation.mutate(id);
+              qc.invalidateQueries({ queryKey: ["algo-history"] });
+            }}
             onDeleteRow={(id) => deleteAlgoRowMutation.mutate(id)}
+            onDeleteHistory={(id) => deleteAlgoHistoryMutation.mutate(id)}
           />
         </div>
       )}
@@ -2243,7 +2270,7 @@ function AlgoWindowTable({
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>MODE</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 135, width: 135 }}>LTP</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 70 }}>SIGNAL</th>
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>BUY / ENTRY</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>BUY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 85 }}>ENTRY</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--red)", textAlign: "right", minWidth: 75 }}>SL</th>
                 {TARGET_COLS.map((tc) => (
@@ -2251,7 +2278,7 @@ function AlgoWindowTable({
                     {tc.label}
                   </th>
                 ))}
-                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>SELL / EXIT</th>
+                <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 145 }}>SELL</th>
                 <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 95 }}>ALGO ON/OFF</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
                 <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "center", minWidth: 85 }}>TRADES</th>
@@ -2390,19 +2417,10 @@ function AlgoWindowTable({
                               cursor: "pointer",
                               fontWeight: 700,
                             }}
-                            title="Select trigger condition for BUY order (Formula Entry, T1-T5 Target level, or C. BUY custom price)"
+                            title="Select trigger condition for BUY order (ENTRY formula or C. BUY custom price)"
                           >
-                            <option value="FORMULA">
-                              ENTRY
-                            </option>
-                            {TARGET_COLS.map((tc) => (
-                              <option key={tc.key} value={tc.key}>
-                                {tc.label}
-                              </option>
-                            ))}
-                            <option value="CUSTOM">
-                              C. BUY
-                            </option>
+                            <option value="FORMULA">ENTRY</option>
+                            <option value="CUSTOM">C. BUY</option>
                           </select>
 
                           {r.entry_type === "CUSTOM" && (
@@ -2531,7 +2549,7 @@ function AlgoWindowTable({
                           cursor: "pointer",
                           fontWeight: 700,
                         }}
-                        title="Select active target level or trigger instant Kill Switch"
+                        title="Select active target level (T1-T5 or C. SELL custom target)"
                       >
                         {TARGET_COLS.map((tc) => (
                           <option key={tc.key} value={tc.key}>
@@ -2539,7 +2557,6 @@ function AlgoWindowTable({
                           </option>
                         ))}
                         <option value="CUSTOM">C. SELL</option>
-                        <option value="KILL" style={{ color: "var(--red)", fontWeight: 800 }}>KILL SWITCH (EXIT NOW)</option>
                       </select>
 
                       {r.target_type === "CUSTOM" && (
@@ -2855,27 +2872,70 @@ function AlgoWindowTable({
 // ── Completed Algo Orders Table ──────────────────────────────────────────────
 function CompletedAlgoOrdersTable({
   algoRows,
+  algoHistory = [],
   orderbook,
   onReTrade,
   onResetRow,
   onDeleteRow,
+  onDeleteHistory,
 }: {
   algoRows: any[];
+  algoHistory?: any[];
   orderbook: any[];
-  onReTrade: (id: string) => void;
+  onReTrade: (symbolOrId: string) => void;
   onResetRow: (id: string) => void;
   onDeleteRow: (id: string) => void;
+  onDeleteHistory?: (id: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"trades" | "executions">("trades");
 
-  const completedTrades = algoRows.filter(
-    (r) =>
-      r.status === "COMPLETED" ||
-      r.status === "DHAN CLOSED" ||
-      (r.trades_completed != null && r.trades_completed > 0) ||
-      (r.pnl != null && r.pnl !== 0 && r.status !== "IN_POSITION")
-  );
+  // Merge history with any currently completed rows in algoRows not yet saved
+  const historyMap = new Map<string, any>();
+  for (const h of algoHistory) {
+    historyMap.set(h.id, {
+      id: h.id,
+      symbol: h.symbol,
+      segment: h.segment,
+      trade_mode: h.trade_mode,
+      quantity: h.quantity,
+      entry_price: h.entry_price,
+      exit_price: h.exit_price,
+      pnl: h.pnl,
+      trades_completed: h.trades_completed,
+      number_of_trades: h.number_of_trades,
+      status: h.status || "COMPLETED",
+      exit_reason: h.exit_reason || "TARGET HIT",
+      closed_at: h.closed_at,
+      is_history: true,
+    });
+  }
 
+  // Also include any currently COMPLETED or DHAN CLOSED rows from algoRows if not in history
+  for (const r of algoRows) {
+    if ((r.status === "COMPLETED" || r.status === "DHAN CLOSED" || r.trades_completed > 0) && r.buy_price) {
+      const match = algoHistory.find((h) => h.row_id === r.id || (h.symbol === r.symbol && Math.abs(h.entry_price - r.buy_price) < 0.1));
+      if (!match) {
+        historyMap.set(`row-${r.id}`, {
+          id: r.id,
+          symbol: r.symbol,
+          segment: r.segment,
+          trade_mode: r.trade_mode,
+          quantity: r.quantity,
+          entry_price: r.buy_price,
+          exit_price: r.sell_tgt || r.ltp || r.buy_price,
+          pnl: r.pnl,
+          trades_completed: r.trades_completed || 1,
+          number_of_trades: r.number_of_trades || 1,
+          status: r.status,
+          exit_reason: r.last_signal || "COMPLETED",
+          closed_at: null,
+          is_history: false,
+        });
+      }
+    }
+  }
+
+  const completedTrades = Array.from(historyMap.values());
   const totalRealizedPnl = completedTrades.reduce((acc, r) => acc + (Number(r.pnl) || 0), 0);
 
   const tradedOrders = (orderbook || []).filter((o: any) => {
@@ -2976,12 +3036,13 @@ function CompletedAlgoOrdersTable({
                   <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "left", minWidth: 110 }}>SCRIPT</th>
                   <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 90 }}>MODE</th>
                   <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 60 }}>QTY</th>
-                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 90 }}>ENTRY</th>
-                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "right", minWidth: 90 }}>EXIT / TGT</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "right", minWidth: 90 }}>ENTRY PRICE</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "right", minWidth: 90 }}>EXIT PRICE</th>
                   <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--yellow)", textAlign: "right", minWidth: 110 }}>REALIZED P&L</th>
                   <th style={{ padding: "8px 6px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 80 }}>CYCLE</th>
-                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 110 }}>STATUS</th>
-                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 150 }}>ACTIONS</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 100 }}>REASON</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 85 }}>TIME</th>
+                  <th style={{ padding: "8px 8px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", minWidth: 110 }}>ACTIONS</th>
                   <th style={{ padding: "8px 4px", fontSize: 10, letterSpacing: 1.2, color: "var(--muted)", textAlign: "center", width: 32 }}></th>
                 </tr>
               </thead>
@@ -2990,6 +3051,10 @@ function CompletedAlgoOrdersTable({
                   const pnl = r.pnl;
                   const isWin = pnl != null && pnl > 0;
                   const isLoss = pnl != null && pnl < 0;
+                  const formattedTime = r.closed_at
+                    ? (r.closed_at.includes("T") ? r.closed_at.split("T")[1]?.slice(0, 8) : r.closed_at.slice(11, 19))
+                    : "—";
+
                   return (
                     <tr
                       key={r.id || idx}
@@ -3014,12 +3079,10 @@ function CompletedAlgoOrdersTable({
                         {r.quantity}
                       </td>
                       <td style={{ padding: "8px 8px", textAlign: "right", fontSize: 12, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                        {r.buy_price != null ? Number(r.buy_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}
+                        ₹{Number(r.entry_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td style={{ padding: "8px 8px", textAlign: "right", fontSize: 12, fontWeight: 700, color: "var(--yellow)", fontVariantNumeric: "tabular-nums" }}>
-                        {r.sell_tgt != null
-                          ? Number(r.sell_tgt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                          : (r.ltp != null ? Number(r.ltp).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—")}
+                        ₹{Number(r.exit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td
                         style={{
@@ -3039,24 +3102,18 @@ function CompletedAlgoOrdersTable({
                         {r.trades_completed}/{r.number_of_trades}
                       </td>
                       <td style={{ padding: "8px 8px", textAlign: "center" }}>
-                        <span
-                          className={`badge ${
-                            r.status === "COMPLETED"
-                              ? "badge-yellow"
-                              : r.status === "DHAN CLOSED"
-                              ? "badge-green"
-                              : "badge-gray"
-                          }`}
-                          style={{ fontSize: 9, fontWeight: 700 }}
-                        >
-                          {r.status}
+                        <span className="badge badge-gray" style={{ fontSize: 9, fontWeight: 700 }}>
+                          {r.exit_reason || "COMPLETED"}
                         </span>
+                      </td>
+                      <td style={{ padding: "8px 8px", textAlign: "center", fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>
+                        {formattedTime}
                       </td>
                       <td style={{ padding: "8px 8px", textAlign: "center", whiteSpace: "nowrap" }}>
                         <div style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
                           <button
                             type="button"
-                            onClick={() => onReTrade(r.id)}
+                            onClick={() => onReTrade(r.symbol || r.id)}
                             style={{
                               padding: "3px 8px",
                               fontSize: 9,
@@ -3067,26 +3124,9 @@ function CompletedAlgoOrdersTable({
                               color: "var(--green)",
                               borderRadius: 3,
                             }}
-                            title="Re-arm this script for a new automated trade cycle"
+                            title="Re-arm this script for a new automated trade cycle without losing this history"
                           >
                             ↺ RE-TRADE
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onResetRow(r.id)}
-                            style={{
-                              padding: "3px 6px",
-                              fontSize: 9,
-                              fontWeight: 700,
-                              cursor: "pointer",
-                              background: "rgba(251, 191, 36, 0.14)",
-                              border: "1px solid rgba(251, 191, 36, 0.5)",
-                              color: "#fbbf24",
-                              borderRadius: 3,
-                            }}
-                            title="Reset trade counter and status to IDLE"
-                          >
-                            RESET
                           </button>
                         </div>
                       </td>
@@ -3094,8 +3134,12 @@ function CompletedAlgoOrdersTable({
                         <button
                           type="button"
                           onClick={() => {
-                            if (confirm(`Remove ${r.symbol} from Algo Window?`)) {
-                              onDeleteRow(r.id);
+                            if (confirm(`Remove this completed trade record for ${r.symbol} from history?`)) {
+                              if (r.is_history && onDeleteHistory) {
+                                onDeleteHistory(r.id);
+                              } else {
+                                onDeleteRow(r.id);
+                              }
                             }
                           }}
                           style={{
@@ -3106,7 +3150,7 @@ function CompletedAlgoOrdersTable({
                             fontSize: 13,
                             padding: 2,
                           }}
-                          title={`Remove ${r.symbol} from Algo Window`}
+                          title={`Remove ${r.symbol} from completed trade history`}
                         >
                           ×
                         </button>

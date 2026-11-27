@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
-from app.models.algo_row import BsaAlgoRow
+from app.models.algo_row import BsaAlgoRow, BsaAlgoTradeHistory
 from app.models.user import User
 from app.models.broker import BrokerAccount
 from app.broker.factory import get_broker_adapter
@@ -67,6 +67,44 @@ class BsaAlgoEngine:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
+
+    async def _record_trade_history(
+        self,
+        db: AsyncSession,
+        user_id: UUID,
+        row: BsaAlgoRow,
+        entry_price: float,
+        exit_price: float,
+        pnl: float,
+        exit_reason: str = "TARGET HIT",
+        order_id: Optional[str] = None,
+    ):
+        """Record completed round-trip trade to persistent history."""
+        try:
+            from datetime import datetime
+            history_entry = BsaAlgoTradeHistory(
+                user_id=user_id,
+                row_id=row.id,
+                symbol=row.symbol,
+                exchange=row.exchange or "NSE",
+                segment=row.segment or "NSE_EQ",
+                trade_mode=row.trade_mode or "FULL",
+                quantity=row.quantity or 1,
+                entry_price=round(float(entry_price), 2),
+                exit_price=round(float(exit_price), 2),
+                pnl=round(float(pnl), 2),
+                trades_completed=max(row.trades_completed, 1),
+                number_of_trades=row.number_of_trades or 1,
+                exit_reason=exit_reason,
+                status="COMPLETED",
+                order_id=order_id or row.last_order_id,
+                closed_at=datetime.utcnow(),
+            )
+            db.add(history_entry)
+            await db.commit()
+            logger.info(f"[ALGO HISTORY] Saved trade record for {row.symbol}: Entry={entry_price:.2f}, Exit={exit_price:.2f}, P&L={pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"Failed to record trade history for {row.symbol}: {e}")
 
     async def sync_dhan_status(self, db: AsyncSession, user_id: Optional[UUID] = None, force: bool = False) -> int:
         """
@@ -176,6 +214,8 @@ class BsaAlgoEngine:
                         if r.status in ("IN_POSITION", "EXIT_PENDING"):
                             r.status = "COMPLETED"
                             r.trades_completed = max(r.trades_completed, 1)
+                            actual_entry = buy_avg if buy_avg > 0 else (r.buy_price or 0.0)
+                            actual_exit = sell_avg if sell_avg > 0 else (r.sell_tgt or 0.0)
                             if buy_avg > 0:
                                 r.buy_price = buy_avg
                             if sell_avg > 0:
@@ -184,6 +224,15 @@ class BsaAlgoEngine:
                             r.is_algo_active = False
                             r.last_signal = "DHAN CLOSED"
                             updated_count += 1
+                            await self._record_trade_history(
+                                db=db,
+                                user_id=r.user_id,
+                                row=r,
+                                entry_price=actual_entry,
+                                exit_price=actual_exit,
+                                pnl=realized,
+                                exit_reason="DHAN CLOSED",
+                            )
                     elif net_qty > 0:
                         # Open holding in Dhan
                         if r.status != "IN_POSITION" or not r.buy_price:
@@ -507,6 +556,16 @@ class BsaAlgoEngine:
                             # Waiting for price to return to entry price before repeating
                             row.status = "WAITING_RETURN"
                         await db.commit()
+
+                        await self._record_trade_history(
+                            db=db,
+                            user_id=row.user_id,
+                            row=row,
+                            entry_price=row.buy_price,
+                            exit_price=exit_fill,
+                            pnl=row.pnl,
+                            exit_reason=reason,
+                        )
                     else:
                         row.status = "IN_POSITION"
                         await db.commit()

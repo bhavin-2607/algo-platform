@@ -49,3 +49,29 @@ class BsaAlgoRow(Base):
     updated_at        = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user              = relationship("User")
+
+
+class BsaAlgoTradeHistory(Base):
+    __tablename__ = "bsa_algo_trade_history"
+
+    id               = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id          = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    row_id           = Column(UUID(as_uuid=True), nullable=True)
+    symbol           = Column(String, nullable=False)
+    exchange         = Column(String, default="NSE")
+    segment          = Column(String, default="NSE_EQ")
+    trade_mode       = Column(String, default="FULL")
+    quantity         = Column(Integer, default=1)
+    entry_price      = Column(Float, nullable=False)
+    exit_price       = Column(Float, nullable=False)
+    pnl              = Column(Float, nullable=False)
+    trades_completed = Column(Integer, default=1)
+    number_of_trades = Column(Integer, default=1)
+    exit_reason      = Column(String, default="TARGET HIT")
+    status           = Column(String, default="COMPLETED")
+    order_id         = Column(String, nullable=True)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    closed_at        = Column(DateTime, default=datetime.utcnow)
+
+    user             = relationship("User")
+

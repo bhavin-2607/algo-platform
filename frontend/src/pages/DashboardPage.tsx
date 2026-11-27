@@ -58,6 +58,39 @@ export default function DashboardPage() {
     queryFn: () => brokerApi.list().then(r => r.data),
   });
 
+  const { data: funds } = useQuery({
+    queryKey: ["dhan-funds"],
+    queryFn: () => api.get("/market/funds").then(r => r.data),
+    refetchInterval: 30_000,
+  });
+
+  const { data: holdings } = useQuery({
+    queryKey: ["dhan-holdings"],
+    queryFn: () => api.get("/terminal/holdings").then(r => r.data as any[]),
+    refetchInterval: 30_000,
+  });
+
+  const { data: tokenStatus } = useQuery({
+    queryKey: ["dhan-auth-token-status"],
+    queryFn: () => api.get("/settings/dhan-token-status").then(r => r.data),
+    refetchInterval: 60_000,
+  });
+
+  const holdingsList = holdings || [];
+  const totalInvestment = holdingsList.reduce(
+    (acc: number, h: any) => acc + (Number(h.totalQty || h.quantity || 0) * Number(h.avgCostPrice || h.averagePrice || 0)),
+    0
+  );
+  const totalHoldingsVal = holdingsList.reduce(
+    (acc: number, h: any) =>
+      acc +
+      (Number(h.totalQty || h.quantity || 0) *
+        Number(h.lastTradedPrice || h.ltp || h.closePrice || h.avgCostPrice || 0)),
+    0
+  );
+  const totalHoldingsPnl = totalHoldingsVal - totalInvestment;
+  const totalHoldingsPnlPct = totalInvestment > 0 ? (totalHoldingsPnl / totalInvestment) * 100 : 0;
+
   const openPositions = (brokerPositions ?? []).filter((p: any) => Number(p.net_qty) !== 0);
 
   // Compute live Today P&L from broker positions (realized + unrealized) with fallback to trade summary
@@ -70,13 +103,124 @@ export default function DashboardPage() {
 
   return (
     <Layout>
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">DASHBOARD</h1>
-          <p className="page-sub">
-            Welcome back, <span style={{ color: "var(--green)" }}>{user?.username}</span>
-          </p>
+      {/* ── PROFILE & BROKER CONNECTIVITY CARD ───────────────────────────── */}
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="card-header" style={{ padding: "8px 14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span className="card-title" style={{ fontSize: 11, letterSpacing: 1.2 }}>ACCOUNT PROFILE & BROKER CONNECTIVITY</span>
+            <span className={`badge ${dhanConnected ? "badge-green" : "badge-yellow"}`} style={{ fontSize: 9 }}>
+              {dhanConnected ? "DHAN LIVE BROKER" : "PAPER TRADING"}
+            </span>
+            {tokenStatus?.valid && (
+              <span className="badge badge-green" style={{ fontSize: 9 }}>
+                TOKEN VALID ({tokenStatus.hours_remaining ?? 16}H LEFT)
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>
+            CLIENT ID: <span style={{ color: "var(--green)", fontWeight: 700 }}>{tokenStatus?.client_id || user?.username}</span>
+          </div>
         </div>
+        <div style={{ padding: "10px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>AVAILABLE CASH MARGIN</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--green)", marginTop: 2, fontFamily: "monospace" }}>
+              ₹{Number(funds?.availabelBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>UTILIZED MARGIN</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--yellow)", marginTop: 2, fontFamily: "monospace" }}>
+              ₹{Number(funds?.utilizedAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>SOD LIMIT / COLLATERAL</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginTop: 2, fontFamily: "monospace" }}>
+              ₹{Number(funds?.sodLimit || funds?.collateralAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div style={{ background: "var(--surface2)", padding: "8px 10px", borderRadius: 4, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.8 }}>USER / ROLE</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginTop: 2 }}>
+              {user?.username} <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>({user?.role})</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── PORTFOLIO & HOLDINGS CARD ────────────────────────────────────── */}
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="card-header" style={{ padding: "8px 14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span className="card-title" style={{ fontSize: 11, letterSpacing: 1.2 }}>PORTFOLIO HOLDINGS & EQUITY SUMMARY</span>
+            <span className="badge badge-gray" style={{ fontSize: 9 }}>
+              {holdingsList.length} STOCKS
+            </span>
+            {holdingsList.length > 0 && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 3,
+                  background: totalHoldingsPnl >= 0 ? "rgba(0, 230, 118, 0.14)" : "rgba(255, 68, 102, 0.14)",
+                  border: `1px solid ${totalHoldingsPnl >= 0 ? "var(--green)" : "var(--red)"}`,
+                  color: totalHoldingsPnl >= 0 ? "var(--green)" : "var(--red)",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                UNREALIZED P&L: {totalHoldingsPnl >= 0 ? "+" : ""}₹{totalHoldingsPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({totalHoldingsPnlPct >= 0 ? "+" : ""}{totalHoldingsPnlPct.toFixed(2)}%)
+              </span>
+            )}
+          </div>
+          {holdingsList.length > 0 && (
+            <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>
+              CURRENT VALUE: <span style={{ color: "var(--text)", fontWeight: 700 }}>₹{totalHoldingsVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+        </div>
+        {holdingsList.length === 0 ? (
+          <div style={{ padding: "20px 14px", color: "var(--muted)", fontSize: 12, textAlign: "center" }}>
+            No active long-term equity holdings in Dhan portfolio.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="data-table" style={{ minWidth: 800 }}>
+              <thead>
+                <tr>
+                  {["SYMBOL", "EXCHANGE", "QUANTITY", "AVG COST ₹", "LTP ₹", "CURRENT VALUE ₹", "UNREALIZED P&L"].map(h => (
+                    <th key={h}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {holdingsList.map((h: any, idx: number) => {
+                  const qty = Number(h.totalQty || h.quantity || 0);
+                  const avgCost = Number(h.avgCostPrice || h.averagePrice || 0);
+                  const ltp = Number(h.lastTradedPrice || h.ltp || h.closePrice || avgCost);
+                  const curVal = qty * ltp;
+                  const invested = qty * avgCost;
+                  const pnl = curVal - invested;
+                  const isPos = pnl >= 0;
+                  return (
+                    <tr key={h.tradingSymbol || h.securityId || idx}>
+                      <td className="symbol" style={{ fontWeight: 600 }}>{h.tradingSymbol || h.symbol || h.securityId}</td>
+                      <td style={{ fontSize: 10, color: "var(--muted)" }}>{h.exchange || "NSE"}</td>
+                      <td style={{ fontFamily: "monospace", fontWeight: 700 }}>{qty}</td>
+                      <td style={{ fontFamily: "monospace" }}>₹{avgCost.toFixed(2)}</td>
+                      <td style={{ fontFamily: "monospace", fontWeight: 600 }}>₹{ltp.toFixed(2)}</td>
+                      <td style={{ fontFamily: "monospace" }}>₹{curVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className={isPos ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace", fontWeight: 700 }}>
+                        {isPos ? "+" : ""}₹{pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Stat cards — real data with fallback */}

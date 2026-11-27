@@ -1749,10 +1749,34 @@ async def update_algo_row(
             from app.market.market_poller import get_poller
             get_poller().ensure_started()
             if row.status in ("COMPLETED", "STOPPED_SL", "DHAN CLOSED") or row.trades_completed >= row.number_of_trades:
+                if row.buy_price:
+                    from app.models.algo_row import BsaAlgoTradeHistory
+                    actual_entry = row.buy_price
+                    actual_exit = row.sell_tgt or actual_entry
+                    actual_pnl = row.pnl if row.pnl is not None else round((actual_exit - actual_entry) * row.quantity, 2)
+                    history_entry = BsaAlgoTradeHistory(
+                        user_id=row.user_id,
+                        row_id=row.id,
+                        symbol=row.symbol,
+                        exchange=row.exchange or "NSE",
+                        segment=row.segment or "NSE_EQ",
+                        trade_mode=row.trade_mode or "FULL",
+                        quantity=row.quantity or 1,
+                        entry_price=round(float(actual_entry), 2),
+                        exit_price=round(float(actual_exit), 2),
+                        pnl=round(float(actual_pnl), 2),
+                        trades_completed=max(row.trades_completed, 1),
+                        number_of_trades=row.number_of_trades or 1,
+                        exit_reason="COMPLETED",
+                        status="COMPLETED",
+                        order_id=row.last_order_id,
+                    )
+                    db.add(history_entry)
                 row.status = "IDLE"
                 row.trades_completed = 0
                 row.buy_price = None
                 row.sell_tgt = None
+                row.pnl = 0.0
                 row.last_signal = "RE-ARMED"
 
     if payload.quantity is not None:
@@ -1917,6 +1941,25 @@ async def kill_algo_row(
             if row.buy_price:
                 row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
             row.status = "COMPLETED"
+            from app.models.algo_row import BsaAlgoTradeHistory
+            h = BsaAlgoTradeHistory(
+                user_id=row.user_id,
+                row_id=row.id,
+                symbol=row.symbol,
+                exchange=row.exchange or "NSE",
+                segment=row.segment or "NSE_EQ",
+                trade_mode=row.trade_mode or "FULL",
+                quantity=row.quantity or 1,
+                entry_price=round(float(row.buy_price or exit_fill), 2),
+                exit_price=round(float(exit_fill), 2),
+                pnl=round(float(row.pnl or 0.0), 2),
+                trades_completed=max(row.trades_completed, 1),
+                number_of_trades=row.number_of_trades or 1,
+                exit_reason="KILL SWITCH",
+                status="COMPLETED",
+                order_id=row.last_order_id,
+            )
+            db.add(h)
     else:
         row.status = "IDLE"
 
@@ -1937,7 +1980,7 @@ async def kill_all_algo_rows(
     Common Kill Switch for all scripts in Algo Window:
     Instantly disarms all algos (is_algo_active = False) and exits any open positions at market price.
     """
-    from app.models.algo_row import BsaAlgoRow
+    from app.models.algo_row import BsaAlgoRow, BsaAlgoTradeHistory
     from app.services.bsa_algo_engine import algo_engine
     from app.market.market_poller import get_poller
     from sqlalchemy import select
@@ -1969,6 +2012,24 @@ async def kill_all_algo_rows(
                     row.pnl = round((exit_fill - row.buy_price) * row.quantity, 2)
                 row.status = "COMPLETED"
                 positions_exited += 1
+                h = BsaAlgoTradeHistory(
+                    user_id=row.user_id,
+                    row_id=row.id,
+                    symbol=row.symbol,
+                    exchange=row.exchange or "NSE",
+                    segment=row.segment or "NSE_EQ",
+                    trade_mode=row.trade_mode or "FULL",
+                    quantity=row.quantity or 1,
+                    entry_price=round(float(row.buy_price or exit_fill), 2),
+                    exit_price=round(float(exit_fill), 2),
+                    pnl=round(float(row.pnl or 0.0), 2),
+                    trades_completed=max(row.trades_completed, 1),
+                    number_of_trades=row.number_of_trades or 1,
+                    exit_reason="KILL SWITCH",
+                    status="COMPLETED",
+                    order_id=row.last_order_id,
+                )
+                db.add(h)
         elif row.status != "COMPLETED":
             row.status = "IDLE"
 
@@ -2010,13 +2071,37 @@ async def reset_algo_row(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Reset trade cycle counter and levels for an algo script."""
-    from app.models.algo_row import BsaAlgoRow
+    """Reset trade cycle counter and levels for an algo script without losing trade history."""
+    from app.models.algo_row import BsaAlgoRow, BsaAlgoTradeHistory
 
     row = await db.get(BsaAlgoRow, row_id)
     is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
     if not row or (row.user_id != current_user.id and not is_admin):
         raise HTTPException(status_code=404, detail="Algo row not found")
+
+    # If row had a completed trade, archive into BsaAlgoTradeHistory before clearing
+    if row.buy_price and (row.status in ("COMPLETED", "DHAN CLOSED", "STOPPED_SL") or row.trades_completed > 0):
+        actual_entry = row.buy_price
+        actual_exit = row.sell_tgt or actual_entry
+        actual_pnl = row.pnl if row.pnl is not None else round((actual_exit - actual_entry) * row.quantity, 2)
+        history_entry = BsaAlgoTradeHistory(
+            user_id=row.user_id,
+            row_id=row.id,
+            symbol=row.symbol,
+            exchange=row.exchange or "NSE",
+            segment=row.segment or "NSE_EQ",
+            trade_mode=row.trade_mode or "FULL",
+            quantity=row.quantity or 1,
+            entry_price=round(float(actual_entry), 2),
+            exit_price=round(float(actual_exit), 2),
+            pnl=round(float(actual_pnl), 2),
+            trades_completed=max(row.trades_completed, 1),
+            number_of_trades=row.number_of_trades or 1,
+            exit_reason="RESET",
+            status="COMPLETED",
+            order_id=row.last_order_id,
+        )
+        db.add(history_entry)
 
     row.trades_completed = 0
     row.status           = "IDLE"
@@ -2025,6 +2110,7 @@ async def reset_algo_row(
     row.stop_loss        = None
     row.pnl              = 0.0
     row.last_order_id    = None
+    row.last_signal      = "RESET"
     await db.commit()
     return {"status": "reset", "id": str(row.id)}
 
@@ -2124,6 +2210,25 @@ async def manual_algo_order(
         row.trades_completed += 1
         if row.buy_price:
             row.pnl = round((fill - row.buy_price) * row.quantity, 2)
+            from app.models.algo_row import BsaAlgoTradeHistory
+            h = BsaAlgoTradeHistory(
+                user_id=row.user_id,
+                row_id=row.id,
+                symbol=row.symbol,
+                exchange=row.exchange or "NSE",
+                segment=row.segment or "NSE_EQ",
+                trade_mode=row.trade_mode or "FULL",
+                quantity=row.quantity or 1,
+                entry_price=round(float(row.buy_price), 2),
+                exit_price=round(float(fill), 2),
+                pnl=round(float(row.pnl or 0.0), 2),
+                trades_completed=max(row.trades_completed, 1),
+                number_of_trades=row.number_of_trades or 1,
+                exit_reason="MANUAL SELL",
+                status="COMPLETED",
+                order_id=row.last_order_id,
+            )
+            db.add(h)
         row.status = "COMPLETED" if row.trades_completed >= row.number_of_trades else "WAITING_RETURN"
 
     await db.commit()
@@ -2139,6 +2244,119 @@ async def manual_algo_order(
         "fill_price": fill,
         "trades_completed": row.trades_completed,
     }
+
+
+@router.get("/algo-history")
+async def get_algo_history(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetch persistent completed algo trade history.
+    Retains all past trades even after trade counter reset or script re-arming.
+    """
+    from app.models.algo_row import BsaAlgoTradeHistory, BsaAlgoRow
+    from sqlalchemy import select, desc
+
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    stmt = select(BsaAlgoTradeHistory)
+    if not is_admin:
+        stmt = stmt.where(BsaAlgoTradeHistory.user_id == current_user.id)
+    stmt = stmt.order_by(desc(BsaAlgoTradeHistory.closed_at))
+    result = await db.execute(stmt)
+    history_rows = list(result.scalars().all())
+
+    # If history is empty, backfill any completed rows currently in BsaAlgoRow
+    if not history_rows:
+        stmt_rows = select(BsaAlgoRow).where(
+            BsaAlgoRow.status.in_(["COMPLETED", "DHAN CLOSED"]),
+            BsaAlgoRow.buy_price.isnot(None),
+        )
+        if not is_admin:
+            stmt_rows = stmt_rows.where(BsaAlgoRow.user_id == current_user.id)
+        res_rows = await db.execute(stmt_rows)
+        completed_algo_rows = list(res_rows.scalars().all())
+        for cr in completed_algo_rows:
+            actual_entry = cr.buy_price or 0.0
+            actual_exit = cr.sell_tgt or actual_entry
+            pnl = cr.pnl if cr.pnl is not None else round((actual_exit - actual_entry) * cr.quantity, 2)
+            entry = BsaAlgoTradeHistory(
+                user_id=cr.user_id,
+                row_id=cr.id,
+                symbol=cr.symbol,
+                exchange=cr.exchange or "NSE",
+                segment=cr.segment or "NSE_EQ",
+                trade_mode=cr.trade_mode or "FULL",
+                quantity=cr.quantity or 1,
+                entry_price=round(float(actual_entry), 2),
+                exit_price=round(float(actual_exit), 2),
+                pnl=round(float(pnl), 2),
+                trades_completed=max(cr.trades_completed, 1),
+                number_of_trades=cr.number_of_trades or 1,
+                exit_reason="COMPLETED",
+                status="COMPLETED",
+                order_id=cr.last_order_id,
+            )
+            db.add(entry)
+        if completed_algo_rows:
+            await db.commit()
+            result = await db.execute(stmt)
+            history_rows = list(result.scalars().all())
+
+    return [
+        {
+            "id": str(h.id),
+            "row_id": str(h.row_id) if h.row_id else None,
+            "symbol": h.symbol,
+            "exchange": h.exchange,
+            "segment": h.segment,
+            "trade_mode": h.trade_mode,
+            "quantity": h.quantity,
+            "entry_price": h.entry_price,
+            "exit_price": h.exit_price,
+            "pnl": h.pnl,
+            "trades_completed": h.trades_completed,
+            "number_of_trades": h.number_of_trades,
+            "exit_reason": h.exit_reason,
+            "status": h.status,
+            "order_id": h.order_id,
+            "created_at": h.created_at.isoformat() if h.created_at else None,
+            "closed_at": h.closed_at.isoformat() if h.closed_at else None,
+        }
+        for h in history_rows
+    ]
+
+
+@router.delete("/algo-history/{history_id}")
+async def delete_algo_history(
+    history_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a trade record from the completed trade history."""
+    from app.models.algo_row import BsaAlgoTradeHistory
+
+    row = await db.get(BsaAlgoTradeHistory, history_id)
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+    if not row or (row.user_id != current_user.id and not is_admin):
+        raise HTTPException(status_code=404, detail="Trade history item not found")
+
+    await db.delete(row)
+    await db.commit()
+    return {"status": "deleted", "id": str(history_id)}
+
+
+@router.get("/holdings")
+async def get_dhan_holdings(
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch user portfolio equity holdings from Dhan."""
+    data = await _dhan_get("/holdings")
+    if isinstance(data, list):
+        return data
+    elif isinstance(data, dict):
+        return data.get("data", data.get("holdings", []))
+    return []
 
 
 class ImportDhanPositionPayload(BaseModel):

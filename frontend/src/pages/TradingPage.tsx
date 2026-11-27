@@ -21,10 +21,15 @@ export default function TradingPage() {
     queryFn: () => api.get("/terminal/positions").then(r => r.data),
     refetchInterval: 10000,
   });
+  const { data: tradeHistory, isLoading: thLoading } = useQuery({
+    queryKey: ["dhan-trade-history"],
+    queryFn: () => api.get("/terminal/trade-history").then(r => r.data),
+    refetchInterval: 10000,
+  });
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
-  const [tab, setTab] = useState<"all" | "positions" | "orders">("all");
+  const [tab, setTab] = useState<"all" | "positions" | "orders" | "history">("all");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ broker:"dhan", client_id:"", access_token:"", paper_trading:true });
 
@@ -87,7 +92,7 @@ export default function TradingPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">POSITIONS & ORDERS</h1>
-          <p className="page-sub">Live Dhan positions, execution orderbook, and status</p>
+          <p className="page-sub">Live Dhan positions, execution orderbook, and trade history</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <div className="tab-switcher">
@@ -108,6 +113,12 @@ export default function TradingPage() {
               onClick={() => setTab("orders")}
             >
               ORDER BOOK ({orderbook?.length ?? 0})
+            </button>
+            <button
+              className={`tab-btn${tab === "history" ? " active" : ""}`}
+              onClick={() => setTab("history")}
+            >
+              TRADE HISTORY ({tradeHistory?.trades?.length ?? 0})
             </button>
           </div>
         </div>
@@ -260,6 +271,103 @@ export default function TradingPage() {
                           title={o.remarks || ""}
                         >
                           {o.remarks || "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TRADE HISTORY SECTION ────────────────────────────────────────── */}
+      {(tab === "all" || tab === "history") && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-header">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span className="card-title">DHAN ALL TRADE HISTORY & EXECUTIONS</span>
+              <span className="card-badge">
+                {tradeHistory?.trades?.length ?? 0} trades
+              </span>
+              {tradeHistory?.summary?.total_pnl != null && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: 3,
+                    background: tradeHistory.summary.total_pnl >= 0 ? "rgba(0, 230, 118, 0.14)" : "rgba(255, 68, 102, 0.14)",
+                    border: `1px solid ${tradeHistory.summary.total_pnl >= 0 ? "var(--green)" : "var(--red)"}`,
+                    color: tradeHistory.summary.total_pnl >= 0 ? "var(--green)" : "var(--red)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  REALIZED P&L: {tradeHistory.summary.total_pnl >= 0 ? "+" : ""}₹{Number(tradeHistory.summary.total_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              )}
+            </div>
+            {tradeHistory?.summary && (
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                {tradeHistory.summary.winners ?? 0}W / {tradeHistory.summary.losers ?? 0}L ({tradeHistory.summary.win_rate ?? 0}% Win Rate)
+              </span>
+            )}
+          </div>
+          {thLoading ? (
+            <div className="empty-state">Loading trade history…</div>
+          ) : !tradeHistory?.trades?.length ? (
+            <div className="empty-state">No trade history found.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table" style={{ minWidth: 950 }}>
+                <thead>
+                  <tr>
+                    {["TIME / DATE", "SYMBOL", "EXCH", "SIDE", "QTY", "ENTRY ₹", "EXIT ₹", "REALIZED P&L", "STATUS", "REASON"].map(h => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(tradeHistory.trades ?? []).map((t: any, idx: number) => {
+                    const sideUpper = String(t.direction || t.side || "").toUpperCase();
+                    const pnl = t.pnl;
+                    const isWin = pnl != null && pnl > 0;
+                    const isLoss = pnl != null && pnl < 0;
+                    const timeStr = t.closed_at || t.created_at || "—";
+                    const formattedTime = timeStr.includes("T") ? timeStr.split("T")[0] + " " + timeStr.split("T")[1]?.slice(0, 8) : timeStr;
+                    return (
+                      <tr key={t.id || idx}>
+                        <td style={{ color: "var(--muted)", fontSize: 11, whiteSpace: "nowrap", fontFamily: "monospace" }}>
+                          {formattedTime}
+                        </td>
+                        <td className="symbol" style={{ fontWeight: 600 }}>{t.symbol}</td>
+                        <td style={{ fontSize: 10, color: "var(--muted)" }}>{t.exchange || "NSE"}</td>
+                        <td>
+                          <span className={`badge ${sideUpper === "BUY" ? "badge-green" : "badge-red"}`}>
+                            {sideUpper || "—"}
+                          </span>
+                        </td>
+                        <td style={{ fontFamily: "monospace", fontWeight: 600 }}>{t.quantity}</td>
+                        <td style={{ fontFamily: "monospace" }}>
+                          {t.entry_price ? `₹${Number(t.entry_price).toFixed(2)}` : "—"}
+                        </td>
+                        <td style={{ fontFamily: "monospace", color: "var(--yellow)" }}>
+                          {t.exit_price ? `₹${Number(t.exit_price).toFixed(2)}` : "—"}
+                        </td>
+                        <td
+                          className={isWin ? "pnl-pos" : isLoss ? "pnl-neg" : ""}
+                          style={{ fontFamily: "monospace", fontWeight: 700 }}
+                        >
+                          {pnl != null ? `${isWin ? "+" : ""}₹${Number(pnl).toFixed(2)}` : "—"}
+                        </td>
+                        <td>
+                          <span className={`badge ${t.status === "CLOSED" ? "badge-yellow" : t.status === "OPEN" ? "badge-green" : "badge-gray"}`}>
+                            {t.status || "CLOSED"}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {t.exit_reason || "EXECUTED"}
                         </td>
                       </tr>
                     );
