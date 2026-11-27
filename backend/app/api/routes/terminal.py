@@ -760,7 +760,10 @@ async def column_values(
     """Evaluate the saved formulas for one book. Equity, options, and MCX are stored separately."""
     from app.strategy.excel_formula_engine import evaluate_columns_in_order
 
-    book = payload.book if payload.book in ("equity", "option", "mcx") else "equity"
+    req_book = (payload.book or "").lower().strip()
+    if req_book == "options":
+        req_book = "option"
+    book = req_book if req_book in ("equity", "option", "mcx") else "equity"
     cols = await _shared_columns(db, current_user)
     formulas = []
     for col in cols:
@@ -835,7 +838,10 @@ async def create_column(
     """Create a new custom formula column. Admin only."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
-    if payload.book not in ("equity", "option", "mcx"):
+    book = (payload.book or "").lower().strip()
+    if book == "options":
+        book = "option"
+    if book not in ("equity", "option", "mcx"):
         raise HTTPException(status_code=400, detail="book must be equity, option, or mcx")
 
     if payload.formula:
@@ -915,8 +921,11 @@ async def update_column(
     col.width       = payload.width
     col.is_visible  = payload.is_visible
     col.color_rules = payload.color_rules
-    if (col.book or "equity") in ("equity", "option", "mcx") and payload.book in ("equity", "option", "mcx"):
-        col.book = payload.book
+    book = (payload.book or "").lower().strip()
+    if book == "options":
+        book = "option"
+    if (col.book or "equity") in ("equity", "option", "mcx") and book in ("equity", "option", "mcx"):
+        col.book = book
     await db.commit()
     return {"status": "updated", "name": col.name}
 
@@ -1115,18 +1124,22 @@ async def apply_formula_batch(
     )
     from app.strategy.excel_formula_engine import formula_for_book
 
-    if payload.book == "all":
+    req_book = (payload.book or "").lower().strip()
+    if req_book == "options":
+        req_book = "option"
+
+    if req_book == "all":
         books = ["equity", "option", "mcx"]
-    elif payload.book == "both":
+    elif req_book == "both":
         books = ["equity", "option"]
     else:
-        books = [payload.book]
+        books = [req_book]
 
-    await _save_batch_preset(current_user.id, payload.book, payload.batch)
+    await _save_batch_preset(current_user.id, req_book, payload.batch)
 
     # Clear existing columns strictly for target books to ensure watchlists stay independent
     for b in books:
-        target_books = [b, "shared"] if payload.book in ("all", "both") else [b]
+        target_books = [b, "shared"] if req_book in ("all", "both") else [b]
         await db.execute(
             sa_delete(TerminalColumn).where(
                 TerminalColumn.user_id == current_user.id,

@@ -15,7 +15,7 @@ import { useAuthStore } from "@/store/auth";
 import { notifyOrder, notifyError } from "@/store/notifications";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
 import { resolveLotSize, formatQuantityWithLots } from "@/utils/lotSize";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -243,6 +243,7 @@ export default function TerminalPage() {
   });
   const [viewMode, setViewMode] = useState<"watchlist" | "algo">("watchlist");
   const [segmentFilter, setSegmentFilter] = useState<"all" | "equity" | "options" | "mcx">("all");
+  const [isSegmentsCollapsed, setIsSegmentsCollapsed] = useState(false);
 
   const visibleCols = useMemo(() => {
     return (allCols ?? [])
@@ -251,13 +252,15 @@ export default function TerminalPage() {
   }, [allCols]);
 
   const colsFor = useCallback((book: string) => {
-    const hasBookFormulas = visibleCols.some((c: any) => c.formula && (c.book || "").toLowerCase() === book);
+    const b = (book || "all").toLowerCase().trim();
+    const normalizedBook = b === "options" ? "option" : b;
+    const hasBookFormulas = visibleCols.some((c: any) => c.formula && (c.book || "").toLowerCase() === normalizedBook);
     const forBook = visibleCols.filter((c: any) => {
       const colBook = (c.book || "equity").toLowerCase();
       if (!c.formula) return true; // default columns (open, high, ltp, etc.) are shared
-      if (book === "all") return true; // return all columns in single watchlist view
-      if (colBook === book || colBook === "shared") return true;
-      if (book === "mcx" && !hasBookFormulas && colBook === "equity") return true;
+      if (normalizedBook === "all") return true; // return all columns in single watchlist view
+      if (colBook === normalizedBook || colBook === "shared") return true;
+      if ((normalizedBook === "option" || normalizedBook === "mcx") && !hasBookFormulas && colBook === "equity") return true;
       return false;
     });
 
@@ -738,7 +741,11 @@ export default function TerminalPage() {
 
       {/* ── Column Manager Modal ──────────────────────────────────────────── */}
       {showColumns && (
-        <AdminColumnManager isAdmin={isAdmin} onClose={() => setShowColumns(false)} />
+        <AdminColumnManager
+          isAdmin={isAdmin}
+          defaultBook={segmentFilter === "options" ? "option" : segmentFilter === "mcx" ? "mcx" : "equity"}
+          onClose={() => setShowColumns(false)}
+        />
       )}
 
       {/* ── Import Dhan Positions Modal ──────────────────────────────────── */}
@@ -799,47 +806,94 @@ export default function TerminalPage() {
               borderRadius: 4,
             }}
           >
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", letterSpacing: 0.5 }}>
-                SEGMENT:
-              </span>
-              <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
-                <button
-                  type="button"
-                  className={`tab-btn ${segmentFilter === "all" ? "active" : ""}`}
-                  onClick={() => setSegmentFilter("all")}
-                  style={{ padding: "3px 8px", fontSize: 10 }}
-                >
-                  ALL ({watchlist.length})
-                </button>
-                <button
-                  type="button"
-                  className={`tab-btn ${segmentFilter === "equity" ? "active" : ""}`}
-                  onClick={() => setSegmentFilter("equity")}
-                  style={{ padding: "3px 8px", fontSize: 10 }}
-                >
-                  EQUITY ({equitySymbols.length})
-                </button>
-                <button
-                  type="button"
-                  className={`tab-btn ${segmentFilter === "options" ? "active" : ""}`}
-                  onClick={() => setSegmentFilter("options")}
-                  style={{ padding: "3px 8px", fontSize: 10 }}
-                >
-                  OPTIONS ({optionSymbols.length})
-                </button>
-                <button
-                  type="button"
-                  className={`tab-btn ${segmentFilter === "mcx" ? "active" : ""}`}
-                  onClick={() => setSegmentFilter("mcx")}
-                  style={{ padding: "3px 8px", fontSize: 10 }}
-                >
-                  MCX ({mcxSymbols.length})
-                </button>
-              </div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setIsSegmentsCollapsed((c) => !c)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "2px 7px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  background: "var(--surface2)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text)",
+                  borderRadius: 3,
+                }}
+                title={isSegmentsCollapsed ? "Expand segment tabs" : "Collapse segment tabs"}
+              >
+                {isSegmentsCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                <span>SEGMENTS</span>
+                {isSegmentsCollapsed && (
+                  <span style={{ color: "var(--green)", textTransform: "uppercase", marginLeft: 4 }}>
+                    ({segmentFilter.toUpperCase()})
+                  </span>
+                )}
+              </button>
+
+              {!isSegmentsCollapsed && (
+                <div className="tab-switcher" style={{ margin: 0, padding: 2 }}>
+                  <button
+                    type="button"
+                    className={`tab-btn ${segmentFilter === "all" ? "active" : ""}`}
+                    onClick={() => setSegmentFilter("all")}
+                    style={{ padding: "3px 8px", fontSize: 10 }}
+                  >
+                    ALL ({watchlist.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${segmentFilter === "equity" ? "active" : ""}`}
+                    onClick={() => setSegmentFilter("equity")}
+                    style={{ padding: "3px 8px", fontSize: 10 }}
+                  >
+                    EQUITY ({equitySymbols.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${segmentFilter === "options" ? "active" : ""}`}
+                    onClick={() => setSegmentFilter("options")}
+                    style={{ padding: "3px 8px", fontSize: 10 }}
+                  >
+                    OPTIONS ({optionSymbols.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${segmentFilter === "mcx" ? "active" : ""}`}
+                    onClick={() => setSegmentFilter("mcx")}
+                    style={{ padding: "3px 8px", fontSize: 10 }}
+                  >
+                    MCX ({mcxSymbols.length})
+                  </button>
+                </div>
+              )}
             </div>
-            <div style={{ fontSize: 10, color: "var(--muted)" }}>
-              Showing {filteredWatchlist.length} of {watchlist.length} symbols
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                Showing {filteredWatchlist.length} of {watchlist.length} symbols
+              </span>
+              {!isSegmentsCollapsed && (
+                <button
+                  type="button"
+                  onClick={() => setIsSegmentsCollapsed(true)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--muted)",
+                    cursor: "pointer",
+                    padding: "2px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                  title="Collapse segment tabs"
+                >
+                  <ChevronUp size={14} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -859,7 +913,7 @@ export default function TerminalPage() {
           ) : (
             <TerminalTable
               title={segmentFilter === "all" ? "WATCHLIST (ALL SEGMENTS)" : segmentFilter.toUpperCase()}
-              book={segmentFilter === "all" ? "equity" : segmentFilter}
+              book={segmentFilter === "all" ? "equity" : segmentFilter === "options" ? "option" : segmentFilter}
               onOrder={(sym, inst, prefillSide, prefillPrice) =>
                 setOrderPanel({ symbol: sym, ...inst, prefillSide, prefillPrice: prefillPrice ?? undefined })
               }
@@ -1049,15 +1103,21 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
   });
 
   return (
-    <div style={{
-      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-      background: "rgba(0,0,0,0.8)", zIndex: 1000,
-      display: "flex", alignItems: "center", justifyContent: "center",
-    }}>
-      <div style={{
-        background: "var(--surface)", border: "1px solid var(--border)",
-        padding: 24, width: 560, maxHeight: "90vh", overflowY: "auto",
-      }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(0,0,0,0.8)", zIndex: 1000,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)", border: "1px solid var(--border)",
+          padding: 24, width: 560, maxHeight: "90vh", overflowY: "auto",
+        }}
+      >
         {/* Header */}
         <div style={{display:"flex", justifyContent:"space-between", marginBottom:20}}>
           <div>
@@ -1194,12 +1254,20 @@ export function AdminFormulaPanel({ rowId, symbol, onClose }: {
 }
 
 // ── Admin Column Manager ──────────────────────────────────────────────────────
-export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boolean; onClose: () => void }) {
+export function AdminColumnManager({
+  isAdmin = false,
+  defaultBook = "equity",
+  onClose,
+}: {
+  isAdmin?: boolean;
+  defaultBook?: "equity" | "option" | "mcx";
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
   const emptyForm = (book: "equity" | "option" | "mcx") => ({
     name: "", formula: "", col_order: 0, width: 80, color_rules: "", book,
   });
-  const [form, setForm] = useState(emptyForm("equity"));
+  const [form, setForm] = useState(emptyForm(defaultBook));
   const [editId,    setEditId]    = useState<string|null>(null);
   const [validMsg,  setValidMsg]  = useState("");
   const [validOk,   setValidOk]   = useState<boolean|null>(null);
@@ -1326,15 +1394,21 @@ export function AdminColumnManager({ isAdmin = false, onClose }: { isAdmin?: boo
   });
 
   return (
-    <div style={{
-      position:"fixed", top:0, left:0, right:0, bottom:0,
-      background:"rgba(0,0,0,0.85)", zIndex:1000,
-      display:"flex", alignItems:"center", justifyContent:"center",
-    }}>
-      <div style={{
-        background:"var(--surface)", border:"1px solid var(--border)",
-        width:680, maxHeight:"92vh", overflowY:"auto",
-      }}>
+    <div
+      onClick={onClose}
+      style={{
+        position:"fixed", top:0, left:0, right:0, bottom:0,
+        background:"rgba(0,0,0,0.85)", zIndex:1000,
+        display:"flex", alignItems:"center", justifyContent:"center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background:"var(--surface)", border:"1px solid var(--border)",
+          width:680, maxHeight:"92vh", overflowY:"auto",
+        }}
+      >
         {/* Header */}
         <div style={{
           padding:"16px 20px", borderBottom:"1px solid var(--border)",
@@ -1843,6 +1917,7 @@ function ImportDhanPositionsModal({
 
   return (
     <div
+      onClick={onClose}
       style={{
         position: "fixed",
         top: 0,
@@ -1857,6 +1932,7 @@ function ImportDhanPositionsModal({
       }}
     >
       <div
+        onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
@@ -2778,20 +2854,6 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
 
   return (
     <div style={{border:"1px solid var(--border)", background:"var(--surface)", marginBottom:10}}>
-      <div style={{
-        display:"flex", alignItems:"center", justifyContent:"space-between",
-        padding:"8px 12px", borderBottom:"1px solid var(--border)", background:"var(--surface2)",
-        flexWrap: "wrap", gap: 10
-      }}>
-        <div style={{display:"flex", alignItems:"center", gap:8}}>
-          <span style={{
-            fontSize:11, fontWeight:700, letterSpacing:1.5,
-            color: title.includes("OPTIONS") ? "var(--yellow)" : title.includes("MCX") ? "#08b6de" : "var(--green)"
-          }}>
-            {title.includes("WATCHLIST") ? title : `${title} WATCHLIST`}
-          </span>
-        </div>
-      </div>
       <div style={{overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:"var(--font)"}}>
         <thead>
@@ -2938,11 +3000,18 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
             }
 
             return (
-              <tr key={sym} style={{
-                borderBottom:"1px solid var(--border)",
-                background:inPos?"rgba(0,255,136,0.03)":"transparent",
-                borderLeft:inPos?"2px solid var(--green)":"2px solid transparent",
-              }}
+              <tr
+                key={sym}
+                onClick={() => {
+                  const inst = ((typeof instrMap !== "undefined" ? instrMap[sym] : null) || SECURITY_IDS[sym]) as any;
+                  if (inst) onOrder(sym, inst, "BUY", ltp);
+                }}
+                style={{
+                  borderBottom:"1px solid var(--border)",
+                  background:inPos?"rgba(0,255,136,0.03)":"transparent",
+                  borderLeft:inPos?"2px solid var(--green)":"2px solid transparent",
+                  cursor: "pointer",
+                }}
                 onMouseEnter={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.06)":"var(--surface2)")}
                 onMouseLeave={e=>(e.currentTarget.style.background=inPos?"rgba(0,255,136,0.03)":"transparent")}
               >
@@ -3095,7 +3164,7 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                       <button className="exit-btn"
                         style={{padding:"2px 7px",fontSize:10,color:"var(--red)",
                           borderColor:"rgba(255,68,102,0.4)"}}
-                        onClick={()=>onExitRow(trow.id)}>EXIT</button>
+                        onClick={(e)=>{e.stopPropagation();onExitRow(trow.id);}}>EXIT</button>
                     )}
                     {signalColIdx === -1 && (() => {
                         const inst = (typeof instrMap !== "undefined" ? instrMap[sym] : null) || SECURITY_IDS[sym];
@@ -3112,13 +3181,13 @@ function TerminalTable({ title, book = "equity", watchlist, liveData, termRowMap
                         </>;
                       })()}
                     {isAdmin&&trow&&(
-                      <button onClick={()=>onFormulaRow(trow.id,sym)}
+                      <button onClick={(e)=>{e.stopPropagation();onFormulaRow(trow.id,sym);}}
                         style={{padding:"2px 5px",fontSize:10,cursor:"pointer",
                           background:"rgba(255,208,96,0.1)",border:"1px solid rgba(255,208,96,0.3)",
                           color:"var(--yellow)",fontFamily:"var(--font)"}}
                         title="Set strategy formula">ƒ</button>
                     )}
-                    <button onClick={()=>onRemoveSymbol(sym)}
+                    <button onClick={(e)=>{e.stopPropagation();onRemoveSymbol(sym);}}
                       style={{padding:"2px 5px",fontSize:11,background:"transparent",
                         border:"none",color:"var(--muted)",cursor:"pointer",opacity:0.5}}>×</button>
                   </div>
@@ -3207,15 +3276,21 @@ function OrderPanel({ symbol, securityId, segment, ltp, onClose, prefillSide, pr
   const estimatedValue = ltp && qty ? (ltp * parseInt(qty || "0")).toLocaleString() : "—";
 
   return (
-    <div style={{
-      position:"fixed", top:0, left:0, right:0, bottom:0,
-      background:"rgba(0,0,0,0.85)", zIndex:1000,
-      display:"flex", alignItems:"center", justifyContent:"center",
-    }}>
-      <div style={{
-        background:"var(--surface)", border:"1px solid var(--border)",
-        width:420, padding:0, overflow:"hidden",
-      }}>
+    <div
+      onClick={onClose}
+      style={{
+        position:"fixed", top:0, left:0, right:0, bottom:0,
+        background:"rgba(0,0,0,0.85)", zIndex:1000,
+        display:"flex", alignItems:"center", justifyContent:"center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background:"var(--surface)", border:"1px solid var(--border)",
+          width:420, padding:0, overflow:"hidden",
+        }}
+      >
         {/* Header */}
         <div style={{
           padding:"14px 20px",
