@@ -29,8 +29,20 @@ class Settings(BaseSettings):
         "http://127.0.0.1",
         "http://127.0.0.1:8000",
         "http://127.0.0.1:5173",
-        "*",
+        "capacitor://localhost",
     ]
+
+    @field_validator("JWT_SECRET", "SECRET_KEY", "ENCRYPTION_KEY", mode="after")
+    @classmethod
+    def validate_secrets(cls, v: str, info) -> str:
+        field_name = info.field_name
+        if v in ("change-me-in-production", "change-me-32-bytes-key-here!!!!"):
+            import logging
+            logging.getLogger(__name__).warning(
+                f"[SECURITY WARNING] {field_name} is using insecure default value. "
+                "Set a secure secret in .env before running live trading."
+            )
+        return v
 
     # ── Live trading safety ───────────────────────────────────────────────────
     # Live orders require explicit enable + valid Dhan credentials.

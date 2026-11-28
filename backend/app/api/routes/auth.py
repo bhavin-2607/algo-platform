@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -20,13 +21,65 @@ from app.schemas.auth import (
 router = APIRouter()
 
 
+async def _check_login_rate_limit(client_ip: str) -> None:
+    """Throttle brute-force login attempts (max 10 failed attempts per minute per IP)."""
+    key = f"rate_limit:login_fails:{client_ip}"
+    try:
+        from app.core.redis_client import get_redis
+        redis = get_redis()
+        fails = await redis.get(key)
+        if fails and int(fails) >= 10:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed login attempts. Please wait 1 minute before trying again.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Gracefully fall through if Redis is unavailable
+
+
+async def _record_login_failure(client_ip: str) -> None:
+    key = f"rate_limit:login_fails:{client_ip}"
+    try:
+        from app.core.redis_client import get_redis
+        redis = get_redis()
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, 60)
+    except Exception:
+        pass
+
+
+async def _clear_login_failures(client_ip: str) -> None:
+    key = f"rate_limit:login_fails:{client_ip}"
+    try:
+        from app.core.redis_client import get_redis
+        redis = get_redis()
+        await redis.delete(key)
+    except Exception:
+        pass
+
+
 @router.post("/register", status_code=403)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
     raise HTTPException(status_code=403, detail="Accounts are created by an admin")
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    payload: LoginRequest,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+):
+    client_ip = "127.0.0.1"
+    if request:
+        client_ip = (
+            request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (request.client.host if request.client else "127.0.0.1")
+        )
+    await _check_login_rate_limit(client_ip)
+
     identifier = (payload.username or payload.email or "").strip()
     if not identifier:
         raise HTTPException(status_code=400, detail="Username or email is required")
@@ -39,6 +92,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(payload.password, user.hashed_password):
+        await _record_login_failure(client_ip)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.is_active:
@@ -52,8 +106,10 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
                 headers={"X-MFA-Required": "true"},
             )
         if not verify_mfa_token(user.mfa_secret, payload.mfa_token):
+            await _record_login_failure(client_ip)
             raise HTTPException(status_code=401, detail="Invalid MFA token")
 
+    await _clear_login_failures(client_ip)
     token_data = {"sub": str(user.id), "role": user.role}
     return TokenResponse(
         access_token=create_access_token(token_data),

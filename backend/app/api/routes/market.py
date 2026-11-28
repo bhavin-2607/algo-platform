@@ -1226,8 +1226,11 @@ async def get_funds(current_user: User = Depends(get_current_user)):
     from sqlalchemy import select as sa_select
     from app.core.database import AsyncSessionLocal
 
-    client_id = settings.DHAN_CLIENT_ID
-    token = settings.DHAN_ACCESS_TOKEN
+    from app.models.user import UserRole
+    is_admin = current_user.role == UserRole.admin or getattr(current_user, "is_superuser", False)
+
+    client_id = settings.DHAN_CLIENT_ID if is_admin else None
+    token = settings.DHAN_ACCESS_TOKEN if is_admin else None
     acct_id = None
 
     try:
@@ -1242,6 +1245,12 @@ async def get_funds(current_user: User = Depends(get_current_user)):
             if _acct:
                 if _acct.client_id:
                     client_id = _acct.client_id
+                if _acct.encrypted_access_token:
+                    from app.core.security import decrypt_broker_token
+                    try:
+                        token = decrypt_broker_token(_acct.encrypted_access_token)
+                    except Exception:
+                        pass
                 acct_id = _acct.id
     except Exception:
         pass

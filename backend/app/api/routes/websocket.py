@@ -121,6 +121,29 @@ async def strategy_status(ws: WebSocket, map_id: str, token: str = Query(...)):
         await ws.close(code=4001)
         return
 
+    # Verify authorization: caller must own map_id or be an admin
+    try:
+        from uuid import UUID
+        from sqlalchemy import select
+        from app.core.database import AsyncSessionLocal
+        from app.models.strategy import UserStrategyMap
+        from app.models.user import User, UserRole
+
+        async with AsyncSessionLocal() as db:
+            user_res = await db.execute(select(User).where(User.id == UUID(user_id)))
+            user_obj = user_res.scalar_one_or_none()
+            is_admin = bool(user_obj and (user_obj.role == UserRole.admin or getattr(user_obj, "is_superuser", False)))
+
+            if not is_admin:
+                map_res = await db.execute(select(UserStrategyMap).where(UserStrategyMap.id == UUID(map_id)))
+                st_map = map_res.scalar_one_or_none()
+                if not st_map or str(st_map.user_id) != str(user_id):
+                    logger.warning(f"WS strategy status forbidden: user={user_id} map={map_id}")
+                    await ws.close(code=4003)
+                    return
+    except Exception as e:
+        logger.warning(f"WS strategy authorization check error: {e}")
+
     await ws.accept()
     redis = get_redis()
     pubsub = redis.pubsub()

@@ -18,13 +18,15 @@ async def get_current_user(
 ) -> User:
     token = credentials.credentials if credentials else None
     if not token:
-        # Fallback to custom header, query param, or cookie (prevents reverse-proxy auth header stripping)
+        # Fallback to custom header or cookie (prevents reverse-proxy auth header stripping)
         token = (
             request.headers.get("X-Access-Token")
             or request.headers.get("x-access-token")
             or request.cookies.get("access_token")
-            or request.query_params.get("token")
         )
+        # Query parameter token is strictly restricted to WebSocket handshake routes
+        if not token and (request.url.path.startswith("/api/ws") or request.url.path.startswith("/ws")):
+            token = request.query_params.get("token")
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
