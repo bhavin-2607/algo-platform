@@ -15,7 +15,7 @@ import { useAuthStore } from "@/store/auth";
 import { notifyOrder, notifyError } from "@/store/notifications";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, ChevronDown, ChevronRight, Plus, Minus } from "lucide-react";
 import { resolveLotSize, formatQuantityWithLots } from "@/utils/lotSize";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1266,6 +1266,10 @@ export function AdminColumnManager({
   const [editId,    setEditId]    = useState<string|null>(null);
   const [validMsg,  setValidMsg]  = useState("");
   const [validOk,   setValidOk]   = useState<boolean|null>(null);
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isBatchOpen, setIsBatchOpen] = useState(false);
+  const [isDefaultColsOpen, setIsDefaultColsOpen] = useState(false);
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const set = (k: string) => (e: any) => setForm(f => ({...f, [k]: e.target.value}));
 
   const { data: columns } = useQuery({
@@ -1360,6 +1364,7 @@ export function AdminColumnManager({
       qc.invalidateQueries({queryKey:["column-values"]});
       setForm(f => emptyForm(f.book));
       setEditId(null); setValidMsg(""); setValidOk(null);
+      setIsAddOpen(false);
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
   });
@@ -1381,6 +1386,7 @@ export function AdminColumnManager({
       book: col.book === "option" ? "option" : col.book === "mcx" ? "mcx" : "equity",
     });
     setValidMsg(""); setValidOk(null);
+    setIsAddOpen(true);
   }
 
   const { data: presets } = useQuery({
@@ -1423,297 +1429,436 @@ export function AdminColumnManager({
         </div>
 
         <div style={{padding:"20px"}}>
-          {/* Formula Batch Selection */}
+          {/* Formula Batch Selection (Collapsible) */}
           <div style={{
-            marginBottom: 20, padding: "14px 16px",
-            border: "1px solid rgba(0, 230, 118, 0.3)", background: "rgba(0, 230, 118, 0.04)",
-            borderRadius: 4
+            marginBottom: 12,
+            border: "1px solid rgba(0, 230, 118, 0.25)", background: "rgba(0, 230, 118, 0.03)",
+            borderRadius: 4, overflow: "hidden"
           }}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
-              <div>
-                <div style={{fontSize:11, fontWeight:700, color:"var(--green)", letterSpacing:1}}>
-                  FORMULA BATCH PRESETS
-                </div>
-                <div style={{fontSize:10, color:"var(--muted)", marginTop:2}}>
-                  Apply pre-configured formula batches in sequence across tables
+            <button
+              type="button"
+              onClick={() => setIsBatchOpen(prev => !prev)}
+              style={{
+                width: "100%", padding: "9px 14px",
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                background: "transparent", border: "none", cursor: "pointer",
+                color: "inherit", textAlign: "left"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "var(--green)", display: "inline-flex" }}>
+                  {isBatchOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </span>
+                <div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--green)", letterSpacing: 0.8 }}>
+                    FORMULA BATCH PRESETS
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 8 }}>
+                    Apply standard multi-column batches across tables
+                  </span>
                 </div>
               </div>
-            </div>
-            <div style={{display:"flex", gap:10, flexWrap:"wrap"}}>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm("Apply Standard Formula batch to ALL tables (Equity, Options, MCX)?")) {
-                    api.post("/terminal/columns/apply-batch", { batch: "Standard Formulas", book: "all" })
-                      .then(() => { toast.success("Applied Standard Formula batch to all tables"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
-                      .catch(() => toast.error("Failed to apply batch"));
-                  }
-                }}
-                style={{
-                  padding:"8px 16px", fontSize:11, cursor:"pointer",
-                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
-                  background:"rgba(0, 230, 118, 0.15)", border:"1px solid var(--green)",
-                  color:"var(--green)", borderRadius:3,
-                }}
-              >
-                APPLY BATCH (ALL TABLES)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm(`Apply Standard Formula batch to ${form.book.toUpperCase()} only?`)) {
-                    api.post("/terminal/columns/apply-batch", { batch: "Standard Formulas", book: form.book })
-                      .then(() => { toast.success(`Applied Standard Formula batch to ${form.book.toUpperCase()}`); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
-                      .catch(() => toast.error("Failed to apply batch"));
-                  }
-                }}
-                style={{
-                  padding:"8px 16px", fontSize:11, cursor:"pointer",
-                  fontFamily:"var(--font)", fontWeight:700, letterSpacing:0.5,
-                  background:"rgba(255, 183, 3, 0.15)", border:"1px solid var(--yellow)",
-                  color:"var(--yellow)", borderRadius:3,
-                }}
-              >
-                APPLY TO {form.book.toUpperCase()} ONLY
-              </button>
-            </div>
-          </div>
+              <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font)" }}>
+                {isBatchOpen ? "COLLAPSE ▲" : "EXPAND ▼"}
+              </span>
+            </button>
 
-          {/* Default columns toggle section */}
-          <div style={{
-            marginBottom: 20, padding: "14px 16px",
-            border: "1px solid var(--border)", background: "rgba(0,0,0,0.2)",
-            borderRadius: 4
-          }}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
-              <div>
-                <div style={{fontSize:11, fontWeight:700, color:"var(--green)", letterSpacing:1}}>
-                  DEFAULT COLUMNS (PRICE & MARKET DATA)
-                </div>
-                <div style={{fontSize:10, color:"var(--muted)", marginTop:2}}>
-                  Toggle visibility or use ‹ › buttons to move column left/right
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm("Reset columns to defaults?")) {
-                    api.post("/terminal/columns/reset")
-                      .then(() => { toast.success("Reset"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
-                      .catch(() => toast.error("Failed"));
-                  }
-                }}
-                style={{
-                  padding:"4px 10px", fontSize:10, cursor:"pointer",
-                  background:"transparent", border:"1px solid var(--border)",
-                  color:"var(--muted)", fontFamily:"var(--font)"
-                }}>
-                ↺ RESET ALL
-              </button>
-            </div>
-            <div style={{display:"flex", flexWrap:"wrap", gap:8}}>
-              {defaultCols.map((col: any, idx: number) => {
-                const isVis = col.is_visible !== false;
-                return (
-                  <div
-                    key={col.id || col.col_key || col.name}
+            {isBatchOpen && (
+              <div style={{ padding: "0 14px 14px 14px", borderTop: "1px solid rgba(0, 230, 118, 0.15)", paddingTop: 10 }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm("Apply Standard Formula batch to ALL tables (Equity, Options, MCX)?")) {
+                        api.post("/terminal/columns/apply-batch", { batch: "Standard Formulas", book: "all" })
+                          .then(() => { toast.success("Applied Standard Formula batch to all tables"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                          .catch(() => toast.error("Failed to apply batch"));
+                      }
+                    }}
                     style={{
-                      display:"inline-flex", alignItems:"center", gap:4,
-                      padding:"4px 8px", fontSize:11,
-                      fontFamily:"var(--font)", fontWeight:600,
-                      background: isVis ? "rgba(47, 158, 143, 0.16)" : "rgba(255,255,255,0.03)",
-                      border: `1px solid ${isVis ? "var(--green)" : "var(--border)"}`,
-                      color: isVis ? "var(--green)" : "var(--muted)",
-                      borderRadius: 3,
+                      padding: "8px 16px", fontSize: 11, cursor: "pointer",
+                      fontFamily: "var(--font)", fontWeight: 700, letterSpacing: 0.5,
+                      background: "rgba(0, 230, 118, 0.15)", border: "1px solid var(--green)",
+                      color: "var(--green)", borderRadius: 3,
                     }}
                   >
-                    <button
-                      type="button"
-                      disabled={idx === 0}
-                      onClick={() => moveColInModal(col, -1, defaultCols)}
-                      title={`Move ${col.name} Left`}
-                      style={{
-                        background: "transparent", border: "none",
-                        color: idx === 0 ? "rgba(255,255,255,0.15)" : "var(--muted)",
-                        cursor: idx === 0 ? "default" : "pointer",
-                        fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
-                      }}
-                    >
-                      ‹
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleVisibilityMutation.mutate({ id: col.id || col.col_key, is_visible: !isVis })}
-                      style={{
-                        background: "transparent", border: "none", color: "inherit",
-                        cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, padding: 0,
-                      }}
-                      title={isVis ? `Click to hide ${col.name}` : `Click to show ${col.name}`}
-                    >
-                      <span style={{ display: "inline-flex", alignItems: "center" }}>
-                        {isVis ? <Eye size={12} style={{ color: "var(--green)" }} /> : <EyeOff size={12} style={{ color: "var(--muted)" }} />}
-                      </span>
-                      <span>{columnTitle(col.name)}</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={idx === defaultCols.length - 1}
-                      onClick={() => moveColInModal(col, 1, defaultCols)}
-                      title={`Move ${col.name} Right`}
-                      style={{
-                        background: "transparent", border: "none",
-                        color: idx === defaultCols.length - 1 ? "rgba(255,255,255,0.15)" : "var(--muted)",
-                        cursor: idx === defaultCols.length - 1 ? "default" : "pointer",
-                        fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
-                      }}
-                    >
-                      ›
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                    APPLY BATCH (ALL TABLES)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`Apply Standard Formula batch to ${form.book.toUpperCase()} only?`)) {
+                        api.post("/terminal/columns/apply-batch", { batch: "Standard Formulas", book: form.book })
+                          .then(() => { toast.success(`Applied Standard Formula batch to ${form.book.toUpperCase()}`); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                          .catch(() => toast.error("Failed to apply batch"));
+                      }
+                    }}
+                    style={{
+                      padding: "8px 16px", fontSize: 11, cursor: "pointer",
+                      fontFamily: "var(--font)", fontWeight: 700, letterSpacing: 0.5,
+                      background: "rgba(255, 183, 3, 0.15)", border: "1px solid var(--yellow)",
+                      color: "var(--yellow)", borderRadius: 3,
+                    }}
+                  >
+                    APPLY TO {form.book.toUpperCase()} ONLY
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div style={{display:"flex", gap:8, marginBottom:16}}>
+          {/* Default columns toggle section (Collapsible) */}
+          <div style={{
+            marginBottom: 14,
+            border: "1px solid var(--border)", background: "rgba(0,0,0,0.2)",
+            borderRadius: 4, overflow: "hidden"
+          }}>
+            <div style={{
+              padding: "9px 14px", display: "flex", justifyContent: "space-between", alignItems: "center",
+            }}>
+              <button
+                type="button"
+                onClick={() => setIsDefaultColsOpen(prev => !prev)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  background: "transparent", border: "none", cursor: "pointer",
+                  color: "inherit", padding: 0, textAlign: "left"
+                }}
+              >
+                <span style={{ color: "var(--green)", display: "inline-flex" }}>
+                  {isDefaultColsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </span>
+                <div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--green)", letterSpacing: 0.8 }}>
+                    DEFAULT COLUMNS (PRICE & MARKET DATA)
+                  </span>
+                  <span className="badge badge-gray" style={{ fontSize: 9, marginLeft: 8 }}>
+                    {defaultCols.filter((c: any) => c.is_visible !== false).length} / {defaultCols.length} VISIBLE
+                  </span>
+                </div>
+              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm("Reset columns to defaults?")) {
+                      api.post("/terminal/columns/reset")
+                        .then(() => { toast.success("Reset"); qc.invalidateQueries({queryKey:["terminal-columns"]}); })
+                        .catch(() => toast.error("Failed"));
+                    }
+                  }}
+                  style={{
+                    padding: "3px 8px", fontSize: 10, cursor: "pointer",
+                    background: "transparent", border: "1px solid var(--border)",
+                    color: "var(--muted)", fontFamily: "var(--font)", borderRadius: 3
+                  }}>
+                  ↺ RESET ALL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsDefaultColsOpen(prev => !prev)}
+                  style={{
+                    background: "transparent", border: "none", color: "var(--muted)",
+                    cursor: "pointer", fontSize: 10, padding: 0
+                  }}
+                >
+                  {isDefaultColsOpen ? "COLLAPSE ▲" : "EXPAND ▼"}
+                </button>
+              </div>
+            </div>
+
+            {isDefaultColsOpen && (
+              <div style={{ padding: "0 14px 14px 14px", borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+                <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 8 }}>
+                  Toggle visibility (eye) or use ‹ › buttons to move column left/right across all tables:
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {defaultCols.map((col: any, idx: number) => {
+                    const isVis = col.is_visible !== false;
+                    return (
+                      <div
+                        key={col.id || col.col_key || col.name}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          padding: "4px 8px", fontSize: 11,
+                          fontFamily: "var(--font)", fontWeight: 600,
+                          background: isVis ? "rgba(47, 158, 143, 0.16)" : "rgba(255,255,255,0.03)",
+                          border: `1px solid ${isVis ? "var(--green)" : "var(--border)"}`,
+                          color: isVis ? "var(--green)" : "var(--muted)",
+                          borderRadius: 3,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => moveColInModal(col, -1, defaultCols)}
+                          title={`Move ${col.name} Left`}
+                          style={{
+                            background: "transparent", border: "none",
+                            color: idx === 0 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                            cursor: idx === 0 ? "default" : "pointer",
+                            fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                          }}
+                        >
+                          ‹
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleVisibilityMutation.mutate({ id: col.id || col.col_key, is_visible: !isVis })}
+                          style={{
+                            background: "transparent", border: "none", color: "inherit",
+                            cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, padding: 0,
+                          }}
+                          title={isVis ? `Click to hide ${col.name}` : `Click to show ${col.name}`}
+                        >
+                          <span style={{ display: "inline-flex", alignItems: "center" }}>
+                            {isVis ? <Eye size={12} style={{ color: "var(--green)" }} /> : <EyeOff size={12} style={{ color: "var(--muted)" }} />}
+                          </span>
+                          <span>{columnTitle(col.name)}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === defaultCols.length - 1}
+                          onClick={() => moveColInModal(col, 1, defaultCols)}
+                          title={`Move ${col.name} Right`}
+                          style={{
+                            background: "transparent", border: "none",
+                            color: idx === defaultCols.length - 1 ? "rgba(255,255,255,0.15)" : "var(--muted)",
+                            cursor: idx === defaultCols.length - 1 ? "default" : "pointer",
+                            fontSize: 12, padding: "0 2px", fontWeight: 700, lineHeight: 1,
+                          }}
+                        >
+                          ›
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Book switcher tabs */}
+          <div style={{display:"flex", gap:8, marginBottom:14}}>
             {(["equity", "option", "mcx"] as const).map((book) => (
               <button key={book} type="button"
-                onClick={() => { setForm(emptyForm(book)); setEditId(null); setValidMsg(""); setValidOk(null); }}
+                onClick={() => { setForm(emptyForm(book)); setEditId(null); setValidMsg(""); setValidOk(null); setIsAddOpen(false); }}
                 style={{
                   padding:"6px 14px", fontSize:11, cursor:"pointer", fontFamily:"var(--font)", fontWeight:700,
                   background: form.book === book ? "rgba(0,255,136,0.12)" : "transparent",
                   border: `1px solid ${form.book === book ? "rgba(0,255,136,0.5)" : "var(--border)"}`,
                   color: form.book === book ? "var(--green)" : "var(--muted)",
+                  borderRadius: 3,
                 }}>
                 {book === "equity" ? "EQUITY" : book === "option" ? "OPTIONS" : "MCX (COMMODITY)"}
               </button>
             ))}
           </div>
-          {/* Example templates */}
-          <div style={{marginBottom:16}}>
-            <div style={{fontSize:10,letterSpacing:2,color:"var(--muted)",marginBottom:8}}>
-              QUICK TEMPLATES (click to load)
-            </div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {(presets ?? []).map(ex => (
-                <button key={ex.name}
-                  onClick={() => setForm(f => ({...f, name:ex.name,
-                    formula:ex.formula, color_rules:ex.colors}))}
-                  style={{
-                    padding:"5px 12px", fontSize:11, cursor:"pointer",
-                    fontFamily:"var(--font)", background:"transparent",
-                    border:"1px solid var(--border)", color:"var(--muted)",
-                    transition:"all 0.15s",
-                  }}
-                  onMouseEnter={e=>{
-                    (e.target as any).style.color="var(--green)";
-                    (e.target as any).style.borderColor="rgba(0,255,136,0.4)";
-                  }}
-                  onMouseLeave={e=>{
-                    (e.target as any).style.color="var(--muted)";
-                    (e.target as any).style.borderColor="var(--border)";
-                  }}>
-                  {ex.name}
-                </button>
-              ))}
-            </div>
+
+          {/* Add / Edit Column (Collapsible) */}
+          <div style={{ marginBottom: 14 }}>
+            {!isAddOpen && !editId ? (
+              <button
+                type="button"
+                onClick={() => setIsAddOpen(true)}
+                style={{
+                  width: "100%", padding: "9px 14px",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  background: "rgba(0, 255, 136, 0.05)", border: "1px dashed rgba(0, 255, 136, 0.4)",
+                  borderRadius: 4, cursor: "pointer", color: "var(--green)",
+                  fontFamily: "var(--font)", fontWeight: 700, fontSize: 11,
+                  transition: "all 0.15s"
+                }}
+                onMouseEnter={e => { (e.currentTarget as any).style.background = "rgba(0, 255, 136, 0.1)"; }}
+                onMouseLeave={e => { (e.currentTarget as any).style.background = "rgba(0, 255, 136, 0.05)"; }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Plus size={14} />
+                  <span>ADD NEW COLUMN TO {form.book.toUpperCase()}</span>
+                </span>
+                <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>
+                  Click to open formula editor
+                </span>
+              </button>
+            ) : (
+              <div style={{
+                padding: "16px", border: `1px solid ${editId ? "var(--yellow)" : "var(--border)"}`,
+                background: "rgba(0,0,0,0.25)", borderRadius: 4,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: editId ? "var(--yellow)" : "var(--green)" }}>
+                    {editId ? `EDIT COLUMN: ${form.name}` : `ADD NEW COLUMN (${form.book.toUpperCase()})`}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editId) {
+                        setEditId(null);
+                        setForm(emptyForm(form.book));
+                        setValidMsg(""); setValidOk(null);
+                      }
+                      setIsAddOpen(false);
+                    }}
+                    style={{
+                      background: "transparent", border: "none", color: "var(--muted)",
+                      cursor: "pointer", fontSize: 10, display: "inline-flex", alignItems: "center", gap: 4
+                    }}
+                  >
+                    <Minus size={12} />
+                    <span>COLLAPSE FORM</span>
+                  </button>
+                </div>
+
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                  <div className="field">
+                    <label className="field-label">COLUMN NAME</label>
+                    <input className="field-input" value={form.name}
+                      onChange={set("name")} placeholder="e.g. TREND" />
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <div className="field">
+                      <label className="field-label">ORDER</label>
+                      <input className="field-input" type="number"
+                        value={form.col_order} onChange={set("col_order")} />
+                    </div>
+                    <div className="field">
+                      <label className="field-label">WIDTH (px)</label>
+                      <input className="field-input" type="number"
+                        value={form.width} onChange={set("width")} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="field" style={{marginBottom:8}}>
+                  <label className="field-label" style={{color:"var(--yellow)"}}>
+                    FORMULA (Excel syntax — hidden from non-admin users)
+                  </label>
+                  <input className="field-input" value={form.formula}
+                    onChange={set("formula")}
+                    placeholder='Named: =IF((high+low+close)/3>ltp,"DOWN","UP")  or Excel: =IF((C4+D4+E4)/3>K4,"DOWN","UP")' />
+                  <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
+                    <strong style={{color:"var(--green)"}}>Named (recommended):</strong> open, high, low, close, vwap, ltp, volume, oi, bp1, sp1
+                    &nbsp;·&nbsp;
+                    <strong style={{color:"var(--muted)"}}>Excel refs:</strong> B=Open C=High D=Low E=Close F=VWAP K=LTP I=Volume J=OI
+                  </div>
+                </div>
+
+                {/* Validate button */}
+                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:12}}>
+                  <button
+                    onClick={() => validateMutation.mutate(form.formula)}
+                    disabled={!form.formula || validateMutation.isPending}
+                    style={{
+                      padding:"6px 14px", fontSize:11, cursor:"pointer",
+                      fontFamily:"var(--font)",
+                      background:"transparent",
+                      border:"1px solid var(--border)",
+                      color:"var(--muted)",
+                    }}>
+                    {validateMutation.isPending ? "..." : "VALIDATE"}
+                  </button>
+                  {validMsg && (
+                    <span style={{
+                      fontSize:11,
+                      color: validOk ? "var(--green)" : "var(--red)",
+                    }}>
+                      {validOk ? "VALID: " : "ERROR: "}{validMsg}
+                    </span>
+                  )}
+                </div>
+
+                <div className="field" style={{marginBottom:12}}>
+                  <label className="field-label">COLOR RULES (JSON — optional)</label>
+                  <input className="field-input" value={form.color_rules}
+                    onChange={set("color_rules")}
+                    placeholder='{"UP":"green","DOWN":"red"} or {"positive":"green","negative":"red"}' />
+                  <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
+                    Maps output values to colors: green, red, yellow, muted
+                  </div>
+                </div>
+
+                <div style={{display:"flex",gap:8}}>
+                  <button
+                    className={`auth-btn${saveMutation.isPending?" loading":""}`}
+                    onClick={() => saveMutation.mutate()}
+                    disabled={!form.name || !form.formula || saveMutation.isPending}
+                    style={{maxWidth:180}}>
+                    {saveMutation.isPending ? "SAVING..." : editId ? "UPDATE →" : "ADD COLUMN →"}
+                  </button>
+                  <button className="exit-btn"
+                    onClick={() => {
+                      setEditId(null);
+                      setForm(emptyForm(form.book));
+                      setValidMsg(""); setValidOk(null);
+                      setIsAddOpen(false);
+                    }}
+                    style={{padding:"10px 16px"}}>CANCEL</button>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Formula form */}
+          {/* Quick templates (Collapsible) */}
           <div style={{
-            padding:"16px", border:"1px solid var(--border)",
-            background:"rgba(0,0,0,0.2)", marginBottom:16,
+            marginBottom: 16,
+            border: "1px solid var(--border)", background: "rgba(0,0,0,0.15)",
+            borderRadius: 4, overflow: "hidden"
           }}>
-            <div style={{fontSize:11,fontWeight:700,color:"var(--green)",marginBottom:12}}>
-              {editId ? "EDIT COLUMN" : "ADD NEW COLUMN"}
-            </div>
-
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-              <div className="field">
-                <label className="field-label">COLUMN NAME</label>
-                <input className="field-input" value={form.name}
-                  onChange={set("name")} placeholder="e.g. TREND" />
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div className="field">
-                  <label className="field-label">ORDER</label>
-                  <input className="field-input" type="number"
-                    value={form.col_order} onChange={set("col_order")} />
-                </div>
-                <div className="field">
-                  <label className="field-label">WIDTH (px)</label>
-                  <input className="field-input" type="number"
-                    value={form.width} onChange={set("width")} />
-                </div>
-              </div>
-            </div>
-
-            <div className="field" style={{marginBottom:8}}>
-              <label className="field-label" style={{color:"var(--yellow)"}}>
-                FORMULA (Excel syntax — hidden from users)
-              </label>
-              <input className="field-input" value={form.formula}
-                onChange={set("formula")}
-                placeholder='Named: =IF((high+low+close)/3>ltp,"DOWN","UP")  or Excel: =IF((C4+D4+E4)/3>K4,"DOWN","UP")' />
-              <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
-                <strong style={{color:"var(--green)"}}>Named (recommended):</strong> open, high, low, close, vwap, ltp, volume, oi, bp1, sp1
-                &nbsp;·&nbsp;
-                <strong style={{color:"var(--muted)"}}>Excel refs:</strong> B=Open C=High D=Low E=Close F=VWAP K=LTP I=Volume J=OI
-              </div>
-            </div>
-
-            {/* Validate button */}
-            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:12}}>
-              <button
-                onClick={() => validateMutation.mutate(form.formula)}
-                disabled={!form.formula || validateMutation.isPending}
-                style={{
-                  padding:"6px 14px", fontSize:11, cursor:"pointer",
-                  fontFamily:"var(--font)",
-                  background:"transparent",
-                  border:"1px solid var(--border)",
-                  color:"var(--muted)",
-                }}>
-                {validateMutation.isPending ? "..." : "VALIDATE"}
-              </button>
-              {validMsg && (
-                <span style={{
-                  fontSize:11,
-                  color: validOk ? "var(--green)" : "var(--red)",
-                }}>
-                  {validOk ? "VALID: " : "ERROR: "}{validMsg}
+            <button
+              type="button"
+              onClick={() => setIsTemplatesOpen(prev => !prev)}
+              style={{
+                width: "100%", padding: "8px 12px",
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                background: "transparent", border: "none", cursor: "pointer",
+                color: "inherit", textAlign: "left"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: "var(--muted)", display: "inline-flex" }}>
+                  {isTemplatesOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 </span>
-              )}
-            </div>
-
-            <div className="field" style={{marginBottom:12}}>
-              <label className="field-label">COLOR RULES (JSON — optional)</label>
-              <input className="field-input" value={form.color_rules}
-                onChange={set("color_rules")}
-                placeholder='{"UP":"green","DOWN":"red"} or {"positive":"green","negative":"red"}' />
-              <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
-                Maps output values to colors: green, red, yellow, muted
+                <span style={{ fontSize: 10, letterSpacing: 1.5, color: "var(--muted)", fontWeight: 700 }}>
+                  QUICK TEMPLATES ({(presets ?? []).length})
+                </span>
               </div>
-            </div>
+              <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                {isTemplatesOpen ? "COLLAPSE ▲" : "EXPAND ▼"}
+              </span>
+            </button>
 
-            <div style={{display:"flex",gap:8}}>
-              <button
-                className={`auth-btn${saveMutation.isPending?" loading":""}`}
-                onClick={() => saveMutation.mutate()}
-                disabled={!form.name || !form.formula || saveMutation.isPending}
-                style={{maxWidth:180}}>
-                {saveMutation.isPending ? "SAVING..." : editId ? "UPDATE →" : "ADD COLUMN →"}
-              </button>
-              {editId && (
-                <button className="exit-btn"
-                  onClick={() => {
-                    setEditId(null);
-                    setForm({name:"",formula:"",col_order:0,width:80,color_rules:"",book:form.book});
-                    setValidMsg(""); setValidOk(null);
-                  }}
-                  style={{padding:"10px 16px"}}>CANCEL</button>
-              )}
-            </div>
+            {isTemplatesOpen && (
+              <div style={{ padding: "0 12px 12px 12px", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 8 }}>
+                  Click any preset to prefill the formula editor:
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {(presets ?? []).map(ex => (
+                    <button key={ex.name}
+                      onClick={() => {
+                        setForm(f => ({...f, name: ex.name, formula: ex.formula, color_rules: ex.colors}));
+                        setIsAddOpen(true);
+                      }}
+                      style={{
+                        padding: "4px 10px", fontSize: 11, cursor: "pointer",
+                        fontFamily: "var(--font)", background: "transparent",
+                        border: "1px solid var(--border)", color: "var(--muted)",
+                        borderRadius: 3, transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => {
+                        (e.target as any).style.color = "var(--green)";
+                        (e.target as any).style.borderColor = "rgba(0,255,136,0.4)";
+                      }}
+                      onMouseLeave={e => {
+                        (e.target as any).style.color = "var(--muted)";
+                        (e.target as any).style.borderColor = "var(--border)";
+                      }}>
+                      {ex.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* All columns list with show/hide/delete */}
