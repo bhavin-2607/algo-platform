@@ -10,12 +10,6 @@ export default function AdminPage() {
 
   return (
     <Layout>
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">ADMIN CONSOLE</h1>
-          <p className="page-sub">Platform management, user control & Dhan security</p>
-        </div>
-      </div>
       <div className="tab-switcher" style={{ marginBottom:10 }}>
         {(["overview","users","trades","ip-whitelisting"] as const).map(t => (
           <button key={t} className={`tab-btn${tab===t?" active":""}`} onClick={()=>setTab(t)}>

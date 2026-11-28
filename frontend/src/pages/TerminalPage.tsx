@@ -18,6 +18,34 @@ import { Link } from "react-router-dom";
 import { Eye, EyeOff, ChevronDown, ChevronRight, Plus, Minus } from "lucide-react";
 import { resolveLotSize, formatQuantityWithLots } from "@/utils/lotSize";
 
+function exportToCsv(filename: string, rows: Record<string, any>[]) {
+  if (!rows || !rows.length) return;
+  const separator = ",";
+  const keys = Object.keys(rows[0]);
+  const csvContent =
+    keys.join(separator) +
+    "\n" +
+    rows.map(row => {
+      return keys.map(k => {
+        let val = row[k] === null || row[k] === undefined ? "" : row[k];
+        val = String(val).replace(/"/g, '""');
+        if (String(val).search(/("|,|\n)/g) >= 0) {
+          val = `"${val}"`;
+        }
+        return val;
+      }).join(separator);
+    }).join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TerminalRow {
   id: string;
@@ -849,6 +877,7 @@ export default function TerminalPage() {
             qc.invalidateQueries({queryKey:["watchlist"]});
             setShowAdd(false);
           }}
+          onClose={() => setShowAdd(false)}
           onAddToAlgo={(inst) => {
             addAlgoRowMutation.mutate({
               symbol: inst.symbol,
@@ -956,13 +985,24 @@ export default function TerminalPage() {
 }
 
 // ── Add Symbol Panel ──────────────────────────────────────────────────────────
-function AddSymbolPanel({ onAdded, onAddToAlgo }: {
+function AddSymbolPanel({ onAdded, onAddToAlgo, onClose }: {
   onAdded: () => void;
   onAddToAlgo?: (inst: any) => void;
+  onClose?: () => void;
 }) {
   const [query,   setQuery]   = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose?.();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const addMutation = useMutation({
     mutationFn: (inst: any) => api.post("/market/watchlist", {
@@ -989,13 +1029,42 @@ function AddSymbolPanel({ onAdded, onAddToAlgo }: {
   return (
     <div className="card" style={{marginBottom:8}}>
       <div style={{padding:"8px 12px"}}>
-        <div style={{position:"relative", maxWidth:500, display:"flex", gap:8}}>
+        <div style={{position:"relative", maxWidth:560, display:"flex", gap:8}}>
           <input className="field-input" value={query}
-            onChange={e => setQuery(e.target.value)} autoFocus
-            placeholder="Search symbol or option... e.g. TCS, BANKNIFTY 61000 CE, GOLD"
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Escape") {
+                onClose?.();
+              }
+            }}
+            autoFocus
+            placeholder="Search symbol or option... e.g. TCS, BANKNIFTY 61000 CE, GOLD (Press Esc to close)"
             style={{flex:1}} />
-          {loading && <span style={{position:"absolute", right:12, top:"50%",
+          {loading && <span style={{position:"absolute", right:72, top:"50%",
             transform:"translateY(-50%)", color:"var(--muted)", fontSize:11}}>...</span>}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: "0 12px",
+                fontSize: 10,
+                fontWeight: 700,
+                color: "var(--muted)",
+                border: "1px solid var(--border)",
+                background: "var(--surface2)",
+                borderRadius: 3,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                whiteSpace: "nowrap",
+              }}
+              title="Close search (Esc)"
+            >
+              ESC
+            </button>
+          )}
         </div>
         {results.length > 0 && (
           <div style={{marginTop:6, border:"1px solid var(--border)",
@@ -1337,10 +1406,16 @@ export function AdminColumnManager({
     reorderMutation.mutate(orders);
   }
 
+  const [sampleResult, setSampleResult] = useState<any>(null);
+
   const validateMutation = useMutation({
     mutationFn: (formula: string) =>
       api.post("/terminal/columns/validate", { formula }).then(r => r.data),
-    onSuccess: (d: any) => { setValidMsg(d.message); setValidOk(d.valid); },
+    onSuccess: (d: any) => {
+      setValidMsg(d.message);
+      setValidOk(d.valid);
+      setSampleResult(d.sample_result);
+    },
   });
 
   const saveMutation = useMutation({
@@ -1736,6 +1811,37 @@ export function AdminColumnManager({
                   <input className="field-input" value={form.formula}
                     onChange={set("formula")}
                     placeholder='Named: =IF((high+low+close)/3>ltp,"DOWN","UP")  or Excel: =IF((C4+D4+E4)/3>K4,"DOWN","UP")' />
+                  
+                  {/* Clickable Variable Helper Tags */}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6, alignItems: "center" }}>
+                    <span style={{ fontSize: 9, color: "var(--muted)", marginRight: 2 }}>INSERT VARIABLE:</span>
+                    {["open", "high", "low", "close", "vwap", "ltp", "volume", "oi", "bp1", "sp1"].map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => {
+                          setForm((f: any) => ({
+                            ...f,
+                            formula: f.formula ? `${f.formula} ${v}` : `=${v}`,
+                          }));
+                        }}
+                        style={{
+                          padding: "2px 6px",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          background: "rgba(0, 230, 118, 0.1)",
+                          border: "1px solid rgba(0, 230, 118, 0.3)",
+                          color: "var(--green)",
+                          borderRadius: 3,
+                          cursor: "pointer",
+                        }}
+                        title={`Click to insert ${v} into formula`}
+                      >
+                        +{v}
+                      </button>
+                    ))}
+                  </div>
+
                   <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
                     <strong style={{color:"var(--green)"}}>Named (recommended):</strong> open, high, low, close, vwap, ltp, volume, oi, bp1, sp1
                     &nbsp;·&nbsp;
@@ -1743,27 +1849,59 @@ export function AdminColumnManager({
                   </div>
                 </div>
 
-                {/* Validate button */}
-                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:12}}>
-                  <button
-                    onClick={() => validateMutation.mutate(form.formula)}
-                    disabled={!form.formula || validateMutation.isPending}
-                    style={{
-                      padding:"6px 14px", fontSize:11, cursor:"pointer",
-                      fontFamily:"var(--font)",
-                      background:"transparent",
-                      border:"1px solid var(--border)",
-                      color:"var(--muted)",
+                {/* Validate button & Live Sandbox Preview */}
+                <div style={{marginBottom:12}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <button
+                      type="button"
+                      onClick={() => validateMutation.mutate(form.formula)}
+                      disabled={!form.formula || validateMutation.isPending}
+                      style={{
+                        padding:"6px 14px", fontSize:11, cursor:"pointer",
+                        fontFamily:"var(--font)",
+                        background:"transparent",
+                        border:"1px solid var(--border)",
+                        color:"var(--muted)",
+                      }}>
+                      {validateMutation.isPending ? "..." : "VALIDATE & TEST"}
+                    </button>
+                    {validMsg && (
+                      <span style={{
+                        fontSize:11,
+                        color: validOk ? "var(--green)" : "var(--red)",
+                      }}>
+                        {validOk ? "VALID: " : "ERROR: "}{validMsg}
+                      </span>
+                    )}
+                  </div>
+
+                  {sampleResult !== null && validOk && (
+                    <div style={{
+                      marginTop: 6,
+                      padding: "6px 10px",
+                      background: "rgba(8, 182, 222, 0.1)",
+                      border: "1px solid rgba(8, 182, 222, 0.3)",
+                      borderRadius: 4,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: 11
                     }}>
-                    {validateMutation.isPending ? "..." : "VALIDATE"}
-                  </button>
-                  {validMsg && (
-                    <span style={{
-                      fontSize:11,
-                      color: validOk ? "var(--green)" : "var(--red)",
-                    }}>
-                      {validOk ? "VALID: " : "ERROR: "}{validMsg}
-                    </span>
+                      <span style={{ color: "var(--ba-cyan)", fontWeight: 700 }}>SAMPLE OUTPUT:</span>
+                      <span style={{
+                        fontFamily: "monospace",
+                        fontWeight: 800,
+                        color: "var(--text)",
+                        padding: "2px 6px",
+                        background: "rgba(0,0,0,0.3)",
+                        borderRadius: 3
+                      }}>
+                        {String(sampleResult)}
+                      </span>
+                      <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                        (Evaluated with High=2530, Low=2485, Close=2510, LTP=2520, VWAP=2505)
+                      </span>
+                    </div>
                   )}
                 </div>
 
@@ -1772,6 +1910,37 @@ export function AdminColumnManager({
                   <input className="field-input" value={form.color_rules}
                     onChange={set("color_rules")}
                     placeholder='{"UP":"green","DOWN":"red"} or {"positive":"green","negative":"red"}' />
+                  
+                  {/* Quick Color Presets */}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4, alignItems: "center" }}>
+                    <span style={{ fontSize: 9, color: "var(--muted)", marginRight: 2 }}>COLOR PRESETS:</span>
+                    {[
+                      { label: "UP / DOWN", json: '{"UP":"green","DOWN":"red"}' },
+                      { label: "BUY / SELL", json: '{"BUY":"green","SELL":"red"}' },
+                      { label: "BULL / BEAR", json: '{"BULL":"green","BEAR":"red"}' },
+                      { label: "+VE / -VE", json: '{"positive":"green","negative":"red"}' },
+                      { label: "TGT HIT", json: '{"HIT":"green","WAIT":"yellow"}' },
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => setForm((f: any) => ({ ...f, color_rules: preset.json }))}
+                        style={{
+                          padding: "2px 6px",
+                          fontSize: 9,
+                          fontWeight: 600,
+                          background: "rgba(255, 183, 3, 0.1)",
+                          border: "1px solid rgba(255, 183, 3, 0.3)",
+                          color: "var(--yellow)",
+                          borderRadius: 3,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
                   <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
                     Maps output values to colors: green, red, yellow, muted
                   </div>
@@ -2323,6 +2492,33 @@ function AlgoWindowTable({
   onOpenImportPositions?: () => void;
 }) {
   const activeCount = algoRows.filter((r) => r.is_algo_active).length;
+  const [tickFlashMap, setTickFlashMap] = useState<Record<string, "tick-flash-up" | "tick-flash-down">>({});
+  const prevLtpRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!algoRows || algoRows.length === 0) return;
+    const newFlashes: Record<string, "tick-flash-up" | "tick-flash-down"> = {};
+    let hasChange = false;
+
+    algoRows.forEach((r: any) => {
+      const prev = prevLtpRef.current[r.id];
+      if (prev != null && r.ltp != null && prev !== r.ltp) {
+        newFlashes[r.id] = r.ltp > prev ? "tick-flash-up" : "tick-flash-down";
+        hasChange = true;
+      }
+      if (r.ltp != null) {
+        prevLtpRef.current[r.id] = r.ltp;
+      }
+    });
+
+    if (hasChange) {
+      setTickFlashMap((prev) => ({ ...prev, ...newFlashes }));
+      const timer = setTimeout(() => {
+        setTickFlashMap({});
+      }, 750);
+      return () => clearTimeout(timer);
+    }
+  }, [algoRows]);
 
   return (
     <div style={{ border: "1px solid var(--border)", background: "var(--surface)", marginBottom: 16 }}>
@@ -2494,17 +2690,21 @@ function AlgoWindowTable({
                       </select>
                     </td>
 
-                    <td style={{
-                      padding: "8px 8px",
-                      textAlign: "right",
-                      fontWeight: 700,
-                      fontSize: 12,
-                      whiteSpace: "nowrap",
-                      minWidth: 135,
-                      width: 135,
-                      fontVariantNumeric: "tabular-nums",
-                      fontFeatureSettings: '"tnum"',
-                    }}>
+                    <td
+                      className={tickFlashMap[r.id] || ""}
+                      style={{
+                        padding: "8px 8px",
+                        textAlign: "right",
+                        fontWeight: 700,
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                        minWidth: 135,
+                        width: 135,
+                        fontVariantNumeric: "tabular-nums",
+                        fontFeatureSettings: '"tnum"',
+                        transition: "background-color 0.3s ease",
+                      }}
+                    >
                       {r.ltp != null ? (
                         <span style={{
                           display: "inline-flex",
@@ -2802,28 +3002,69 @@ function AlgoWindowTable({
                       })()}
                     </td>
 
-                    {/* NUMBER OF TRADE 1 to 5 */}
+                    {/* NUMBER OF TRADE 1 to 5 + STEPPER + RESET */}
                     <td style={{ padding: "8px 4px", textAlign: "center" }}>
-                      <select
-                        value={r.number_of_trades}
-                        onChange={(e) => onUpdateRow(r.id, { number_of_trades: Number(e.target.value) })}
-                        style={{
-                          padding: "3px 4px",
-                          fontSize: 11,
-                          background: "var(--surface2)",
-                          border: "1px solid var(--border)",
-                          color: "var(--yellow)",
-                          borderRadius: 3,
-                          cursor: "pointer",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {[1, 2, 3, 4, 5].map((n) => (
-                          <option key={n} value={n}>
-                            {n} {n === 1 ? "TRD" : "TRDS"}
-                          </option>
-                        ))}
-                      </select>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                          <select
+                            value={r.number_of_trades || 1}
+                            onChange={(e) => onUpdateRow(r.id, { number_of_trades: Number(e.target.value) })}
+                            style={{
+                              padding: "2px 4px",
+                              fontSize: 10,
+                              background: "var(--surface2)",
+                              border: "1px solid var(--border)",
+                              color: "var(--yellow)",
+                              borderRadius: 3,
+                              cursor: "pointer",
+                              fontWeight: 700,
+                            }}
+                            title="Max trade cycles allowed before auto-disarm"
+                          >
+                            {[1, 2, 3, 4, 5].map((n) => (
+                              <option key={n} value={n}>
+                                {n} {n === 1 ? "TRD" : "TRDS"}
+                              </option>
+                            ))}
+                          </select>
+                          {((r.trades_completed || 0) > 0 || (r.executed_trades || 0) > 0) && (
+                            <button
+                              type="button"
+                              onClick={() => onUpdateRow(r.id, { trades_completed: 0, executed_trades: 0, status: "IDLE" })}
+                              style={{
+                                padding: "2px 4px",
+                                fontSize: 9,
+                                fontWeight: 700,
+                                background: "rgba(255,183,3,0.12)",
+                                border: "1px solid rgba(255,183,3,0.4)",
+                                color: "var(--yellow)",
+                                borderRadius: 3,
+                                cursor: "pointer",
+                              }}
+                              title="Reset completed trades count to 0 to enable re-trading"
+                            >
+                              RESET
+                            </button>
+                          )}
+                        </div>
+                        {/* Visual cycle stepper */}
+                        <div style={{ display: "flex", gap: 2, alignItems: "center", fontSize: 10 }} title={`Completed: ${r.trades_completed || 0} / ${r.number_of_trades || 1}`}>
+                          {Array.from({ length: r.number_of_trades || 1 }).map((_, stepIdx) => {
+                            const done = stepIdx < (r.trades_completed || 0);
+                            const active = stepIdx === (r.trades_completed || 0) && inPos;
+                            if (done) {
+                              return <span key={stepIdx} style={{ color: "var(--green)", fontWeight: 800 }}>✓</span>;
+                            }
+                            if (active) {
+                              return <span key={stepIdx} style={{ color: "var(--ba-cyan)", fontWeight: 800 }}>●</span>;
+                            }
+                            return <span key={stepIdx} style={{ color: "var(--muted)", opacity: 0.6 }}>○</span>;
+                          })}
+                          <span style={{ fontSize: 9, color: "var(--muted)", marginLeft: 2 }}>
+                            ({r.trades_completed || 0}/{r.number_of_trades || 1})
+                          </span>
+                        </div>
+                      </div>
                     </td>
 
                     {/* PROFIT / LOSS FOR COMPLETED TRADE */}
@@ -3128,42 +3369,79 @@ function CompletedAlgoOrdersTable({
           )}
         </div>
 
-        {/* Tab switcher */}
-        <div style={{ display: "inline-flex", background: "var(--surface2)", borderRadius: 4, padding: 2, border: "1px solid var(--border)" }}>
-          <button
-            type="button"
-            onClick={() => setActiveTab("trades")}
-            style={{
-              padding: "3px 10px",
-              fontSize: 10,
-              fontWeight: 700,
-              border: "none",
-              borderRadius: 3,
-              cursor: "pointer",
-              background: activeTab === "trades" ? "rgba(251, 191, 36, 0.2)" : "transparent",
-              color: activeTab === "trades" ? "#fbbf24" : "var(--muted)",
-              transition: "all 0.15s",
-            }}
-          >
-            ROUND-TRIP TRADES ({completedTrades.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("executions")}
-            style={{
-              padding: "3px 10px",
-              fontSize: 10,
-              fontWeight: 700,
-              border: "none",
-              borderRadius: 3,
-              cursor: "pointer",
-              background: activeTab === "executions" ? "rgba(56, 189, 248, 0.2)" : "transparent",
-              color: activeTab === "executions" ? "#38bdf8" : "var(--muted)",
-              transition: "all 0.15s",
-            }}
-          >
-            DHAN EXECUTIONS ({tradedOrders.length})
-          </button>
+        {/* Tab switcher + Export CSV */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "inline-flex", background: "var(--surface2)", borderRadius: 4, padding: 2, border: "1px solid var(--border)" }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab("trades")}
+              style={{
+                padding: "3px 10px",
+                fontSize: 10,
+                fontWeight: 700,
+                border: "none",
+                borderRadius: 3,
+                cursor: "pointer",
+                background: activeTab === "trades" ? "rgba(251, 191, 36, 0.2)" : "transparent",
+                color: activeTab === "trades" ? "#fbbf24" : "var(--muted)",
+                transition: "all 0.15s",
+              }}
+            >
+              ROUND-TRIP TRADES ({completedTrades.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("executions")}
+              style={{
+                padding: "3px 10px",
+                fontSize: 10,
+                fontWeight: 700,
+                border: "none",
+                borderRadius: 3,
+                cursor: "pointer",
+                background: activeTab === "executions" ? "rgba(56, 189, 248, 0.2)" : "transparent",
+                color: activeTab === "executions" ? "#38bdf8" : "var(--muted)",
+                transition: "all 0.15s",
+              }}
+            >
+              DHAN EXECUTIONS ({tradedOrders.length})
+            </button>
+          </div>
+          {completedTrades.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const exportRows = completedTrades.map(t => ({
+                  symbol: t.symbol,
+                  segment: t.segment,
+                  trade_mode: t.trade_mode,
+                  quantity: t.quantity,
+                  entry_price: t.entry_price,
+                  exit_price: t.exit_price,
+                  pnl: t.pnl,
+                  trades_completed: t.trades_completed,
+                  exit_reason: t.exit_reason,
+                  status: t.status,
+                  closed_at: t.closed_at || "",
+                }));
+                exportToCsv("algo-completed-trades.csv", exportRows);
+                toast.success("Completed algo trades exported as CSV");
+              }}
+              style={{
+                padding: "4px 10px",
+                fontSize: 10,
+                fontWeight: 700,
+                background: "rgba(8,182,222,0.12)",
+                border: "1px solid rgba(8,182,222,0.35)",
+                color: "var(--ba-cyan)",
+                borderRadius: 3,
+                cursor: "pointer",
+              }}
+              title="Download completed trade history as CSV file"
+            >
+              EXPORT CSV
+            </button>
+          )}
         </div>
       </div>
 

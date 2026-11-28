@@ -14,14 +14,16 @@ Rules:
     otherwise no trade.
 """
 import asyncio
+import json
 import logging
 import math
 import re
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.core.database import AsyncSessionLocal
 from app.models.algo_row import BsaAlgoRow, BsaAlgoTradeHistory
@@ -459,6 +461,36 @@ class BsaAlgoEngine:
                     entry_triggered = True
 
             if entry_triggered and active_buy_price > 0:
+                # Risk Guard: Check Daily Loss Cap if configured
+                try:
+                    from app.core.redis_client import get_redis
+                    redis = await get_redis()
+                    raw_risk = await redis.get(f"terminal:risk_guard:{row.user_id}")
+                    if raw_risk:
+                        risk_cfg = json.loads(raw_risk)
+                        daily_loss_cap = float(risk_cfg.get("daily_loss_cap") or 5000.0)
+                        auto_freeze = bool(risk_cfg.get("auto_freeze", True))
+                        if auto_freeze and daily_loss_cap > 0:
+                            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                            pnl_res = await db.execute(
+                                select(func.sum(BsaAlgoTradeHistory.pnl)).where(
+                                    BsaAlgoTradeHistory.user_id == row.user_id,
+                                    BsaAlgoTradeHistory.closed_at >= today_start,
+                                )
+                            )
+                            today_pnl = pnl_res.scalar() or 0.0
+                            if today_pnl <= -abs(daily_loss_cap):
+                                logger.warning(
+                                    f"[RISK GUARD] Daily loss cap exceeded: today P&L is Rs.{today_pnl:.2f} (cap: -Rs.{daily_loss_cap:.2f}). "
+                                    f"Blocking new BUY for {row.symbol} and auto-freezing algo."
+                                )
+                                row.is_algo_active = False
+                                row.status = "STOPPED_SL"
+                                await db.commit()
+                                return
+                except Exception as risk_err:
+                    logger.debug(f"Risk guard check skipped: {risk_err}")
+
                 row.status = "ORDER_PENDING"
                 await db.commit()
 

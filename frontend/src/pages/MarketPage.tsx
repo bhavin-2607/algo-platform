@@ -104,10 +104,13 @@ export default function MarketPage() {
         </button>
       </div>
 
-      {showAdd && <AddSymbolPanel onAdded={()=>{
-        qc.invalidateQueries({queryKey:["watchlist"]});
-        setShowAdd(false);
-      }} />}
+      {showAdd && <AddSymbolPanel
+        onAdded={()=>{
+          qc.invalidateQueries({queryKey:["watchlist"]});
+          setShowAdd(false);
+        }}
+        onClose={() => setShowAdd(false)}
+      />}
 
       <div style={{display:"grid",gridTemplateColumns:"280px 1fr",gap:16}}>
 
@@ -294,10 +297,20 @@ export default function MarketPage() {
 }
 
 /* ── Add Symbol Panel ─────────────────────────────────────────────────────── */
-function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
+function AddSymbolPanel({ onAdded, onClose }: { onAdded: () => void; onClose?: () => void }) {
   const [query,   setQuery]   = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose?.();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const addMutation = useMutation({
     mutationFn: (inst: any) => api.post("/market/watchlist", {
@@ -332,17 +345,41 @@ function AddSymbolPanel({ onAdded }: { onAdded: () => void }) {
         <p style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>
           Search across all market instruments: Equities, Indices, Futures, Options, Commodities, and Currencies.
         </p>
-        <div style={{position:"relative",maxWidth:500}}>
+        <div style={{position:"relative",maxWidth:560,display:"flex",gap:8}}>
           <input
             className="field-input"
             value={query}
             onChange={e=>setQuery(e.target.value)}
-            placeholder="Search symbol, contract or index e.g. TCS, SENSEX, NIFTY 24500 CE, GOLD..."
-            style={{paddingRight:40}}
+            onKeyDown={e => {
+              if (e.key === "Escape") {
+                onClose?.();
+              }
+            }}
+            placeholder="Search symbol, contract or index e.g. TCS, SENSEX, NIFTY 24500 CE, GOLD... (Press Esc to close)"
+            style={{flex:1, paddingRight:40}}
             autoFocus
           />
-          {loading && <span style={{position:"absolute",right:12,top:"50%",
+          {loading && <span style={{position:"absolute",right:72,top:"50%",
             transform:"translateY(-50%)",color:"var(--muted)",fontSize:11}}>...</span>}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: "0 12px",
+                fontSize: 10,
+                fontWeight: 700,
+                color: "var(--muted)",
+                border: "1px solid var(--border)",
+                background: "var(--surface2)",
+                borderRadius: 3,
+                cursor: "pointer",
+              }}
+              title="Close search (Esc)"
+            >
+              ESC
+            </button>
+          )}
         </div>
 
         {results.length > 0 && (

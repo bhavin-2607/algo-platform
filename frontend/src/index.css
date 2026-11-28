@@ -758,3 +758,23 @@ select option {
   width: 100%;
 }
 
+/* ── LTP TICK MICRO-FLASH ANIMATIONS ────────────────────── */
+@keyframes tick-flash-up {
+  0% { background-color: rgba(0, 230, 118, 0.4); }
+  100% { background-color: transparent; }
+}
+
+@keyframes tick-flash-down {
+  0% { background-color: rgba(255, 59, 87, 0.4); }
+  100% { background-color: transparent; }
+}
+
+.tick-flash-up {
+  animation: tick-flash-up 0.75s ease-out;
+}
+
+.tick-flash-down {
+  animation: tick-flash-down 0.75s ease-out;
+}
+
+

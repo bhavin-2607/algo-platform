@@ -978,13 +978,29 @@ async def validate_column_formula(
     body: dict,
     current_user: User = Depends(get_current_user),
 ):
-    """Validate a formula before saving."""
+    """Validate a formula before saving and return a sample calculation result."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    from app.strategy.excel_formula_engine import validate_formula_excel
-    ok, msg = validate_formula_excel(body.get("formula", ""))
-    return {"valid": ok, "message": msg}
+    from app.strategy.excel_formula_engine import validate_formula_excel, evaluate_formula
+    formula_str = body.get("formula", "")
+    ok, msg = validate_formula_excel(formula_str)
+    sample_result = None
+    if ok:
+        sample_tick = {
+            "open": 2500.0, "high": 2530.0, "low": 2485.0, "close": 2510.0,
+            "ltp": 2520.0, "vwap": 2505.0, "volume": 1250000, "oi": 600000,
+            "bp1": 2519.8, "sp1": 2520.2, "t1": 2535.0, "t2": 2550.0,
+        }
+        try:
+            res = evaluate_formula(formula_str, sample_tick)
+            if isinstance(res, float):
+                sample_result = round(res, 2)
+            else:
+                sample_result = res
+        except Exception:
+            pass
+    return {"valid": ok, "message": msg, "sample_result": sample_result}
 
 
 # ── Column Reordering ────────────────────────────────────────────────────────
@@ -3047,3 +3063,43 @@ async def get_today_positions(
             "total_pnl":     total_pnl,
         })
     return res
+
+
+class RiskGuardPayload(BaseModel):
+    daily_loss_cap: Optional[float] = 5000.0
+    auto_freeze: Optional[bool] = False
+    max_open_positions: Optional[int] = 5
+
+
+@router.get("/risk-guard")
+async def get_risk_guard_settings(
+    current_user: User = Depends(get_current_user),
+    redis = Depends(get_redis),
+):
+    """Retrieve user configured risk guard settings including daily loss cap."""
+    key = f"terminal:risk_guard:{current_user.id}"
+    raw = await redis.get(key)
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return {"daily_loss_cap": 5000.0, "auto_freeze": False, "max_open_positions": 5}
+
+
+@router.post("/risk-guard")
+async def update_risk_guard_settings(
+    payload: RiskGuardPayload,
+    current_user: User = Depends(get_current_user),
+    redis = Depends(get_redis),
+):
+    """Update user configured risk guard settings."""
+    key = f"terminal:risk_guard:{current_user.id}"
+    data = {
+        "daily_loss_cap": float(payload.daily_loss_cap or 5000.0),
+        "auto_freeze": bool(payload.auto_freeze),
+        "max_open_positions": int(payload.max_open_positions or 5),
+    }
+    await redis.set(key, json.dumps(data))
+    return {"status": "ok", "settings": data}
+

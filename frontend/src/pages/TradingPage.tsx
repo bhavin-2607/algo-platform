@@ -10,6 +10,34 @@ const BROKER_OPTIONS = [
     desc: "Free Trading API · Data API available · Recommended" },
 ];
 
+function exportToCsv(filename: string, rows: Record<string, any>[]) {
+  if (!rows || !rows.length) return;
+  const separator = ",";
+  const keys = Object.keys(rows[0]);
+  const csvContent =
+    keys.join(separator) +
+    "\n" +
+    rows.map(row => {
+      return keys.map(k => {
+        let val = row[k] === null || row[k] === undefined ? "" : row[k];
+        val = String(val).replace(/"/g, '""');
+        if (String(val).search(/("|,|\n)/g) >= 0) {
+          val = `"${val}"`;
+        }
+        return val;
+      }).join(separator);
+    }).join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 export default function TradingPage() {
   const { data: orderbook, isLoading: obLoading } = useQuery({
     queryKey: ["orderbook"],
@@ -32,6 +60,24 @@ export default function TradingPage() {
   const [tab, setTab] = useState<"all" | "positions" | "orders" | "history">("all");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ broker:"dhan", client_id:"", access_token:"", paper_trading:true });
+
+  const guardPositionMutation = useMutation({
+    mutationFn: (p: any) =>
+      api.post("/terminal/algo-rows/import-position", {
+        symbol: p.symbol,
+        segment: p.segment || (p.exchange === "MCX" ? "MCX_COMM" : p.product_type === "CNC" ? "NSE_EQ" : "NSE_FNO"),
+        exchange: p.exchange || "NSE",
+        security_id: p.security_id || p.securityId,
+        quantity: Math.abs(Number(p.net_qty) || 1),
+        buy_price: Number(p.buy_avg || p.entry_price || p.cost_price || 0),
+        target_type: "T1",
+      }),
+    onSuccess: (res: any) => {
+      toast.success(`Position ${res.data?.symbol || ""} imported into Algo Window in SELL_ONLY mode`);
+      qc.invalidateQueries({ queryKey: ["algo-rows"] });
+    },
+    onError: (err: any) => toast.error(err.response?.data?.detail || "Failed to guard position with algo"),
+  });
 
   const { data: brokers } = useQuery({
     queryKey: ["brokers"],
@@ -139,11 +185,11 @@ export default function TradingPage() {
             <div className="empty-state">No positions today.</div>
           ) : (
             <div style={{ overflowX: "auto" }}>
-              <table className="data-table" style={{ minWidth: 900 }}>
+              <table className="data-table" style={{ minWidth: 950 }}>
                 <thead>
                   <tr>
-                    {["SYMBOL", "EXCH", "PRODUCT", "NET QTY", "STATUS", "BUY", "SELL", "REALIZED", "UNREALIZED", "TOTAL P&L"].map(h => (
-                      <th key={h}>{h}</th>
+                    {["SYMBOL", "EXCH", "PRODUCT", "NET QTY", "STATUS", "BUY", "SELL", "REALIZED", "UNREALIZED", "TOTAL P&L", "ACTION"].map(h => (
+                      <th key={h} style={{ textAlign: h === "ACTION" ? "center" : undefined }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -187,6 +233,31 @@ export default function TradingPage() {
                         </td>
                         <td className={total >= 0 ? "pnl-pos" : "pnl-neg"} style={{ fontFamily: "monospace", fontWeight: 700 }}>
                           {`${total >= 0 ? "+" : ""}₹${total.toFixed(2)}`}
+                        </td>
+                        <td style={{ textAlign: "center" }}>
+                          {isOpen ? (
+                            <button
+                              type="button"
+                              onClick={() => guardPositionMutation.mutate(p)}
+                              disabled={guardPositionMutation.isPending}
+                              style={{
+                                padding: "3px 8px",
+                                fontSize: 10,
+                                fontWeight: 700,
+                                background: "rgba(0, 230, 118, 0.12)",
+                                border: "1px solid rgba(0, 230, 118, 0.4)",
+                                color: "var(--green)",
+                                borderRadius: 3,
+                                cursor: "pointer",
+                                whiteSpace: "nowrap",
+                              }}
+                              title="Import into Algo Window to manage automated profit target exit"
+                            >
+                              + GUARD ALGO
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: 10, color: "var(--muted)" }}>—</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -313,6 +384,30 @@ export default function TradingPage() {
                 {tradeHistory.summary.winners ?? 0}W / {tradeHistory.summary.losers ?? 0}L ({tradeHistory.summary.win_rate ?? 0}% Win Rate)
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                if (!tradeHistory?.trades?.length) {
+                  toast.error("No trades to export");
+                  return;
+                }
+                exportToCsv("dhan-trade-history.csv", tradeHistory.trades);
+                toast.success("Trade history exported as CSV");
+              }}
+              style={{
+                padding: "3px 10px",
+                fontSize: 10,
+                fontWeight: 700,
+                background: "rgba(8,182,222,0.12)",
+                border: "1px solid rgba(8,182,222,0.35)",
+                color: "var(--ba-cyan)",
+                borderRadius: 3,
+                cursor: "pointer",
+                marginLeft: "auto",
+              }}
+            >
+              EXPORT CSV
+            </button>
           </div>
           {thLoading ? (
             <div className="empty-state">Loading trade history…</div>

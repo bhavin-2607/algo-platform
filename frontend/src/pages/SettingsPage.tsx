@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/common/Layout";
 import { api } from "@/utils/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
-import { Eye, EyeOff, MapPin, Locate, Monitor, Key, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, MapPin, Locate, Monitor, Key, ShieldCheck, ShieldAlert, ChevronDown, ChevronRight } from "lucide-react";
 import {
   getAstroSettings,
   saveAstroSettings,
@@ -19,25 +19,19 @@ export default function SettingsPage() {
 
   return (
     <Layout>
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">USER PROFILE & SETTINGS</h1>
-          <p className="page-sub">Account details, connected broker configuration & Dhan token authentication</p>
-        </div>
-      </div>
       <div className="settings-board">
-        {/* Left Column: User Profile & Security */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {/* Left Column: USER DETAILS, ACCOUNT SECURITY, DISPLAY SCALING */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <UserProfileCard />
-          <DisplayScalingCard />
           <PasswordCard />
-          <AstroTimingSettingsCard />
+          <DisplayScalingCard />
         </div>
 
-        {/* Right Column: Connected Broker & Token Refresh */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {/* Right Column: CONNECTED BROKERS, TOKEN STATUS, RISK MANAGEMENT */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <BrokerSettingsSection />
           <TokenRenewalCard qc={qc} />
+          <RiskGuardCard />
         </div>
       </div>
     </Layout>
@@ -51,17 +45,17 @@ function UserProfileCard() {
   return (
     <div className="card settings-card">
       <div className="card-header">
-        <span className="card-title">USER PROFILE</span>
+        <span className="card-title">USER DETAILS</span>
         <span className={`badge ${isAdmin ? "badge-green" : "badge-gray"}`}>
           {isAdmin ? "ADMINISTRATOR" : "TRADER"}
         </span>
       </div>
-      <div style={{ padding: "12px 14px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+      <div style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
           <div
             style={{
-              width: 44,
-              height: 44,
+              width: 48,
+              height: 48,
               borderRadius: "50%",
               background: "var(--green-dim)",
               border: "2px solid var(--green)",
@@ -76,37 +70,43 @@ function UserProfileCard() {
           >
             {user?.username?.[0]?.toUpperCase() ?? "U"}
           </div>
-          <div>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text)" }}>
               {user?.username ?? "Trader"}
             </div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" }}>
               {user?.email || `${user?.username || "trader"}@algo-platform.local`}
             </div>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+          gap: 12,
+          borderTop: "1px solid var(--border)",
+          paddingTop: 14,
+        }}>
           <div>
-            <div className="field-label">ACCOUNT STATUS</div>
+            <div className="field-label" style={{ fontSize: 9 }}>ACCOUNT STATUS</div>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--green)", marginTop: 3 }}>
               ACTIVE TRADING
             </div>
           </div>
           <div>
-            <div className="field-label">AUTHENTICATION</div>
+            <div className="field-label" style={{ fontSize: 9 }}>AUTHENTICATION</div>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginTop: 3 }}>
               JWT ENCRYPTED
             </div>
           </div>
           <div>
-            <div className="field-label">USER ID</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3, fontFamily: "monospace" }}>
-              {user?.id ? user.id.slice(0, 16) + "..." : "Local Trader"}
+            <div className="field-label" style={{ fontSize: 9 }}>USER ID</div>
+            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 3, fontFamily: "monospace", wordBreak: "break-all" }}>
+              {user?.id || "Local Trader"}
             </div>
           </div>
           <div>
-            <div className="field-label">SYSTEM ROLE</div>
+            <div className="field-label" style={{ fontSize: 9 }}>SYSTEM ROLE</div>
             <div style={{ fontSize: 12, fontWeight: 700, color: isAdmin ? "var(--yellow)" : "var(--text)", marginTop: 3 }}>
               {isAdmin ? "SUPER ADMIN" : "STANDARD TRADER"}
             </div>
@@ -119,6 +119,7 @@ function UserProfileCard() {
 
 function DisplayScalingCard() {
   const [scale, setScale] = useState(() => localStorage.getItem("display_scale") || "auto");
+  const [isCollapsed, setIsCollapsed] = useState(true);
 
   function handleSelect(newScale: string) {
     setScale(newScale);
@@ -142,59 +143,187 @@ function DisplayScalingCard() {
 
   return (
     <div className="card settings-card">
-      <div className="card-header">
+      <div
+        className="card-header"
+        style={{ cursor: "pointer", userSelect: "none" }}
+        onClick={() => setIsCollapsed(v => !v)}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: "var(--muted)", display: "inline-flex" }}>
+            {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          </span>
           <Monitor size={15} style={{ color: "var(--green)" }} />
-          <span className="card-title">DISPLAY & MONITOR SCALING</span>
+          <span className="card-title">DISPLAY SCALING</span>
         </div>
         <span className="badge badge-gray" style={{ fontSize: 9 }}>
           {scale.toUpperCase()}
         </span>
       </div>
-      <div style={{ padding: "12px 14px" }}>
-        <p style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
-          Configure UI and font scaling for your screen. Auto dynamically enhances text readability on 27" monitors without distorting laptop displays.
-        </p>
+      {!isCollapsed && (
+        <div style={{ padding: "12px 14px" }}>
+          <p style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
+            Configure UI and font scaling for your screen. Auto dynamically enhances text readability on 27" monitors without distorting laptop displays.
+          </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {options.map((opt) => {
-            const isSelected = scale === opt.id;
-            return (
-              <div
-                key={opt.id}
-                onClick={() => handleSelect(opt.id)}
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 10,
-                  padding: "8px 12px",
-                  borderRadius: 4,
-                  background: isSelected ? "var(--green-dim)" : "var(--surface2)",
-                  border: `1px solid ${isSelected ? "var(--green)" : "var(--border)"}`,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="display-scale"
-                  checked={isSelected}
-                  onChange={() => handleSelect(opt.id)}
-                  style={{ marginTop: 3, accentColor: "var(--green)", cursor: "pointer" }}
-                />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: isSelected ? "var(--green)" : "var(--text)" }}>
-                    {opt.label}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                    {opt.desc}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {options.map((opt) => {
+              const isSelected = scale === opt.id;
+              return (
+                <div
+                  key={opt.id}
+                  onClick={() => handleSelect(opt.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                    padding: "8px 12px",
+                    borderRadius: 4,
+                    background: isSelected ? "var(--green-dim)" : "var(--surface2)",
+                    border: `1px solid ${isSelected ? "var(--green)" : "var(--border)"}`,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="display-scale"
+                    checked={isSelected}
+                    onChange={() => handleSelect(opt.id)}
+                    style={{ marginTop: 3, accentColor: "var(--green)", cursor: "pointer" }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: isSelected ? "var(--green)" : "var(--text)" }}>
+                      {opt.label}
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      {opt.desc}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function RiskGuardCard() {
+  const qc = useQueryClient();
+  const { data: riskSettings, isLoading } = useQuery({
+    queryKey: ["risk-guard-settings"],
+    queryFn: () => api.get("/terminal/risk-guard").then(r => r.data),
+  });
+
+  const [lossCap, setLossCap] = useState<number | string>("");
+  const [autoFreeze, setAutoFreeze] = useState<boolean>(false);
+  const [maxPositions, setMaxPositions] = useState<number | string>("");
+  const [isCollapsed, setIsCollapsed] = useState(true);
+
+  useEffect(() => {
+    if (riskSettings) {
+      setLossCap(riskSettings.daily_loss_cap ?? 5000);
+      setAutoFreeze(riskSettings.auto_freeze ?? false);
+      setMaxPositions(riskSettings.max_open_positions ?? 5);
+    }
+  }, [riskSettings]);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api.post("/terminal/risk-guard", {
+        daily_loss_cap: Number(lossCap),
+        auto_freeze: autoFreeze,
+        max_open_positions: Number(maxPositions),
+      }),
+    onSuccess: () => {
+      toast.success("Risk guard settings updated successfully");
+      qc.invalidateQueries({ queryKey: ["risk-guard-settings"] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to update risk settings"),
+  });
+
+  return (
+    <div className="card settings-card">
+      <div
+        className="card-header"
+        style={{ cursor: "pointer", userSelect: "none" }}
+        onClick={() => setIsCollapsed(v => !v)}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: "var(--muted)", display: "inline-flex" }}>
+            {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          </span>
+          <ShieldAlert size={14} style={{ color: "var(--yellow)" }} />
+          <span className="card-title">RISK MANAGEMENT</span>
+        </div>
+        <span className={`badge ${autoFreeze ? "badge-green" : "badge-gray"}`}>
+          {autoFreeze ? "ACTIVE GUARD" : "DISABLED"}
+        </span>
       </div>
+      {!isCollapsed && (
+        <div style={{ padding: "12px 14px", display: "grid", gap: 12 }}>
+          <p style={{ fontSize: 11, color: "var(--muted)", margin: 0, lineHeight: 1.4 }}>
+            Enforce capital protection limits. If your net realized loss reaches the daily cap,
+            the engine automatically blocks new automated entries and disarms active algorithms.
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>
+                DAILY LOSS CAP (₹)
+              </label>
+              <input
+                type="number"
+                className="field-input"
+                value={lossCap}
+                onChange={e => setLossCap(e.target.value)}
+                placeholder="e.g. 5000"
+                style={{ padding: "6px 10px", fontSize: 12, height: 32 }}
+              />
+            </div>
+
+            <div>
+              <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>
+                MAX OPEN POSITIONS
+              </label>
+              <input
+                type="number"
+                className="field-input"
+                value={maxPositions}
+                onChange={e => setMaxPositions(e.target.value)}
+                placeholder="e.g. 5"
+                style={{ padding: "6px 10px", fontSize: 12, height: 32 }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+            <input
+              type="checkbox"
+              id="autoFreezeCheck"
+              checked={autoFreeze}
+              onChange={e => setAutoFreeze(e.target.checked)}
+              style={{ cursor: "pointer", accentColor: "var(--green)" }}
+            />
+            <label htmlFor="autoFreezeCheck" style={{ fontSize: 11, color: "var(--text)", cursor: "pointer" }}>
+              Auto-freeze engine and disarm algo rows upon breaching loss limit
+            </label>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+            <button
+              type="button"
+              className="connect-btn"
+              onClick={() => saveMutation.mutate()}
+              disabled={saveMutation.isPending || isLoading}
+              style={{ padding: "6px 16px", fontSize: 11, fontWeight: 700 }}
+            >
+              {saveMutation.isPending ? "SAVING..." : "SAVE RISK LIMITS"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -267,7 +396,7 @@ function TokenRenewalCard({qc}: {qc: any}) {
   return (
     <div className="card settings-card">
       <div className="card-header">
-        <span className="card-title">DHAN TOKEN REFRESH</span>
+        <span className="card-title">TOKEN STATUS</span>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {dhan.totp_configured && (
             <span className="badge badge-blue" style={{ fontSize: 9 }}>
@@ -489,6 +618,7 @@ function PasswordCard() {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
   const mutation = useMutation({
     mutationFn: () => api.post("/users/me/change-password", {
       current_password: current,
@@ -499,6 +629,7 @@ function PasswordCard() {
       setCurrent("");
       setNext("");
       setConfirm("");
+      setIsCollapsed(true);
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || "Could not change password"),
   });
@@ -517,125 +648,136 @@ function PasswordCard() {
 
   return (
     <div className="card settings-card">
-      <div className="card-header">
-        <span className="card-title">PASSWORD & SECURITY</span>
+      <div
+        className="card-header"
+        style={{ cursor: "pointer", userSelect: "none" }}
+        onClick={() => setIsCollapsed(v => !v)}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: "var(--muted)", display: "inline-flex" }}>
+            {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          </span>
+          <span className="card-title">ACCOUNT SECURITY</span>
+        </div>
       </div>
-      <div style={{ padding: "12px 14px", display: "grid", gap: 8 }}>
-        <div>
-          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CURRENT PASSWORD</label>
-          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
-            <input
-              className="field-input"
-              type={showCurrent ? "text" : "password"}
-              value={current}
-              onChange={e => setCurrent(e.target.value)}
-              placeholder="Current password"
-              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
-            />
-            <button
-              type="button"
-              onClick={() => setShowCurrent(v => !v)}
-              style={{
-                position: "absolute",
-                right: 8,
-                top: "50%",
-                transform: "translateY(-50%)",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: "var(--muted)",
-                display: "flex",
-                alignItems: "center",
-                padding: 2,
-              }}
-              title={showCurrent ? "Hide password" : "Show password"}
-            >
-              {showCurrent ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
+      {!isCollapsed && (
+        <div style={{ padding: "12px 14px", display: "grid", gap: 10 }}>
+          <div>
+            <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CURRENT PASSWORD</label>
+            <div style={{ position: "relative", width: "100%" }}>
+              <input
+                className="field-input"
+                type={showCurrent ? "text" : "password"}
+                value={current}
+                onChange={e => setCurrent(e.target.value)}
+                placeholder="Current password"
+                style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32, width: "100%" }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowCurrent(v => !v)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--muted)",
+                  display: "flex",
+                  alignItems: "center",
+                  padding: 2,
+                }}
+                title={showCurrent ? "Hide password" : "Show password"}
+              >
+                {showCurrent ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div>
-          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>NEW PASSWORD</label>
-          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
-            <input
-              className="field-input"
-              type={showNext ? "text" : "password"}
-              value={next}
-              onChange={e => setNext(e.target.value)}
-              placeholder="At least 8 characters"
-              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
-            />
-            <button
-              type="button"
-              onClick={() => setShowNext(v => !v)}
-              style={{
-                position: "absolute",
-                right: 8,
-                top: "50%",
-                transform: "translateY(-50%)",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: "var(--muted)",
-                display: "flex",
-                alignItems: "center",
-                padding: 2,
-              }}
-              title={showNext ? "Hide password" : "Show password"}
-            >
-              {showNext ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
+          <div>
+            <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>NEW PASSWORD</label>
+            <div style={{ position: "relative", width: "100%" }}>
+              <input
+                className="field-input"
+                type={showNext ? "text" : "password"}
+                value={next}
+                onChange={e => setNext(e.target.value)}
+                placeholder="At least 8 characters"
+                style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32, width: "100%" }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowNext(v => !v)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--muted)",
+                  display: "flex",
+                  alignItems: "center",
+                  padding: 2,
+                }}
+                title={showNext ? "Hide password" : "Show password"}
+              >
+                {showNext ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div>
-          <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CONFIRM NEW PASSWORD</label>
-          <div style={{ position: "relative", width: "100%", maxWidth: 320 }}>
-            <input
-              className="field-input"
-              type={showConfirm ? "text" : "password"}
-              value={confirm}
-              onChange={e => setConfirm(e.target.value)}
-              placeholder="Confirm new password"
-              style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32 }}
-            />
-            <button
-              type="button"
-              onClick={() => setShowConfirm(v => !v)}
-              style={{
-                position: "absolute",
-                right: 8,
-                top: "50%",
-                transform: "translateY(-50%)",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: "var(--muted)",
-                display: "flex",
-                alignItems: "center",
-                padding: 2,
-              }}
-              title={showConfirm ? "Hide password" : "Show password"}
-            >
-              {showConfirm ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
+          <div>
+            <label className="field-label" style={{ marginBottom: 4, fontSize: 10 }}>CONFIRM NEW PASSWORD</label>
+            <div style={{ position: "relative", width: "100%" }}>
+              <input
+                className="field-input"
+                type={showConfirm ? "text" : "password"}
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                placeholder="Confirm new password"
+                style={{ padding: "6px 32px 6px 10px", fontSize: 12, height: 32, width: "100%" }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirm(v => !v)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--muted)",
+                  display: "flex",
+                  alignItems: "center",
+                  padding: 2,
+                }}
+                title={showConfirm ? "Hide password" : "Show password"}
+              >
+                {showConfirm ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
           </div>
+
+          <button
+            className="connect-btn"
+            style={{ justifySelf: "start", padding: "6px 16px", fontSize: 11, height: 32, marginTop: 4 }}
+            onClick={submit}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? "SAVING" : "UPDATE PASSWORD"}
+          </button>
+
+          <p className="token-note" style={{ padding: 0, fontSize: 11, color: "var(--muted)" }}>
+            Requires current password. Contact an administrator to reset if forgotten.
+          </p>
         </div>
-
-        <button
-          className="connect-btn"
-          style={{ justifySelf: "start", padding: "6px 16px", fontSize: 11, height: 32, marginTop: 4 }}
-          onClick={submit}
-          disabled={mutation.isPending}
-        >
-          {mutation.isPending ? "SAVING" : "UPDATE PASSWORD"}
-        </button>
-
-        <p className="token-note" style={{ padding: 0, fontSize: 11, color: "var(--muted)" }}>
-          Requires current password. Contact an administrator to reset if forgotten.
-        </p>
-      </div>
+      )}
     </div>
   );
 }
@@ -886,6 +1028,7 @@ function AstroTimingSettingsCard() {
 function BrokerSettingsSection() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
   const [form, setForm] = useState({ broker:"dhan", client_id:"", access_token:"", paper_trading:false });
 
   const { data: brokers } = useQuery({
@@ -950,77 +1093,113 @@ function BrokerSettingsSection() {
   });
 
   const visibleBrokers = (brokers ?? []).filter((b: any) => b.broker === "dhan" || b.broker === "paper");
+  const activeBroker = visibleBrokers.find((b: any) => b.is_active) || visibleBrokers[0];
 
   return (
     <div className="card settings-card">
-        <div className="card-header">
-          <span className="card-title">CONNECTED BROKERS</span>
-          <button className="connect-btn" onClick={() => setShowForm(v=>!v)}>
+        <div
+          className="card-header"
+          style={{ cursor: "pointer", userSelect: "none" }}
+          onClick={() => setIsCollapsed(v => !v)}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ color: "var(--muted)", display: "inline-flex" }}>
+              {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+            </span>
+            <span className="card-title">CONNECTED BROKERS</span>
+            {isCollapsed && activeBroker && (
+              <span style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "2px 8px",
+                borderRadius: 3,
+                background: "rgba(0, 230, 118, 0.12)",
+                border: "1px solid rgba(0, 230, 118, 0.3)",
+                color: "var(--green)",
+                fontFamily: "monospace",
+              }}>
+                {(activeBroker.broker || "DHAN").toUpperCase()} · {activeBroker.client_id}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="connect-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsCollapsed(false);
+              setShowForm(v => !v);
+            }}
+          >
             {showForm ? "CANCEL" : "+ ADD BROKER"}
           </button>
         </div>
 
-        {showForm && (
-          <div style={{padding:"12px 14px 0"}}>
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
-              <div className="field">
-                <label className="field-label">CLIENT ID</label>
-                <input className="field-input" value={form.client_id}
-                  onChange={e=>setForm(f=>({...f, client_id:e.target.value}))}
-                  placeholder="Your Dhan Client ID" />
-              </div>
-              <div className="field">
-                <label className="field-label">MODE</label>
-                <div style={{display:"flex"}}>
-                  {["Paper","Live"].map((m,i)=>(
-                    <button key={m} type="button"
-                      onClick={()=>setForm(f=>({...f, paper_trading:m==="Paper"}))}
-                      style={{
-                        flex:1, padding:11, fontFamily:"var(--font)", fontSize:11,
-                        cursor:"pointer", border:"1px solid",
-                        borderRight:i===0?"none":undefined,
-                        background:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                          ? m==="Paper"?"rgba(255,208,96,0.15)":"rgba(255,68,102,0.1)" : "transparent",
-                        borderColor:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                          ? m==="Paper"?"rgba(255,208,96,0.4)":"rgba(255,68,102,0.4)" : "var(--border)",
-                        color:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
-                          ? m==="Paper"?"var(--yellow)":"var(--red)" : "var(--muted)",
-                      }}>{m.toUpperCase()}</button>
-                  ))}
+        {!isCollapsed && (
+          <>
+            {showForm && (
+              <div style={{padding:"12px 14px 0"}}>
+                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
+                  <div className="field">
+                    <label className="field-label">CLIENT ID</label>
+                    <input className="field-input" value={form.client_id}
+                      onChange={e=>setForm(f=>({...f, client_id:e.target.value}))}
+                      placeholder="Your Dhan Client ID" />
+                  </div>
+                  <div className="field">
+                    <label className="field-label">MODE</label>
+                    <div style={{display:"flex"}}>
+                      {["Paper","Live"].map((m,i)=>(
+                        <button key={m} type="button"
+                          onClick={()=>setForm(f=>({...f, paper_trading:m==="Paper"}))}
+                          style={{
+                            flex:1, padding:11, fontFamily:"var(--font)", fontSize:11,
+                            cursor:"pointer", border:"1px solid",
+                            borderRight:i===0?"none":undefined,
+                            background:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
+                              ? m==="Paper"?"rgba(255,208,96,0.15)":"rgba(255,68,102,0.1)" : "transparent",
+                            borderColor:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
+                              ? m==="Paper"?"rgba(255,208,96,0.4)":"rgba(255,68,102,0.4)" : "var(--border)",
+                            color:(form.paper_trading&&m==="Paper")||(!form.paper_trading&&m==="Live")
+                              ? m==="Paper"?"var(--yellow)":"var(--red)" : "var(--muted)",
+                          }}>{m.toUpperCase()}</button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            {!form.paper_trading && (
-              <div className="field" style={{marginBottom:10}}>
-                <label className="field-label">ACCESS TOKEN</label>
-                <input className="field-input" type="password"
-                  value={form.access_token}
-                  onChange={e=>setForm(f=>({...f, access_token:e.target.value}))}
-                  placeholder="Paste access token (eyJ...)" />
+                {!form.paper_trading && (
+                  <div className="field" style={{marginBottom:10}}>
+                    <label className="field-label">ACCESS TOKEN</label>
+                    <input className="field-input" type="password"
+                      value={form.access_token}
+                      onChange={e=>setForm(f=>({...f, access_token:e.target.value}))}
+                      placeholder="Paste access token (eyJ...)" />
+                  </div>
+                )}
+                <button className={`auth-btn${connectMutation.isPending?" loading":""}`}
+                  onClick={()=>connectMutation.mutate()}
+                  disabled={connectMutation.isPending}
+                  style={{maxWidth:200, marginBottom:10}}>
+                  {connectMutation.isPending?"ADDING...":"ADD BROKER ->"}
+                </button>
               </div>
             )}
-            <button className={`auth-btn${connectMutation.isPending?" loading":""}`}
-              onClick={()=>connectMutation.mutate()}
-              disabled={connectMutation.isPending}
-              style={{maxWidth:200, marginBottom:10}}>
-              {connectMutation.isPending?"ADDING...":"ADD BROKER ->"}
-            </button>
-          </div>
-        )}
 
-        {visibleBrokers.length === 0 && !showForm && (
-          <div style={{padding:"20px 14px", textAlign:"center", color:"var(--muted)", fontSize:12}}>
-            No broker connected. Add Dhan to start trading.
-          </div>
-        )}
+            {visibleBrokers.length === 0 && !showForm && (
+              <div style={{padding:"20px 14px", textAlign:"center", color:"var(--muted)", fontSize:12}}>
+                No broker connected. Add Dhan to start trading.
+              </div>
+            )}
 
-        {visibleBrokers.map((b: any) => (
-          <BrokerRow key={b.id} broker={b} qc={qc}
-            onActivate={()=>activateMutation.mutate(b.id)}
-            onRemove={()=>removeMutation.mutate(b.id)}
-            onDeactivate={()=>deactivateMutation.mutate(b.id)}
-          />
-        ))}
+            {visibleBrokers.map((b: any) => (
+              <BrokerRow key={b.id} broker={b} qc={qc}
+                onActivate={()=>activateMutation.mutate(b.id)}
+                onRemove={()=>removeMutation.mutate(b.id)}
+                onDeactivate={()=>deactivateMutation.mutate(b.id)}
+              />
+            ))}
+          </>
+        )}
     </div>
   );
 }

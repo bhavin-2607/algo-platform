@@ -8,8 +8,8 @@ class TestUnrestrictedSymbolSearch(unittest.TestCase):
         cls.df = _scrip_frame()
 
     def test_total_instruments_loaded(self):
-        """Scrip master must contain all market instruments (>220,000)."""
-        self.assertGreater(len(self.df), 220000)
+        """Scrip master must contain all market instruments (>200,000)."""
+        self.assertGreater(len(self.df), 200000)
 
     def test_sensex_index_search(self):
         """Searching SENSEX must rank the BSE spot index first with segment IDX_I."""

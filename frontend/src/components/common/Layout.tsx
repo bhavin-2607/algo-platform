@@ -23,9 +23,12 @@ import {
   ArrowDownRight,
   Info,
   Monitor,
+  Search,
 } from "lucide-react";
 import { useNotificationStore, notifyMarket, notifyError } from "@/store/notifications";
 import { AstroTelemetryBadge } from "@/components/astro/AstroTelemetryBadge";
+import { GlobalSearchModal } from "./GlobalSearchModal";
+import { EmergencyPanicModal } from "./EmergencyPanicModal";
 
 function TopNavClock() {
   const [time, setTime] = useState(() => {
@@ -470,7 +473,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
   const [displayScale, setDisplayScale] = useState(() => localStorage.getItem("display_scale") || "auto");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [panicOpen, setPanicOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -761,6 +777,56 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             )}
           </div>
 
+          {/* Quick Search Button (Cmd+K) */}
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            title="Search Instruments (Cmd+K / Ctrl+K)"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 8px",
+              background: "var(--surface2)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              cursor: "pointer",
+              color: "var(--muted)",
+              fontSize: 11,
+              fontFamily: "var(--font)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <Search size={13} style={{ color: "var(--green)" }} />
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>Search</span>
+            <span style={{ fontSize: 9, opacity: 0.7, fontFamily: "monospace", background: "rgba(255,255,255,0.06)", padding: "1px 4px", borderRadius: 2 }}>⌘K</span>
+          </button>
+
+          {/* Global Emergency Panic Kill Switch */}
+          <button
+            type="button"
+            onClick={() => setPanicOpen(true)}
+            title="Emergency Kill Switch: Square off all open positions & disarm all algos"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "4px 8px",
+              background: "rgba(255, 68, 102, 0.12)",
+              border: "1px solid var(--red)",
+              borderRadius: 4,
+              cursor: "pointer",
+              color: "var(--red)",
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: 0.8,
+              transition: "all 0.15s ease",
+            }}
+          >
+            <AlertTriangle size={12} />
+            <span>KILL SWITCH</span>
+          </button>
+
           {/* Notification History Bell & Audio Chimes */}
           <NotificationBell />
 
@@ -962,6 +1028,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main full-width page content */}
       <main className="main-content">{children}</main>
+
+      {/* Global Modals */}
+      <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
+      <EmergencyPanicModal isOpen={panicOpen} onClose={() => setPanicOpen(false)} />
     </div>
   );
 }
